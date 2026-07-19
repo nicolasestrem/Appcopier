@@ -1,0 +1,15 @@
+# NuGet restore output (packages.config)
+src/packages/
+
+# MSBuild outputs. NOTE: bin/ and obj/ under src/Appcopier are historically
+# tracked in git; ignoring them here prevents NEW files from being added but
+# does not untrack the existing ones (that requires a deliberate `git rm --cached`).
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio user/workspace files
+.vs/
+*.user
+*.suo
+/.claude
+CLAUDE.md
