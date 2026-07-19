@@ -1,6 +1,5 @@
 ﻿using Appcopier;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -71,20 +70,34 @@ namespace DataHelper
                 {
                     string assemblyInfo = new WebClient().DownloadString(Data.Uri.URL_ASSEMBLY);
 
-                    var latestVersion = ParseLatestVersion(assemblyInfo);
+                    string parsed = ParseLatestVersion(assemblyInfo);
 
-                    if (latestVersion ==
-                        Program.GetCurrentVersionTostring())                      // Up-to-date
+                    if (string.IsNullOrWhiteSpace(parsed))
+                    {
+                        // The file downloaded but held no AssemblyFileVersion we could read. Saying
+                        // so beats the old behavior, which compared "" against the current version,
+                        // found them unequal, and offered a download for a nonexistent release.
+                        MessageBox.Show(
+                            "Could not read the latest version number from the update file.",
+                            "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    // Both sides go through the same normalization. Comparing a raw remote string
+                    // against a normalized local one means a four-part or suffixed version upstream
+                    // would never match, and every up-to-date user would be offered a phantom
+                    // update on every check, forever.
+                    string latestVersion = Program.NormalizeVersion(parsed);
+                    string currentVersion = Program.GetCurrentVersionTostring();
+
+                    if (latestVersion == currentVersion)                          // Up-to-date
                     {
                         MessageBox.Show($"No new updates available.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
-
-                    if (latestVersion !=                                        // Update available
-                          Program.GetCurrentVersionTostring())
-
+                    else                                                          // Update available
                     {
                         if (MessageBox.Show($"App version {latestVersion} available.\nDo you want to open the Download page?", "App update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1) == DialogResult.Yes)
-                            Process.Start(new ProcessStartInfo(Data.Uri.URL_GITLATEST) { UseShellExecute = true });
+                            Utils.OpenUrl(Data.Uri.URL_GITLATEST);
                     }
                 }
                 catch (Exception ex)

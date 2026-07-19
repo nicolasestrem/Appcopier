@@ -1,7 +1,6 @@
 ﻿using DataHelper;
 using Microsoft.Win32;
 using System;
-using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -128,14 +127,25 @@ namespace Appcopier
             // This method will be called when timer elapses
             timer.Stop();
 
-            if (isMouseOverQRCode)
+            // Runs on a System.Timers.Timer thread. .NET Framework swallowed exceptions thrown by
+            // Elapsed handlers; .NET 8 does not, so anything escaping this method terminates the
+            // process. Nothing in here is worth losing the app over - not even the dialog itself,
+            // which can fail on a machine with no interactive window station.
+            try
             {
-                DialogResult result = MessageBox.Show("Do you want to view the introduction directly in your Desktop Browser?", "Intro", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-                if (result == DialogResult.Yes)
+                if (isMouseOverQRCode)
                 {
-                    Process.Start(new ProcessStartInfo("https://github.com/builtbybel/Appcopier") { UseShellExecute = true });
+                    DialogResult result = MessageBox.Show("Do you want to view the introduction directly in your Desktop Browser?", "Intro", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                    if (result == DialogResult.Yes)
+                    {
+                        Utils.OpenUrl(Data.Uri.URL_GITREPO);
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Utils.LogQuietly($"QR code prompt failed: {ex.Message}");
             }
         }
 
