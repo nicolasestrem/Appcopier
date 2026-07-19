@@ -1,6 +1,15 @@
 ﻿using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+
+// Appcopier is a Windows-only WinForms app targeting net8.0-windows. The .NET SDK normally emits
+// this attribute automatically, but it does so only when GenerateAssemblyInfo is true - and that
+// property MUST stay false here so this file survives verbatim for the deployed update checker
+// (see Appcopier.csproj). Without the attribute the CA1416 analyzer treats every Win32/WinForms
+// call site as cross-platform and emits ~250 false warnings per build. Declaring it here restores
+// the correct platform metadata and keeps CA1416 useful for genuine portability mistakes.
+[assembly: SupportedOSPlatform("windows7.0")]
 
 // Allgemeine Informationen über eine Assembly werden über die folgenden
 // Attribute gesteuert. Ändern Sie diese Attributwerte, um die Informationen zu ändern,
@@ -34,3 +43,10 @@ using System.Runtime.InteropServices;
 // [assembly: AssemblyVersion("1.0.*")]
 [assembly: AssemblyVersion("0.30.0")]
 [assembly: AssemblyFileVersion("0.30.0")]
+
+// Most types in this assembly are internal. Appcopier.Tests needs access to exercise the pure
+// logic (e.g. Data.ParseLatestVersion, Program.GetCurrentVersionTostring) without going through
+// the UI. Appended below the version attributes on purpose: the deployed v0.30.0 update checker
+// downloads this file as raw text and string-parses the AssemblyFileVersion line above, so that
+// line's exact format and the lines preceding it must never be disturbed.
+[assembly: InternalsVisibleTo("Appcopier.Tests")]

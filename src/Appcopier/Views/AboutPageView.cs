@@ -53,12 +53,12 @@ namespace Views
         }
 
         private void btnGithub_Click(object sender, EventArgs e)
-            => Process.Start(DataHelper.Data.Uri.URL_GITREPO);
+            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_GITREPO) { UseShellExecute = true });
 
         private void linkURLIcon_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-            => Process.Start(DataHelper.Data.Uri.URL_ICONATTRIBUTION);
+            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_ICONATTRIBUTION) { UseShellExecute = true });
 
         private void linkURLDev_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-            => Process.Start(DataHelper.Data.Uri.URL_BUILTBYBEL);
+            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_BUILTBYBEL) { UseShellExecute = true });
     }
 }
