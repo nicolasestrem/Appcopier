@@ -132,14 +132,33 @@ built assembly's manifest resource names were inspected and the one real resourc
 `app.manifest` carries over byte-for-byte: `requestedExecutionLevel=highestAvailable`, `longPathAware`, and
 `dpiAware` were all confirmed embedded in the built exe.
 
-## Distribution tradeoff
+## Distribution — resolved: self-contained single file
 
-The net8.0-windows build is framework-dependent: it produces `Appcopier.exe` + `Appcopier.dll` +
-`runtimeconfig.json` + `deps.json` + `Newtonsoft.Json.dll`, and **requires the .NET Desktop Runtime 8 on the
-end-user machine**. v0.30.0 users currently get a .NET Framework exe that needs no runtime install, so this
-is a real regression in install friction. If that proves unacceptable, the answer is a self-contained or
-single-file publish — decide before the next release, and update the `/release` skill either way, since
-output moved to `bin\<Configuration>\net8.0-windows\`.
+The plain `net8.0-windows` build is framework-dependent (`Appcopier.exe` + `Appcopier.dll` +
+`runtimeconfig.json` + `deps.json` + `Newtonsoft.Json.dll`) and needs the .NET Desktop Runtime 8 installed.
+Since v0.30.0 users get a .NET Framework exe that needs no runtime at all, shipping that would have been a
+real regression in install friction, so **releases publish self-contained single-file instead** and end
+users still install nothing. The `/release` skill carries the command.
+
+Measured, not estimated:
+
+| Publish | Size | Files |
+| --- | --- | --- |
+| Framework-dependent (dev build) | ~0.2 MB | 5 + runtime install |
+| `PublishSingleFile` alone | 156 MB | 6 — five WPF native DLLs are **not** bundled by default |
+| `PublishSingleFile` + `IncludeNativeLibrariesForSelfExtract` + `EnableCompressionInSingleFile` | **69 MB** | **1** |
+
+Both extra flags are load-bearing. Without `IncludeNativeLibrariesForSelfExtract` the "single file" publish
+still emits `D3DCompiler_47_cor3.dll`, `PenImc_cor3.dll`, `PresentationNative_cor3.dll`,
+`vcruntime140_cor3.dll` and `wpfgfx_cor3.dll` alongside the exe, and shipping the exe alone then produces a
+download that cannot start — the exact failure mode this decision was meant to avoid.
+
+`PublishTrimmed` is deliberately **not** used. WinForms resolves types by reflection through the designers
+and `ComponentResourceManager`, so trimming removes code reached only at runtime; the result is missing
+resources and blank forms at launch rather than a build error.
+
+Verified on the compressed single-file artifact: the embedded manifest still matches the source exactly
+(`highestAvailable`, `longPathAware`, `dpiAware`), so elevation survives bundling.
 
 ## Test harness
 

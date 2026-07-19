@@ -13,9 +13,10 @@ I've written and tested **Appcopier on Windows 11**, but it should also run on W
 
 ## Requirements
 
-- Windows 11 (Windows 10 should work, untested)
-- [.NET Desktop Runtime 8](https://dotnet.microsoft.com/download/dotnet/8.0) — Appcopier moved from .NET Framework 4.8 to .NET 8 after v0.30.0. Versions up to 0.30.0 ran on the framework bundled with Windows and needed no separate install; newer builds need this runtime.
+- Windows 11, 64-bit (Windows 10 should work, untested)
 - Run as administrator. Backing up and restoring registry areas shells out to `regedit.exe`, which needs elevation.
+
+No .NET install is required — the runtime is bundled into the executable. Appcopier moved from .NET Framework 4.8 to .NET 8 after v0.30.0, and rather than ask you to install a runtime, releases ship self-contained. That is why the download grew from about 1 MB to about 69 MB; it is still a single `.exe` you can just run.
 
 
 
