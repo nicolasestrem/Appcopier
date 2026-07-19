@@ -27,6 +27,13 @@ The app declares `requestedExecutionLevel level="highestAvailable"` in `app.mani
 
 Note: `src/Appcopier/bin/` and `src/Appcopier/obj/` are untracked and gitignored.
 
+## Roadmap
+
+`docs/ROADMAP.md` holds the phased plan for the app and the reasoning behind it. Phase 1 (.NET 8 migration)
+is done; Phase 2 is the safety overhaul, Phase 3 is module coverage. Read it before proposing work that
+spans more than one file — it records what was deliberately deferred and why, including a list of known
+module bugs that are *not* regressions.
+
 ## Architecture
 
 ### Backup module system (the core pattern)
