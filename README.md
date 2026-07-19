@@ -11,6 +11,12 @@ The project might remind some of you of one of my first public projects - CloneA
 
 I've written and tested **Appcopier on Windows 11**, but it should also run on Windows 10 (no guarantee from me, though). Give it a try! This is the first release, and there's more to come.
 
+## Requirements
+
+- Windows 11 (Windows 10 should work, untested)
+- [.NET Desktop Runtime 8](https://dotnet.microsoft.com/download/dotnet/8.0) — Appcopier moved from .NET Framework 4.8 to .NET 8 after v0.30.0. Versions up to 0.30.0 ran on the framework bundled with Windows and needed no separate install; newer builds need this runtime.
+- Run as administrator. Backing up and restoring registry areas shells out to `regedit.exe`, which needs elevation.
+
 
 
 
