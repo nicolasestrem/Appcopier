@@ -5,6 +5,9 @@ src/packages/
 [Bb]in/
 [Oo]bj/
 
+# Release artifact directory used by the /release skill (a ~69 MB self-contained exe).
+publish/
+
 # Visual Studio user/workspace files
 .vs/
 *.user
