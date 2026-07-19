@@ -1,6 +1,5 @@
 ﻿using Appcopier;
 using System;
-using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -53,12 +52,12 @@ namespace Views
         }
 
         private void btnGithub_Click(object sender, EventArgs e)
-            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_GITREPO) { UseShellExecute = true });
+            => Utils.OpenUrl(DataHelper.Data.Uri.URL_GITREPO);
 
         private void linkURLIcon_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_ICONATTRIBUTION) { UseShellExecute = true });
+            => Utils.OpenUrl(DataHelper.Data.Uri.URL_ICONATTRIBUTION);
 
         private void linkURLDev_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
-            => Process.Start(new ProcessStartInfo(DataHelper.Data.Uri.URL_BUILTBYBEL) { UseShellExecute = true });
+            => Utils.OpenUrl(DataHelper.Data.Uri.URL_BUILTBYBEL);
     }
 }

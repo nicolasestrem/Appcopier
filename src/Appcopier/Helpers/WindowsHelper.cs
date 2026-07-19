@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace Appcopier
 {
@@ -190,6 +191,97 @@ namespace Appcopier
             foreach (Process process in processes)
             {
                 process.Kill(); // Kill method to forcefully terminate process
+            }
+        }
+
+        /// <summary>
+        /// Opens an http/https URL in the user's default browser at their normal privilege level.
+        /// </summary>
+        /// <remarks>
+        /// Routed through explorer.exe deliberately. Appcopier's manifest requests highestAvailable
+        /// because registry export needs it, and ShellExecute hands the parent's elevated token to
+        /// the child - so launching the browser directly opens it as Administrator. That leaves
+        /// admin-owned files in the browser profile (which can stop it starting normally afterwards)
+        /// and silently grants admin rights to anything downloaded and run from that window.
+        /// explorer.exe hands the request to the already-running shell, which runs as the user.
+        ///
+        /// This is also why the URL is checked first: with a shell launch, a non-web string is not
+        /// an invalid argument, it is an arbitrary file or program to execute - at admin integrity.
+        /// Callers pass constants today, so the check is here to keep that true.
+        ///
+        /// The remaining failure modes are environmental rather than programming errors - no default
+        /// browser registered, a broken protocol association, a locked-down machine - so they are
+        /// surfaced to the user and logged, not rethrown.
+        /// </remarks>
+        internal static void OpenUrl(string url)
+        {
+            if (!IsWebUrl(url))
+            {
+                logger.Log("Refused to open {0}: not an http/https URL.", url ?? "(null)");
+                return;
+            }
+
+            try
+            {
+                // ArgumentList quotes the value properly rather than pasting it into a command line.
+                var startInfo = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+                startInfo.ArgumentList.Add(url);
+
+                Process.Start(startInfo);
+            }
+            catch (Exception ex)
+            {
+                ReportUrlFailure(url, ex);
+            }
+        }
+
+        /// <summary>
+        /// True only for absolute http/https URLs. See <see cref="OpenUrl"/> for why this matters.
+        /// </summary>
+        internal static bool IsWebUrl(string url)
+            => Uri.TryCreate(url, UriKind.Absolute, out Uri parsed)
+               && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps);
+
+        /// <summary>
+        /// Logs a message without ever throwing, for the timer and thread-pool paths where an
+        /// escaping exception would terminate the process.
+        /// </summary>
+        /// <remarks>
+        /// Passing the message as a format ARGUMENT rather than as the format string matters: the
+        /// underlying logger runs string.Format, and an exception message containing braces would
+        /// otherwise throw inside the very handler meant to contain a failure.
+        /// </remarks>
+        internal static void LogQuietly(string message)
+        {
+            try
+            {
+                logger.Log("{0}", message);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void ReportUrlFailure(string url, Exception ex)
+        {
+            // OpenUrl is called from a System.Timers.Timer thread, and .NET 8 no longer swallows
+            // exceptions thrown by Elapsed handlers the way .NET Framework did - anything that
+            // escapes takes the process down. So the reporting needs containing too: showing a
+            // dialog can itself fail on exactly the locked-down machines this catch exists for.
+            // Swallowing is the last resort here, not a shortcut; the alternative is a crash whose
+            // only cause was that we could not display a warning about a link.
+            try
+            {
+                logger.Log("Failed to open {0}: {1}", url, ex.Message);
+
+                MessageBox.Show(
+                    $"Could not open this link in your browser:\n\n{url}\n\n{ex.Message}",
+                    "Unable to open link",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
+            catch
+            {
             }
         }
 

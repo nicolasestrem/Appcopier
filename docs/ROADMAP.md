@@ -68,6 +68,22 @@ which is exactly when they have no fallback.
   does not use them.
 - Write a restore-time log. There is currently no audit trail of what a restore changed.
 
+### MainForm's QR-code timer
+
+Found while hardening the link handlers; deferred here because none of it is specific to links, and
+all of it predates the .NET 8 migration.
+
+- `MainForm`'s `System.Timers.Timer` has no `SynchronizingObject`, so `QRTimerElapsed` runs on a
+  thread-pool thread. Its `MessageBox` therefore has no owner and can paint *behind* the main window
+  while the app stays clickable — a user sees nothing happen and clicks again, stacking up hidden
+  dialogs. Setting `SynchronizingObject` marshals the whole handler to the UI thread and fixes this.
+- That same timer is never stopped or disposed — it is not added to `components` and there is no
+  `FormClosing` handler — so an `Elapsed` still pending when the form closes runs against a disposed
+  control. Harmless today only because the log call swallows `ObjectDisposedException`.
+- `LogHelper.Log` is invoke-safe only by accident: `Control.InvokeRequired` returns false when the
+  target has no created handle, so in that state it touches the `RichTextBox` from whatever thread
+  called it. The catch-all hides it. This is part of the persistent-logging work above.
+
 ### Known module bugs
 
 - `WTelemetry` hardcodes `ControlSet001` instead of `CurrentControlSet` — wrong on systems booted from a

@@ -220,6 +220,71 @@ namespace Appcopier.Tests
             Assert.Equal(expected, global::Appcopier.Program.GetCurrentVersionTostring());
         }
 
+        // ---------------------------------------------------------------------------------------
+        // NormalizeVersion - the pure half of the local side. GetCurrentVersionTostring runs during
+        // MainForm construction, so anything that makes this throw is a startup crash.
+        // ---------------------------------------------------------------------------------------
+
+        [Theory]
+        [InlineData("0.30.0", "0.30.0")]
+        [InlineData("0.30.0.0", "0.30.0")]   // The four-part Win32 form collapses to three.
+        [InlineData("1.2.3", "1.2.3")]
+        [InlineData("  1.2.3  ", "1.2.3")]
+        public void NormalizeVersion_WellFormed_ReturnsThreePartVersion(string raw, string expected)
+        {
+            Assert.Equal(expected, global::Appcopier.Program.NormalizeVersion(raw));
+        }
+
+        [Theory]
+        [InlineData("1.2.3+abc1234", "1.2.3")]
+        [InlineData("1.2.3-preview.1", "1.2.3")]
+        public void NormalizeVersion_SemVerSuffix_IsStripped(string raw, string expected)
+        {
+            // What an AssemblyInformationalVersion would look like if one were ever introduced.
+            Assert.Equal(expected, global::Appcopier.Program.NormalizeVersion(raw));
+        }
+
+        [Fact]
+        public void NormalizeVersion_TwoComponents_ReturnsInputInsteadOfThrowing()
+        {
+            // The trap that made the naive Version.TryParse fix wrong: "1.2" parses just fine, but
+            // Version.ToString(3) throws ArgumentException because Build was never set.
+            Assert.Equal("1.2", global::Appcopier.Program.NormalizeVersion("1.2"));
+        }
+
+        [Theory]
+        [InlineData("not a version")]
+        [InlineData("1.2.3.4.5")]
+        [InlineData("-")]
+        [InlineData("+")]
+        public void NormalizeVersion_Unparseable_ReturnsInputVerbatim(string raw)
+        {
+            // Passed through, not replaced with a plausible-looking placeholder - see the remarks
+            // on NormalizeVersion. "-" and "+" also cover the suffix strip producing an empty
+            // candidate, which must not turn into an empty return value.
+            Assert.Equal(raw, global::Appcopier.Program.NormalizeVersion(raw));
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void NormalizeVersion_Missing_ReturnsUnknown(string raw)
+        {
+            // Reachable only if both AssemblyFileVersion and Application.ProductVersion come back
+            // empty. Previously this dereferenced null and took the app down at startup.
+            Assert.Equal(global::Appcopier.Program.UnknownVersion,
+                         global::Appcopier.Program.NormalizeVersion(raw));
+        }
+
+        [Fact]
+        public void NormalizeVersion_UnknownPlaceholder_IsNotMistakableForAVersion()
+        {
+            // The placeholder must never look like a real version, or a user reading the title bar
+            // cannot tell "we don't know" from "0.0.0 is installed".
+            Assert.False(Version.TryParse(global::Appcopier.Program.UnknownVersion, out _));
+        }
+
         [Fact]
         public void Assembly_DeclaresNoInformationalVersion_SoProductVersionCannotDrift()
         {
