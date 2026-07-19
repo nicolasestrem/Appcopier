@@ -1,6 +1,7 @@
 ﻿using Appcopier;
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Windows.Forms;
@@ -14,8 +15,11 @@ namespace DataHelper
         internal static string ProgramData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         internal static string WindowsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 
-        public static string DataRootDir = Application.StartupPath +
-                                            @"\app\";
+        // Application.StartupPath has no trailing separator on .NET Framework but does on .NET 5+,
+        // so plain concatenation would yield "...\\app\". Path.Combine normalizes both cases.
+        // The trailing separator is part of this field's contract - callers concatenate onto it.
+        public static string DataRootDir = Path.Combine(Application.StartupPath, "app") +
+                                            @"\";
 
         // Windows Terminal
         public static string ShellWT = LocalAppData +
@@ -35,6 +39,30 @@ namespace DataHelper
             public const string URL_GITLATEST = URL_GITREPO + "/releases/latest";
         }
 
+        /// <summary>
+        /// Extracts the AssemblyFileVersion value out of the raw text of a Properties/AssemblyInfo.cs.
+        /// </summary>
+        /// <remarks>
+        /// Pulled verbatim out of <see cref="CheckForUpdates"/> so the parse can be unit tested without
+        /// network I/O or MessageBoxes. The logic is intentionally byte-for-byte identical to what the
+        /// deployed v0.30.0 client does, including its quirks: only lines containing the literal
+        /// "[assembly: AssemblyFileVersion" are considered (so AssemblyVersion is correctly ignored),
+        /// the LAST such line wins, no match yields an empty string, and malformed lines throw.
+        /// Do not "harden" this without also considering that the remote file format is the contract.
+        /// </remarks>
+        internal static string ParseLatestVersion(string assemblyInfoText)
+        {
+            var readVersion = assemblyInfoText.Split('\n');
+            var infoVersion = readVersion.Where(t => t.Contains("[assembly: AssemblyFileVersion"));
+            var latestVersion = "";
+            foreach (var item in infoVersion)
+            {
+                latestVersion = item.Substring(item.IndexOf('(') + 2, item.LastIndexOf(')') - item.IndexOf('(') - 3);
+            }
+
+            return latestVersion;
+        }
+
         public static void CheckForUpdates()
         {
             if (IsInet() == true)
@@ -43,13 +71,7 @@ namespace DataHelper
                 {
                     string assemblyInfo = new WebClient().DownloadString(Data.Uri.URL_ASSEMBLY);
 
-                    var readVersion = assemblyInfo.Split('\n');
-                    var infoVersion = readVersion.Where(t => t.Contains("[assembly: AssemblyFileVersion"));
-                    var latestVersion = "";
-                    foreach (var item in infoVersion)
-                    {
-                        latestVersion = item.Substring(item.IndexOf('(') + 2, item.LastIndexOf(')') - item.IndexOf('(') - 3);
-                    }
+                    var latestVersion = ParseLatestVersion(assemblyInfo);
 
                     if (latestVersion ==
                         Program.GetCurrentVersionTostring())                      // Up-to-date
@@ -62,7 +84,7 @@ namespace DataHelper
 
                     {
                         if (MessageBox.Show($"App version {latestVersion} available.\nDo you want to open the Download page?", "App update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1) == DialogResult.Yes)
-                            Process.Start(Data.Uri.URL_GITLATEST);
+                            Process.Start(new ProcessStartInfo(Data.Uri.URL_GITLATEST) { UseShellExecute = true });
                     }
                 }
                 catch (Exception ex)

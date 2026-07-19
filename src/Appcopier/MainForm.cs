@@ -134,7 +134,7 @@ namespace Appcopier
 
                 if (result == DialogResult.Yes)
                 {
-                    Process.Start("https://github.com/builtbybel/Appcopier");
+                    Process.Start(new ProcessStartInfo("https://github.com/builtbybel/Appcopier") { UseShellExecute = true });
                 }
             }
         }
