@@ -47,7 +47,9 @@ namespace Appcopier
         /// A separate factory so the wording cannot drift across the 16 modules that restore.
         /// "applied" is not a synonym for "verified" here: regedit /s returns exit code 0 on a file
         /// it only partially applied, so having run it successfully is the strongest claim available
-        /// without reading the keys back. Read-back verification is Phase 2b.
+        /// without reading the keys back. Where a read-back is possible it narrows the wording rather
+        /// than replacing it - a key that is present afterwards proves the import created the key,
+        /// not that its values match the backup.
         /// </remarks>
         public static StepResult Applied(string target, string what)
             => new StepResult(target, ResultState.Succeeded, "applied " + what);
