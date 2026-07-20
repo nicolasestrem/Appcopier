@@ -1,30 +1,18 @@
-﻿using Appcopier;
+using Appcopier;
 
 namespace Conf
 {
-    public class DKeyboard : BackupBase
+    public class DKeyboard : RegistryModule
     {
-        public string Key = @"HKEY_CURRENT_USER\Control Panel\Keyboard";
+        protected override string Key => @"HKEY_CURRENT_USER\Control Panel\Keyboard";
+
+        // Core per-profile Control Panel key, so its absence means something is wrong.
+        protected override bool AbsenceIsNormal => false;
 
         public DKeyboard()
         {
             Title = "Keyboard";
-            Info = "This will backup the Windows Keyboard settigs.";
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
-
-        public override void Backup(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, false);
-        }
-
-        public override void Restore(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, true);
+            Info = "This will back up the Windows Keyboard settings.";
         }
     }
 }

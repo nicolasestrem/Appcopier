@@ -1,4 +1,4 @@
-﻿using Appcopier;
+using Appcopier;
 using DataHelper;
 using System.IO;
 using System.Threading.Tasks;
@@ -27,14 +27,18 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
-        public override async Task BackupAsync(string path)
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
-            await Utils.CopyFolder(Folder, path + Title);
+            CopyResult copy = await Utils.CopyFolder(Folder, Path.Combine(path, Title));
+
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true) });
         }
 
-        public override async Task RestoreAsync(string path)
+        public override async Task<ModuleResult> RestoreAsync(string path)
         {
-            await Utils.CopyFolder(path + Title, Folder);
+            CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
+
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true) });
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using Appcopier;
+using Appcopier;
 using System.Collections.Generic;
 using System.IO;
 
@@ -12,7 +12,7 @@ namespace Conf
         {
             Title = "Windows Update";
             Info = "This will back up Windows update settings (when to install automatic updates, when to reboot after installing updates, DetectionFrequency, AutoInstallMinorUpdates etc).";
-            
+
             LoadSettings();
         }
 
@@ -38,23 +38,38 @@ namespace Conf
             return b1;
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(outputFileName, k, false);
+                steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(inputFileName, k, true);
+                steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
+
+        // The CurrentVersion\WindowsUpdate key is core servicing state present on every install, so
+        // its absence is a real fault. The policy key under \AU exists only where WSUS or Group
+        // Policy configured it, which is a minority of machines - this module therefore lands on
+        // aggregation rule 4 (captured one, skipped one) on a large share of healthy systems.
+        private static bool AbsenceIsNormal(string key)
+            => key.EndsWith(@"\AU", System.StringComparison.OrdinalIgnoreCase);
 
         // Helper method to create a safe file name from registry key
         private string GetSafeFileName(string registryKey)

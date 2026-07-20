@@ -1,5 +1,6 @@
-﻿using Appcopier;
+using Appcopier;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 
@@ -15,51 +16,74 @@ namespace Conf
             Info = "This will back up and restore credentials of Wi-Fi networks.";
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             try
             {
                 // Execute netsh command to export Wi-Fi profiles to a file
-                ExecuteNetshCommand($"wlan export profile key=clear folder=\"{path.TrimEnd('\\')}\""); // remove trailing backslash from path
+                int exitCode = ExecuteNetshCommand($"wlan export profile key=clear folder=\"{path.TrimEnd('\\')}\""); // remove trailing backslash from path
 
-                // Check if the file was created
-                if (Directory.Exists(path))
+                if (exitCode != 0)
                 {
-                    logger.Log($"Wi-Fi Backup successful. File created: {path}");
+                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
                 }
                 else
                 {
-                    logger.Log("Wi-Fi Backup failed. File not created.");
+                    // netsh writes one XML per profile, so counting them is the only evidence that
+                    // anything was exported. The previous check was Directory.Exists(path) on the
+                    // backup folder this app had just created, which was true no matter what netsh
+                    // did - it could not have reported a failure.
+                    string[] profiles = Directory.GetFiles(path, "*.xml");
+
+                    steps.Add(profiles.Length > 0
+                        ? StepResult.Succeeded(Title, $"exported {profiles.Length} Wi-Fi profile(s)")
+                        : StepResult.Skipped(Title, "there are no saved Wi-Fi profiles on this system"));
                 }
             }
             catch (Exception ex)
             {
-                logger.Log($"Backup failed. Exception: {ex.Message}");
+                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             try
             {
                 // Search for a file in the specified folder that starts with "wlan" and has an XML extension
+                //
+                // KNOWN DEFECT, left in place deliberately: netsh names these files after the
+                // profile ("Wi-Fi-MyNetwork.xml"), so this filter matches almost nothing, and even
+                // when it does only the first profile is restored. Fixing the selection is a later
+                // task; this change makes the module report what it did rather than claim success.
                 string[] xmlFiles = Directory.GetFiles(path, "WLAN*.xml");
 
                 if (xmlFiles.Length > 0)
                 {
                     // Import first found XML file
-                    ExecuteNetshCommand($"wlan add profile filename=\"{xmlFiles[0]}\"");
-                    logger.Log($"Wi-Fi Restore successful. File imported: {xmlFiles[0]}");
+                    int exitCode = ExecuteNetshCommand($"wlan add profile filename=\"{xmlFiles[0]}\"");
+
+                    steps.Add(exitCode == 0
+                        ? StepResult.Applied(Title, Path.GetFileName(xmlFiles[0]))
+                        : StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
                 }
                 else
                 {
-                    logger.Log("Wi-Fi Restore failed. No matching XML file found.");
+                    steps.Add(StepResult.Skipped(Title, "no matching Wi-Fi profile file was found in this backup"));
                 }
             }
             catch (Exception ex)
             {
-                logger.Log($"Restore failed. Exception: {ex.Message}");
+                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
         // Helper method to execute netsh commands
@@ -83,8 +107,8 @@ namespace Conf
 
                 process.WaitForExit();
 
-                logger.Log($"Wi-Fi Conf: {output}");
-                logger.Log($"Wi-Fi Conf: {error}");
+                logger.LogMessage($"Wi-Fi Conf: {output}");
+                logger.LogMessage($"Wi-Fi Conf: {error}");
 
                 return process.ExitCode;
             }

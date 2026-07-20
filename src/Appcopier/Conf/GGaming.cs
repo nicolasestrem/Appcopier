@@ -1,4 +1,4 @@
-﻿using Appcopier;
+using Appcopier;
 using System.Collections.Generic;
 using System.IO;
 
@@ -39,23 +39,36 @@ namespace Conf
             return b1;
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(outputFileName, k, false);
+                steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(inputFileName, k, true);
+                steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
+
+        // True for both keys. GameBar and GameDVR are commonly disabled by policy or stripped by
+        // debloat scripts, so an absent key means nothing is configured - not that anything broke.
+        // Like WTelemetry, this module legitimately aggregates to Skipped on such a machine.
+        private static bool AbsenceIsNormal(string key) => true;
 
         // Helper method to create a safe file name from registry key
         private string GetSafeFileName(string registryKey)

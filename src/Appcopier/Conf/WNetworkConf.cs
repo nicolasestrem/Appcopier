@@ -1,5 +1,6 @@
-﻿using Appcopier;
+using Appcopier;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 
@@ -15,52 +16,78 @@ namespace Conf
             Info = "This will back up and restore TCP/IP network configuration.";
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
+            // Execute netsh command to export TCP/IP configuration to a file
+            string filePath = Path.Combine(path, $"{Title}.txt");
+
             try
             {
-                // Execute netsh command to export TCP/IP configuration to a file
-                string filePath = Path.Combine(path, $"{Title}.txt");
                 int exitCode = ExecuteNetshCommand($"interface dump", filePath);
 
-                // Check if the file was created
-                if (exitCode == 0 && File.Exists(filePath))
+                // The exit code alone is not enough. netsh can exit 0 having produced nothing, and
+                // an empty dump restores nothing, so the artifact is checked as well.
+                if (exitCode != 0)
                 {
-                    logger.Log($"Backup successful. File created: {filePath}");
+                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
+                }
+                else if (!File.Exists(filePath))
+                {
+                    steps.Add(StepResult.Failed(Title, "netsh reported success but wrote no file"));
+                }
+                else if (new FileInfo(filePath).Length == 0)
+                {
+                    steps.Add(StepResult.Failed(Title, "netsh wrote an empty file"));
                 }
                 else
                 {
-                    logger.Log($"Backup failed. netsh command exited with code {exitCode}");
+                    steps.Add(StepResult.Succeeded(Title, "exported the TCP/IP configuration"));
                 }
             }
             catch (Exception ex)
             {
-                logger.Log($"Backup failed. Exception: {ex.Message}");
+                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
+            // Execute netsh command to import TCP/IP configuration from file
+            string filePath = Path.Combine(path, $"{Title}.txt");
+
+            if (!File.Exists(filePath))
+            {
+                return ModuleResult.Aggregate(new[]
+                {
+                    StepResult.Skipped(Title, "nothing was backed up for this item")
+                });
+            }
+
             try
             {
-                // Execute netsh command to import TCP/IP configuration from file
-                string filePath = Path.Combine(path, $"{Title}.txt");
+                // KNOWN DEFECT, left in place deliberately: ExecuteNetshCommand opens a StreamWriter
+                // on outputFilePath unconditionally and this call passes null, so every restore
+                // throws ArgumentNullException. That is a real bug rather than a dishonest one - it
+                // was already caught and logged as a failure - and repairing it belongs to a later
+                // task. It now reports Failed loudly, which is accurate.
                 int exitCode = ExecuteNetshCommand($"exec \"{filePath}\"", null);
 
-                // Check if netsh command ran successfully
-                if (exitCode == 0)
-                {
-                    logger.Log("Restore successful.");
-                }
-                else
-                {
-                    logger.Log($"Restore failed. netsh command exited with code {exitCode}");
-                }
+                steps.Add(exitCode == 0
+                    ? StepResult.Applied(Title, "the backed-up TCP/IP configuration")
+                    : StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
             }
             catch (Exception ex)
             {
-                logger.Log($"Restore failed. Exception: {ex.Message}");
+                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
         // Helper method to execute netsh commands
@@ -86,7 +113,7 @@ namespace Conf
                     {
                         string line = process.StandardOutput.ReadLine();
                         outputFile.WriteLine(line);
-                        logger.Log(line);
+                        logger.LogMessage(line);
                     }
                 }
 

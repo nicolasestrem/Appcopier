@@ -1,6 +1,5 @@
-﻿using Appcopier;
+using Appcopier;
 using DataHelper;
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -9,8 +8,6 @@ namespace Conf
 {
     public class WThemes : BackupBase
     {
-        private static readonly LogHelper logger = LogHelper.Instance;
-
         public List<string> Folders = new List<string>();
         public List<string> Keys = new List<string>();
 
@@ -58,42 +55,56 @@ namespace Conf
             return b1 || b2;
         }
 
-        public override async Task BackupAsync(string path)
+        /// <remarks>
+        /// The one module with heterogeneous sub-operations: two folder copies and a registry
+        /// export, folded through a single Aggregate. The backup sources use absenceIsNormal=false
+        /// because both ship with Windows or are created at first logon, so a missing one is a real
+        /// fault rather than a machine that simply never had them.
+        /// </remarks>
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string folder in Folders)
             {
                 string folderName = Path.GetFileName(folder);
                 string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
 
-                try
-                {
-                    await Utils.CopyFolder(folder, backupFolderPath).ConfigureAwait(true);
-                }
-                catch (Exception ex)
-                {
-                    logger.Log($"Failed to backup folder '{folder}': {ex.Message}");
-                }
+                // No try/catch here any more: CopyFolder does not throw, it returns counts. The
+                // catch this replaced logged the failure and then let the module report success.
+                CopyResult copy = await Utils.CopyFolder(folder, backupFolderPath).ConfigureAwait(true);
+                steps.Add(copy.ToStep(folder, false));
             }
 
             foreach (string k in Keys)
             {
-                Utils.ExportImportRegistryKey(path + Title + ".reg", k, false);
+                steps.Add(Utils.ExportRegistryKey(Path.Combine(path, Title + ".reg"), k, false));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override async Task RestoreAsync(string path)
+        public override async Task<ModuleResult> RestoreAsync(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string folder in Folders)
             {
                 string folderName = Path.GetFileName(folder);
                 string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
-                await Utils.CopyFolder(backupFolderPath, folder).ConfigureAwait(true);
+
+                // absenceIsNormal is true on this side: the folder being read is one this app wrote,
+                // and a backup taken before this module existed legitimately does not contain it.
+                CopyResult copy = await Utils.CopyFolder(backupFolderPath, folder).ConfigureAwait(true);
+                steps.Add(copy.ToStep(folder, true));
             }
 
             foreach (string k in Keys)
             {
-                Utils.ExportImportRegistryKey(path + Title + ".reg", k, true);
+                steps.Add(Utils.ImportRegistryKey(Path.Combine(path, Title + ".reg"), k));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
         // Helper method to create a safe folder name from folder path

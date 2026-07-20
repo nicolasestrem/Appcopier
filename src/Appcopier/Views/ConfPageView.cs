@@ -132,12 +132,31 @@ namespace Views
                     }
                 }
 
+                List<ModuleResult> results = new List<ModuleResult>();
+
                 foreach (BackupBase a in selectedConfigs)
                 {
                     linkSubHeader.Text = $"Backing up: {a.Title}";
 
-                    // Use asynchronous BackupAsync method and await its completion
-                    await a.BackupAsync(CurrentBackupPath);
+                    ModuleResult outcome;
+
+                    try
+                    {
+                        // Use asynchronous BackupAsync method and await its completion
+                        outcome = await a.BackupAsync(CurrentBackupPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Rule 6. Mandatory, not defensive style: this loop is driven by an
+                        // async void click handler, so an escaping exception is unhandled and
+                        // takes the process down along with every result gathered so far.
+                        outcome = ModuleResult.Aggregate(new[]
+                        {
+                            StepResult.Failed(a.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
+                        });
+                    }
+
+                    results.Add(outcome);
 
                     linkSubHeader.Text = "Choose settings";
                 }
@@ -180,21 +199,43 @@ namespace Views
         }
 
         // Restoration logic with selected configurations
-        private async Task PerformRestoration(List<BackupBase> selectedConfigs)
+        private async Task<List<ModuleResult>> PerformRestoration(List<BackupBase> selectedConfigs)
         {
+            List<ModuleResult> results = new List<ModuleResult>();
+
             if (CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath))
             {
                 foreach (BackupBase config in selectedConfigs)
                 {
-                    await config.RestoreAsync(CurrentRestorePath);
+                    ModuleResult outcome;
+
+                    try
+                    {
+                        outcome = await config.RestoreAsync(CurrentRestorePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Rule 6, and it matters more here than on the backup path: this method is
+                        // awaited by HandleRestorationAfterSelection, which is itself awaited from
+                        // an async void handler in RestPageView, and AppStoreApps.Restore opens a
+                        // dialog from a thread-pool thread with no message pump.
+                        outcome = ModuleResult.Aggregate(new[]
+                        {
+                            StepResult.Failed(config.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
+                        });
+                    }
+
+                    results.Add(outcome);
                 }
             }
+
+            return results;
         }
 
         // Asynchronous method to handle restoration after the user selects restoration path
         public async Task HandleRestorationAfterSelection()
         {
-            await PerformRestoration(selectedConfigs);
+            List<ModuleResult> results = await PerformRestoration(selectedConfigs);
 
             // Check if any selected configuration requires a restart
             bool requiresRestart = selectedConfigs.Any(config => config.RequiresExplorerRestart);
