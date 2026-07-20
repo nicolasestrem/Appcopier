@@ -102,6 +102,16 @@ exit code alone is not a success signal and the file check is mandatory. M7 is t
 `netsh`. M4 means the BOM hazard is real for a byte-wise compare but absent for `File.ReadAllText` —
 the implementation is pinned to that call.
 
+**M8, measured 2026-07-20 during the elevated smoke session, after the branch was opened.** `wt.exe`
+returns as soon as it has forwarded its command; it does not wait for what it launched. On a real
+backup the app wrote `backup_log.txt` at 07:35:54.295 recording `Remember installed apps FAILED —
+winget reported success but wrote no file`, and winget wrote a complete, valid 113-package export to
+that exact path at 07:36:23.164. A successful backup was reported as a failure, 29 seconds early.
+
+This one is worth keeping as the phase's own lesson. Every other measurement here fed a *reporting*
+rule. This one shows a reporting layer cannot save a module that is asking its question at the wrong
+moment: `Verify` was correct, its inputs were not. The fix was to wait on `winget.exe` itself.
+
 Still unmeasured, and required before reason strings are frozen (needs an elevated session):
 `regedit /e` exit code on a **permission-denied** key; `regedit /s` exit codes for missing, truncated,
 and partially-applied files; the effect of the undocumented extra key argument at `WindowsHelper.cs:92`;

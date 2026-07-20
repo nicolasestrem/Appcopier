@@ -99,7 +99,7 @@ namespace Conf
                 // and a backup taken before this module existed legitimately does not contain it.
                 CopyResult copy = await Utils.CopyFolder(backupFolderPath, folder).ConfigureAwait(true);
                 // Title, not the full filesystem path: see the matching comment in BackupAsync.
-                steps.Add(copy.ToStep(Title, true));
+                steps.Add(copy.ToStep(Title, true, NothingBackedUp));
             }
 
             foreach (string k in Keys)

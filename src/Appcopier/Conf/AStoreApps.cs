@@ -21,7 +21,26 @@ namespace Conf
             // Execute winget command to list installed apps
             string outputFilePath = Path.Combine(path, $"{Title}.json");
 
-            ProcessOutcome outcome = await Utils.RunWTAsync($"winget export -o \"{outputFilePath}\"");
+            // Clear the target before running winget. ConfPageView reuses one timestamped folder for
+            // every Backup click in an app session, so a second click can find a valid export from
+            // the first still sitting there. winget has a documented-here failure mode of exiting 0
+            // having written nothing (no source configured), and Verify would then be handed last
+            // run's file: every check passes, the run reports success, and the user keeps an
+            // outdated package list believing it was refreshed.
+            try
+            {
+                if (File.Exists(outputFilePath))
+                    File.Delete(outputFilePath);
+            }
+            catch (Exception ex)
+            {
+                return ModuleResult.Aggregate(new[]
+                {
+                    StepResult.Failed(Title, "could not clear the previous export at " + outputFilePath + ": " + ex.Message)
+                });
+            }
+
+            ProcessOutcome outcome = await Utils.RunWingetAsync(false, "export", "-o", outputFilePath);
 
             return ModuleResult.Aggregate(new[] { Verify(outcome, outputFilePath) });
         }

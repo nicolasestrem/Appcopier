@@ -11,6 +11,17 @@ namespace Appcopier
         // Property to display Hints
         public virtual string WarningMessage { get; protected set; } = "";
 
+        /// <summary>
+        /// What an absent source means on the RESTORE side, where the source is the backup folder.
+        /// </summary>
+        /// <remarks>
+        /// Shared so the restore side cannot drift back into backup-side wording. Saying "not
+        /// present on this system" during a restore describes the wrong machine: the thing that is
+        /// missing is the backup, and the live machine was never examined. Several modules already
+        /// spelled this sentence out by hand; this is the same sentence, in one place.
+        /// </remarks>
+        protected const string NothingBackedUp = "nothing was backed up for this item";
+
         // Property to display Info
         public string Title { get; set; }
 

@@ -58,10 +58,11 @@ namespace Conf
         {
             CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
 
-            // No custom wording here: an absent source on restore means the BACKUP FOLDER has no
-            // Edge data, not that Edge has never been launched on this machine - that claim about
-            // the live machine was never checked, so it falls through to ToStep's default wording.
-            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true) });
+            // An absent source on restore means the BACKUP FOLDER has no Edge data, not that Edge
+            // has never been launched on this machine - a claim about the live machine that was
+            // never checked. This comment used to note that and then fall through to the default
+            // wording anyway, which stated exactly the unchecked claim.
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true, NothingBackedUp) });
         }
 
         /// <remarks>

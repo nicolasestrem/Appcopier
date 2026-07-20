@@ -58,12 +58,18 @@ namespace Appcopier
         /// modules will therefore read Failed whenever the browser was running, which is the
         /// intended signal, not a regression.
         /// </remarks>
-        public StepResult ToStep(string target, bool absenceIsNormal)
+        /// <param name="absentReason">
+        /// What a missing source means for THIS direction. Restore callers must supply it: their
+        /// source is the backup folder, so the default wording describes the wrong machine
+        /// entirely - it would tell the user the item is "not present on this system" when the
+        /// fact is that nothing was ever backed up for it. Backup callers leave it null.
+        /// </param>
+        public StepResult ToStep(string target, bool absenceIsNormal, string absentReason = null)
         {
             if (SourceMissing)
             {
                 return absenceIsNormal
-                    ? StepResult.Skipped(target, "not present on this system")
+                    ? StepResult.Skipped(target, absentReason ?? "not present on this system")
                     : StepResult.Failed(target, "expected folder for " + target + " is missing");
             }
 

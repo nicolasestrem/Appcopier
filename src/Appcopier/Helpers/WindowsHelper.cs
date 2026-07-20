@@ -117,6 +117,27 @@ namespace Appcopier
         {
             tool = tool ?? DefaultRegistryTool;
 
+            // Clear any file already at the target path FIRST - before the probe, not just before
+            // the export. Two separate reasons, and the second one bites in normal use:
+            //
+            // 1. Provenance. The verification below could otherwise be satisfied by a file this run
+            //    did not write, making this method's promise to verify what it produced false.
+            //
+            // 2. Stale artifacts across runs. ConfPageView reuses one timestamped folder for every
+            //    Backup click in an app session, so clicking Backup twice writes into the same
+            //    place. If the key existed on the first click and is gone on the second, returning
+            //    early on Absent leaves the FIRST run's .reg file sitting there while the log says
+            //    the item was skipped. A later restore then imports registry state the user was
+            //    told had not been captured - the same landmine as a part-written export, arriving
+            //    by a different route.
+            //
+            // A delete failure fails the step even when absence is normal: a file we cannot remove
+            // is a file we cannot vouch for, and "skipped" would imply the folder holds nothing.
+            string clearError = TryDeleteExport(filePath);
+
+            if (clearError != null)
+                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + clearError);
+
             KeyProbe probe = ProbeKey(registryPath);
 
             if (probe == KeyProbe.Indeterminate)
@@ -128,16 +149,6 @@ namespace Appcopier
                     ? StepResult.Skipped(registryPath, "not present on this system")
                     : StepResult.Failed(registryPath, "expected " + registryPath + " is missing");
             }
-
-            // Clear any file already at the target path FIRST. Otherwise the verification below
-            // can be satisfied by a file this run did not write, and the method's promise to
-            // verify what it produced would be false. Not reachable in today's modules - WThemes
-            // is the only one looping several keys into a single filename and it holds exactly one
-            // key - but it becomes live the moment a second key is added, silently.
-            string clearError = TryDeleteExport(filePath);
-
-            if (clearError != null)
-                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + clearError);
 
             ProcessOutcome outcome = tool.Export(filePath, registryPath);
 
@@ -676,62 +687,76 @@ namespace Appcopier
         }
 
         /// <summary>
-        /// How long to wait for Windows Terminal before giving up on it.
+        /// How long to wait for winget before giving up on it.
         /// </summary>
         /// <remarks>
-        /// Much longer than RegeditTool's 60s, on purpose. This wait covers winget, which can spend
-        /// minutes updating its sources or downloading a package on a slow link, and the terminal
-        /// window is visible (CreateNoWindow is false) - so the user can see it working and can
-        /// answer any prompt it puts up. Killing a legitimately slow export would be a false failure
-        /// report, which is the exact thing this phase exists to remove.
+        /// Much longer than RegeditTool's 60s, on purpose. winget can spend minutes updating its
+        /// sources or downloading a package on a slow link - a measured install here pulled 146 MB -
+        /// and killing a legitimately slow run would be a false failure report, the exact thing this
+        /// phase exists to remove.
         ///
         /// The timeout is a backstop for a wedged process, not a progress budget. It has to exist:
         /// AStoreApps.BackupAsync awaits this from ConfPageView.RunBackup with the window disabled,
         /// so an unbounded wait left the whole app frozen with no way out but Task Manager.
         /// </remarks>
-        private const int WtTimeoutMs = 600000;
+        private const int WingetTimeoutMs = 600000;
 
         /// <summary>
-        /// Runs Windows Terminal and waits for it, reporting how it went.
+        /// Runs winget and waits for it to finish, reporting how it went.
         /// </summary>
         /// <remarks>
-        /// Replaces an "async void" version that returned to its caller at the first await, so
-        /// AStoreApps logged "Backup successful" before winget had started. async void cannot feed a
-        /// result into anything - that is not a style preference here, it is the reason the module
-        /// could not report the truth.
+        /// Runs winget.exe DIRECTLY. This used to launch it through Windows Terminal, and waiting on
+        /// wt.exe is waiting on the wrong process: wt is a launcher that hands the command off and
+        /// exits immediately. Measured 2026-07-20 on a real backup - the export was reported as
+        /// "winget reported success but wrote no file" at 07:35:54, and winget wrote a complete,
+        /// valid 113-package export to that same path at 07:36:23, 29 seconds after the app had
+        /// already written its log. A backup that worked was reported as failed.
+        ///
+        /// That is the cry-wolf direction of this phase's failure mode, and no amount of care in the
+        /// reporting layer could fix it: the module was being asked a question about a file that was
+        /// not finished being written. The exit code being checked belonged to a process that had
+        /// done nothing but forward an argument.
+        ///
+        /// Arguments go through ArgumentList rather than one pasted string, for the reason given in
+        /// RegeditTool.Run: the export path contains spaces and the backup folder name contains a
+        /// hyphen, and manual quoting is the kind of thing that works until it silently does not.
         /// </remarks>
-        internal static async Task<ProcessOutcome> RunWTAsync(string args)
+        internal static async Task<ProcessOutcome> RunWingetAsync(bool showWindow, params string[] args)
         {
-            if (!File.Exists(DataHelper.Data.ShellWT))
-                return ProcessOutcome.NeverStarted("Windows Terminal is not installed");
+            string winget = DataHelper.Data.ShellWinget;
+
+            if (!File.Exists(winget))
+                return ProcessOutcome.NeverStarted("winget is not installed (looked in " + winget + ")");
 
             return await Task.Run(() =>
             {
                 // Tracks whether Process.Start succeeded, mirroring RegeditTool.Run in
-                // IRegistryTool.cs: once Start() has returned, Windows Terminal may already be
-                // running, so an exception from WaitForExit must not be reported as "never started".
+                // IRegistryTool.cs: once Start() has returned, winget may already be installing, so
+                // an exception from WaitForExit must not be reported as "never started".
                 bool started = false;
 
                 try
                 {
                     ProcessStartInfo startInfo = new ProcessStartInfo
                     {
-                        FileName = DataHelper.Data.ShellWT,
-                        Arguments = args,
+                        FileName = winget,
                         // The old WorkingDirectory was Data.DataRootDir, which may not exist yet -
                         // Process.Start then threw Win32Exception onto the sync context.
                         UseShellExecute = false,
-                        CreateNoWindow = false
+                        CreateNoWindow = !showWindow
                     };
+
+                    foreach (string arg in args)
+                        startInfo.ArgumentList.Add(arg);
 
                     using (Process proc = Process.Start(startInfo))
                     {
                         if (proc == null)
-                            return ProcessOutcome.NeverStarted("Windows Terminal did not start");
+                            return ProcessOutcome.NeverStarted("winget did not start");
 
                         started = true;
 
-                        if (!proc.WaitForExit(WtTimeoutMs))
+                        if (!proc.WaitForExit(WingetTimeoutMs))
                         {
                             try
                             {

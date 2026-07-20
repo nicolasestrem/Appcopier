@@ -61,7 +61,7 @@ namespace Conf
         {
             CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
 
-            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true) });
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true, NothingBackedUp) });
         }
     }
 }

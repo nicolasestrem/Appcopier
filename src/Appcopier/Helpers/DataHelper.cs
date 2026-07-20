@@ -20,9 +20,13 @@ namespace DataHelper
         public static string DataRootDir = Path.Combine(Application.StartupPath, "app") +
                                             @"\";
 
-        // Windows Terminal
-        public static string ShellWT = LocalAppData +
-                                        @"\Microsoft\WindowsApps\wt.exe";
+        // winget. Same App Execution Alias directory Windows Terminal lives in.
+        //
+        // Deliberately winget.exe and not wt.exe: the app used to run winget THROUGH Windows
+        // Terminal, and wt is a launcher that exits as soon as it has handed the command over, so
+        // waiting on it told us nothing about winget. See Utils.RunWingetAsync for the measurement.
+        public static string ShellWinget = LocalAppData +
+                                        @"\Microsoft\WindowsApps\winget.exe";
 
         // Obtain current date and time
         internal static string Now = $"{DateTime.Now:G}";

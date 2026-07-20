@@ -89,6 +89,34 @@ namespace Appcopier.Tests
             Assert.Equal(ResultState.Skipped, (await pending).State);
         }
 
+        // The app-restore dialog used to discard RunWinget's outcome entirely, so with winget
+        // missing the loop finished instantly having installed nothing and said nothing.
+        //
+        // This covers the mapping, not the loop that calls it: whether RestorePackages actually
+        // surfaces these needs a dialog and a real winget, and is on the manual smoke matrix.
+        [Fact]
+        public void RestAppsForm_Describe_NamesEveryWayWingetCanFail()
+        {
+            Assert.Null(Views.RestAppsForm.Describe(ProcessOutcome.Ran(0)));
+
+            Assert.Contains("could not run winget",
+                Views.RestAppsForm.Describe(ProcessOutcome.NeverStarted("not installed")));
+
+            Assert.Contains("did not finish",
+                Views.RestAppsForm.Describe(ProcessOutcome.Timeout()));
+
+            // Started-but-unknown must NOT read as "could not run winget": winget may have
+            // half-installed the package, and reporting it as untouched would be a false statement
+            // about whether this machine was changed.
+            string unknown = Views.RestAppsForm.Describe(ProcessOutcome.OutcomeUnknown("pipe closed"));
+            Assert.Contains("could not be determined", unknown);
+            Assert.DoesNotContain("could not run winget", unknown);
+
+            Assert.Contains("code 1", Views.RestAppsForm.Describe(ProcessOutcome.Ran(1)));
+
+            Assert.NotNull(Views.RestAppsForm.Describe(null));
+        }
+
         // Restoring from a folder containing no .reg file must be Skipped, not a false success.
         //
         // A freshly created, uniquely named folder rather than %TEMP% itself: this used to pass only

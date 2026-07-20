@@ -163,6 +163,24 @@ namespace Appcopier.Tests
             Assert.Contains("disappeared", r.FirstError, System.StringComparison.OrdinalIgnoreCase);
         }
 
+        // On restore the source IS the backup folder, so the backup-side sentence describes the
+        // wrong machine: it reports the item as absent from this system, a claim about the live
+        // machine that restore never examined.
+        [Fact]
+        public void ToStep_MissingSourceOnRestore_TalksAboutTheBackupNotTheMachine()
+        {
+            CopyResult r = new CopyResult { SourceMissing = true };
+
+            StepResult restore = r.ToStep("Google Chrome", true, "nothing was backed up for this item");
+            StepResult backup = r.ToStep("Google Chrome", true);
+
+            Assert.Equal(ResultState.Skipped, restore.State);
+            Assert.Equal("nothing was backed up for this item", restore.Reason);
+
+            // The backup side is unchanged - there the sentence is true.
+            Assert.Equal("not present on this system", backup.Reason);
+        }
+
         // A directory-level failure must not be described as a file failure.
         [Fact]
         public void ToStep_FolderFailureOnly_DoesNotInventAFileCount()

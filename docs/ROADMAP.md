@@ -128,14 +128,16 @@ Each of these becomes *visible* once 2a lands, which is why they follow rather t
 - ~~`CWiFiConf` restore imports only `xmlFiles[0]`~~ **Fixed in 2a**, along with the filename-filter
   half of the pair — correcting only one would have left the module still restoring nothing useful.
 - `AStoreApps` restore is dead code; the real `winget import` is commented out.
-- `Utils.RunWTAsync` waits on `wt.exe`, which is a launcher rather than the work. Windows Terminal is
-  expected to hand the command to an existing instance and exit immediately, so `WaitForExit` may
-  return long before winget has finished — the export verification would then run against a file
-  winget has not written yet and report "winget reported success but wrote no file" on a backup that
-  actually succeeds moments later. **Not measured**, unlike the `regedit` and `netsh` behaviours
-  recorded above; do that first. If it holds, the fix is to run winget directly rather than through
-  the terminal, which is a behaviour change rather than a reporting one. 2a bounded the wait so the
-  app cannot freeze on it, which is a separate concern from waiting on the right process.
+- ~~`Utils.RunWTAsync` waits on `wt.exe`, which is a launcher rather than the work~~ **Measured and
+  fixed in 2a.** Filed here as a suspicion, then confirmed on a real backup, 2026-07-20: the app
+  reported `Remember installed apps FAILED — winget reported success but wrote no file` and wrote
+  `backup_log.txt` at 07:35:54.295, and winget wrote a complete, valid 113-package export to that
+  same path at 07:36:23.164 — **29 seconds after the app had already declared it missing**. `wt.exe`
+  forwards the command and exits, so `WaitForExit` was returning on a process that had done nothing
+  but pass along an argument. A backup that worked was reported as failed. `Utils.RunWingetAsync`
+  now runs `winget.exe` directly, so the wait and the exit code belong to the process doing the
+  work. This is the cry-wolf direction of the phase's failure mode, and it was invisible from the
+  reporting layer: no care taken there could fix being asked about a file still being written.
 - ~~`Utils.RunWT` is `async void`~~ **Fixed in 2a**: it is now `RunWTAsync` returning a
   `ProcessOutcome`. `async void` returns to its caller at the first `await`, so `AStoreApps` logged
   success before winget had started — it was structurally incapable of reporting a real result, which

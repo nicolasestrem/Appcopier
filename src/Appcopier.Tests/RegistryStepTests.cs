@@ -24,6 +24,39 @@ namespace Appcopier.Tests
         private const string PresentKey = @"HKEY_CURRENT_USER\Control Panel\Mouse";
         private const string AbsentKey = @"HKEY_CURRENT_USER\Software\Appcopier\NoSuchKeyAtAll";
 
+        // Backing up twice in one app session writes into the same folder, so the second run can
+        // find the first run's export still sitting at the target path. If the key has since been
+        // removed, the early return on Absent used to leave that file behind while the log said the
+        // item was skipped - and a later restore would import registry state the user was told had
+        // not been captured.
+        [Fact]
+        public void Export_KeyNowAbsent_RemovesTheEarlierRunsFile()
+        {
+            string path = Valid("stale.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));
+
+            StepResult s = Utils.ExportRegistryKey(path, AbsentKey, true, tool);
+
+            Assert.Equal(ResultState.Skipped, s.State);
+            Assert.False(File.Exists(path));
+
+            // The clear must not be a side effect of running the export - regedit was never invoked.
+            Assert.False(tool.ExportCalled);
+        }
+
+        // Same stale file, but absence is NOT normal for this key. The file must still go: the
+        // reason it is being removed has nothing to do with how the step is classified.
+        [Fact]
+        public void Export_KeyMissingAndNotNormal_StillRemovesTheEarlierRunsFile()
+        {
+            string path = Valid("stale2.reg");
+
+            StepResult s = Utils.ExportRegistryKey(path, AbsentKey, false, new FakeTool(ProcessOutcome.Ran(0)));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(File.Exists(path));
+        }
+
         private string Valid(string name)
         {
             string p = Path.Combine(_dir, name);
