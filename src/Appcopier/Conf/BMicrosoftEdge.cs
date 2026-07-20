@@ -29,6 +29,12 @@ namespace Conf
         public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
             => new[] { new RestoreCloseRequirement("msedge", "Microsoft Edge", true) };
 
+        // See the matching note in BGoogleChrome: this is what stops Edge being closed for a restore
+        // that has nothing to restore.
+        public override bool HasBackupIn(string restorePath)
+            => !string.IsNullOrWhiteSpace(restorePath)
+               && Directory.Exists(Path.Combine(restorePath, Title));
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();

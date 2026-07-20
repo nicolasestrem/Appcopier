@@ -63,6 +63,130 @@ namespace Appcopier.Tests
         private static Dictionary<string, CloseResult> Closed(string process, CloseResult outcome)
             => new Dictionary<string, CloseResult> { { process, outcome } };
 
+        /// <summary>A module that answers whether the backup folder holds anything for it.</summary>
+        private sealed class ArtifactModule : BackupBase
+        {
+            private readonly bool hasBackup;
+
+            public ArtifactModule(string title, bool hasBackup)
+            {
+                Title = title;
+                this.hasBackup = hasBackup;
+            }
+
+            public string AskedAbout { get; private set; }
+
+            public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+                => new[] { Chrome() };
+
+            public override bool HasBackupIn(string restorePath)
+            {
+                AskedAbout = restorePath;
+                return hasBackup;
+            }
+        }
+
+        private sealed class ThrowingArtifactModule : BackupBase
+        {
+            public ThrowingArtifactModule() { Title = "Throws"; }
+
+            public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+                => new[] { Chrome() };
+
+            public override bool HasBackupIn(string restorePath)
+                => throw new UnauthorizedAccessException("denied");
+        }
+
+        // --- Nothing to restore: refused before anything is closed on its behalf ---
+
+        // The regression: what the user ticks in the tree is independent of what the backup folder
+        // holds, so Chrome could be selected with no Chrome profile in the backup. Before this, the
+        // browser was force-killed - every open tab lost - and only then did the restore report that
+        // nothing had been backed up for it. Worse than the pre-2b behaviour, which closed nothing.
+        [Fact]
+        public void ModuleWithNothingInTheBackup_IsRefusedBeforeAnythingIsClosed()
+        {
+            RestoreScopeEntry entry = Only(RestoreScope.For(
+                new[] { new ArtifactModule("Google Chrome", hasBackup: false) },
+                new[] { "chrome" },
+                new Dictionary<string, CloseResult>(),
+                @"C:\backups\2026-01-01"));
+
+            Assert.Equal(RestoreBlock.NothingToRestore, entry.Block);
+            Assert.False(entry.WillBeRestored);
+            Assert.False(entry.NeedsSnapshot);
+        }
+
+        [Fact]
+        public void ModuleWithSomethingInTheBackup_IsRestoredAndSnapshotted()
+        {
+            ArtifactModule module = new ArtifactModule("Google Chrome", hasBackup: true);
+
+            RestoreScopeEntry entry = Only(RestoreScope.For(
+                new[] { module }, new[] { "chrome" },
+                new Dictionary<string, CloseResult>(), @"C:\backups\2026-01-01"));
+
+            Assert.Equal(RestoreBlock.None, entry.Block);
+            Assert.True(entry.WillBeRestored);
+            Assert.True(entry.NeedsSnapshot);
+            Assert.Equal(@"C:\backups\2026-01-01", module.AskedAbout);
+        }
+
+        // Ordered ahead of the consent and close checks, so a module with nothing to restore is
+        // refused for that reason rather than for one that implies the user could have avoided it.
+        [Fact]
+        public void NothingToRestore_OutranksAWithheldConsent()
+        {
+            RestoreScopeEntry entry = Only(RestoreScope.For(
+                new[] { new ArtifactModule("Google Chrome", hasBackup: false) },
+                new string[0],
+                new Dictionary<string, CloseResult>(),
+                @"C:\backups\2026-01-01"));
+
+            Assert.Equal(RestoreBlock.NothingToRestore, entry.Block);
+        }
+
+        // A null source means the caller did not ask for the check - every module stays restorable,
+        // which is what keeps the existing callers and their tests honest.
+        [Fact]
+        public void NullRestoreSource_SkipsTheCheckEntirely()
+        {
+            ArtifactModule module = new ArtifactModule("Google Chrome", hasBackup: false);
+
+            RestoreScopeEntry entry = Scope(module, new[] { "chrome" }, new Dictionary<string, CloseResult>());
+
+            Assert.Equal(RestoreBlock.None, entry.Block);
+            Assert.Null(module.AskedAbout);
+        }
+
+        // Falls towards restoring. A probe that threw told us nothing, and silently cancelling a
+        // restore the user asked for is worse than an unnecessary close.
+        [Fact]
+        public void AProbeThatThrows_LeavesTheModuleRestorable()
+        {
+            RestoreScopeEntry entry = Only(RestoreScope.For(
+                new[] { new ThrowingArtifactModule() }, new[] { "chrome" },
+                new Dictionary<string, CloseResult>(), @"C:\backups\2026-01-01"));
+
+            Assert.Equal(RestoreBlock.None, entry.Block);
+            Assert.True(entry.WillBeRestored);
+        }
+
+        [Fact]
+        public void DescribeBlock_NothingToRestore_UsesTheModulesOwnWording()
+        {
+            RestoreScopeEntry entry = Only(RestoreScope.For(
+                new[] { new ArtifactModule("Google Chrome", hasBackup: false) },
+                new[] { "chrome" },
+                new Dictionary<string, CloseResult>(),
+                @"C:\backups\2026-01-01"));
+
+            StepResult step = RestoreScope.DescribeBlock(entry);
+
+            Assert.Equal(ResultState.Skipped, step.State);
+            Assert.Equal("nothing was backed up for this item", step.Reason);
+        }
+
         // --- 1. The invariant, exhaustively ---
 
         /// <summary>

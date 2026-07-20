@@ -381,6 +381,36 @@ namespace Views
         }
 
         /// <summary>
+        /// The consented processes that some module actually about to be restored owns.
+        /// </summary>
+        /// <remarks>
+        /// Consent is gathered from the tree selection, which says nothing about what the chosen
+        /// backup folder contains. Closing on consent alone therefore kills a browser for a module
+        /// whose restore will report "nothing was backed up for this item" - real, visible work
+        /// destroyed for an operation knowable in advance to be a no-op.
+        /// </remarks>
+        private IEnumerable<string> ProcessesWorthClosing(IReadOnlyList<BackupBase> modules,
+                                                          IReadOnlyList<string> consented)
+        {
+            HashSet<string> worth = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (BackupBase module in modules)
+            {
+                if (!module.HasBackupIn(CurrentRestorePath))
+                    continue;
+
+                foreach (RestoreCloseRequirement requirement in
+                         module.ProcessesToCloseBeforeRestore ?? new RestoreCloseRequirement[0])
+                {
+                    if (requirement != null && requirement.NeedsConsent)
+                        worth.Add(requirement.ProcessName);
+                }
+            }
+
+            return consented.Where(worth.Contains);
+        }
+
+        /// <summary>
         /// The sentence naming processes this run has already closed, or nothing when it closed none.
         /// </summary>
         private static string DescribeAlreadyClosed(IDictionary<string, CloseResult> closedUpFront)
@@ -573,10 +603,16 @@ namespace Views
 
             // Stage 3: close the consented processes once, up front, so the snapshot's own backup
             // does not prompt about the same browser the user has already answered for.
+            //
+            // Only for processes some module is actually going to be restored from. A module the
+            // backup folder holds nothing for is refused before this point, so its browser is not
+            // killed for a restore that was always going to write nothing - which cost the user
+            // every open tab, and cost it in a way the pre-2b code did not, because that closed
+            // nothing at all.
             Dictionary<string, CloseResult> closedUpFront =
                 new Dictionary<string, CloseResult>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (string processName in consented)
+            foreach (string processName in ProcessesWorthClosing(selectedConfigs, consented))
             {
                 string name = processName;
                 CloseResult closed = await Task.Run(() => Utils.CloseProcess(name));
@@ -591,7 +627,7 @@ namespace Views
             // twice from two readings of the process state is what previously let a module be left
             // out of the snapshot and then restored anyway.
             IReadOnlyList<RestoreScopeEntry> scope =
-                RestoreScope.For(selectedConfigs, consented, closedUpFront);
+                RestoreScope.For(selectedConfigs, consented, closedUpFront, CurrentRestorePath);
 
             List<BackupBase> snapshotSet = scope
                 .Where(entry => entry.NeedsSnapshot)

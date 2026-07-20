@@ -441,6 +441,23 @@ Kept so overturned claims are not reintroduced.
   restored" — false, and in the log as well as the dialog. `RestoreScope` knows which it is, so the
   blocked count is passed to the gate and the two cases now read differently.
 
+- *"Consent is enough to justify closing the application."* It is not, and this phase made the case
+  worse rather than better. What the user ticks in the tree is independent of what the chosen backup
+  folder contains — nothing cross-checks them — so a user who backed up Settings only, then later
+  ticks Chrome along with everything else, had Chrome force-killed with every open tab lost, a full
+  copy of their live profile written into a snapshot they never asked for, and then a summary line
+  reading "nothing was backed up for this item". Before this phase nothing closed the browser at all,
+  so consenting to a close made them strictly worse off than not being asked.
+
+  The correction is that a module states whether the backup folder holds anything for it
+  (`BackupBase.HasBackupIn`, default `true`), and `RestoreScope` refuses it **first** — ahead of the
+  consent and close checks, because it is the one refusal that costs the user nothing. The process is
+  then never closed, the profile never snapshotted, and the module reports the same
+  "nothing was backed up for this item" it always did, only now before anything was destroyed to
+  learn it. The default is `true` deliberately: a module that has not been taught to check must not
+  be silently skipped, since being wrong that way costs one unnecessary close while being wrong the
+  other way cancels a restore the user asked for.
+
 - *"The suite's intermittent test host crash was thread-pool starvation under parallel collections."*
   Wrong, and the workaround built on it (an assembly-wide `DisableTestParallelization`) was removed
   rather than kept. `LogHelper`'s target is static, and `LogHelperTests` set it to a `RichTextBox` and

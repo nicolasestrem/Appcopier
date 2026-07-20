@@ -24,6 +24,23 @@ namespace Appcopier
         protected const string NothingBackedUp = "nothing was backed up for this item";
 
         /// <summary>
+        /// Whether <paramref name="restorePath"/> actually holds anything for this module to restore.
+        /// </summary>
+        /// <remarks>
+        /// What the user ticks in the tree is independent of what the chosen backup folder contains,
+        /// so a module can be selected for restore with nothing there to restore from. Answering
+        /// honestly here is what stops the orchestrator closing an application for an operation that
+        /// was always going to be a no-op: force-killing a browser costs the user every open tab, and
+        /// before this phase nothing closed it at all, so getting this wrong is a regression rather
+        /// than merely a missed improvement.
+        ///
+        /// The default is TRUE - "assume there is something" - because a module that has not been
+        /// taught to check must not be quietly skipped. Being wrong that way costs an unnecessary
+        /// close; being wrong the other way silently cancels a restore the user asked for.
+        /// </remarks>
+        public virtual bool HasBackupIn(string restorePath) => true;
+
+        /// <summary>
         /// Whether this module may ask the user a question while backing up.
         /// </summary>
         /// <remarks>

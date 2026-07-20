@@ -2,6 +2,7 @@ using Appcopier;
 using Conf;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using Xunit;
@@ -289,6 +290,53 @@ namespace Appcopier.Tests
             Assert.False(RestoreTarget.Command("runs netsh").IsUndeclared);
             Assert.False(RestoreTarget.Folder(RestoreTarget.UndeclaredMarker).IsUndeclared);
             Assert.True(RestoreTarget.Undeclared("SomeModule").Single().IsUndeclared);
+        }
+
+        // Every module that closes something must be able to say whether the backup holds anything
+        // for it, because closing is what costs the user work. Answering against a real folder
+        // rather than a fake: the whole point is the on-disk layout the module's own restore reads.
+        [Theory]
+        [InlineData(typeof(Conf.BGoogleChrome))]
+        [InlineData(typeof(Conf.BMicrosoftEdge))]
+        [InlineData(typeof(Conf.BMozillaFirefox))]
+        [InlineData(typeof(Conf.APinnedApps))]
+        public void ModulesThatCloseSomething_KnowWhetherTheBackupHoldsAnythingForThem(Type type)
+        {
+            BackupBase module = (BackupBase)Activator.CreateInstance(type);
+
+            string root = Path.Combine(Path.GetTempPath(), "achas_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+
+            try
+            {
+                Assert.False(module.HasBackupIn(root));
+
+                Directory.CreateDirectory(Path.Combine(root, module.Title));
+                Assert.True(module.HasBackupIn(root));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void ModulesThatCloseSomething_TreatAMissingPathAsNothingToRestore(string path)
+            => Assert.False(new Conf.BGoogleChrome().HasBackupIn(path));
+
+        // The default answers yes, so a module that has not been taught to check is never silently
+        // skipped - being wrong that way costs a close, the other way cancels the user's restore.
+        [Fact]
+        public void ModulesThatCloseNothing_AssumeTheBackupHasSomethingForThem()
+        {
+            foreach (BackupBase module in Modules())
+            {
+                if (module.ProcessesToCloseBeforeRestore.Count == 0)
+                    Assert.True(module.HasBackupIn(Path.GetTempPath()), module.Title);
+            }
         }
     }
 }

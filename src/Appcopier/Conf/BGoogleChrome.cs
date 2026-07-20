@@ -31,6 +31,12 @@ namespace Conf
         public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
             => new[] { new RestoreCloseRequirement("chrome", "Google Chrome", true) };
 
+        // The folder RestoreAsync reads from. Without this the orchestrator would close Chrome -
+        // losing every open tab - before RestoreAsync discovered there was nothing here to copy.
+        public override bool HasBackupIn(string restorePath)
+            => !string.IsNullOrWhiteSpace(restorePath)
+               && Directory.Exists(Path.Combine(restorePath, Title));
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();

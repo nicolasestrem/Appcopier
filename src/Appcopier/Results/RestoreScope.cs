@@ -15,7 +15,19 @@ namespace Appcopier
         ConsentWithheld,
 
         /// <summary>The process was asked to close before the snapshot and did not.</summary>
-        CouldNotClose
+        CouldNotClose,
+
+        /// <summary>
+        /// The chosen backup folder holds nothing for this module, so there is nothing to overwrite.
+        /// </summary>
+        /// <remarks>
+        /// Decided before anything is closed. What the user ticked in the tree is independent of what
+        /// the backup folder contains, so this is reachable in ordinary use - and without it the
+        /// orchestrator closes an application, copies its live profile into a snapshot nobody asked
+        /// for, and only then reports that nothing was backed up for it. The user pays real, visible
+        /// work for a no-op that was knowable in advance.
+        /// </remarks>
+        NothingToRestore
     }
 
     /// <summary>
@@ -75,9 +87,14 @@ namespace Appcopier
         /// only reading of that fact anyone is allowed to take: re-observing it later is the defect
         /// this type exists to prevent.
         /// </param>
+        /// <param name="restoreSourcePath">
+        /// The backup folder being restored from, so a module with nothing there is refused before
+        /// anything is closed on its behalf. Null skips that check.
+        /// </param>
         public static IReadOnlyList<RestoreScopeEntry> For(IReadOnlyList<BackupBase> modules,
                                                            IReadOnlyList<string> consented,
-                                                           IDictionary<string, CloseResult> closedUpFront)
+                                                           IDictionary<string, CloseResult> closedUpFront,
+                                                           string restoreSourcePath = null)
         {
             List<RestoreScopeEntry> entries = new List<RestoreScopeEntry>();
 
@@ -88,15 +105,22 @@ namespace Appcopier
                 BackupBase module = modules[i];
 
                 if (module != null)
-                    entries.Add(Evaluate(module, consented, closedUpFront));
+                    entries.Add(Evaluate(module, consented, closedUpFront, restoreSourcePath));
             }
 
             return entries;
         }
 
         private static RestoreScopeEntry Evaluate(BackupBase module, IReadOnlyList<string> consented,
-                                                  IDictionary<string, CloseResult> closedUpFront)
+                                                  IDictionary<string, CloseResult> closedUpFront,
+                                                  string restoreSourcePath)
         {
+            // First, because it is the only refusal that costs the user nothing. Everything below
+            // decides what to close and what to capture on behalf of a restore that, if there is no
+            // artifact, is never going to write anything.
+            if (restoreSourcePath != null && !HasBackup(module, restoreSourcePath))
+                return Blocked(module, RestoreBlock.NothingToRestore, null, CloseResult.NotRunning);
+
             IReadOnlyList<RestoreCloseRequirement> requirements =
                 module.ProcessesToCloseBeforeRestore ?? new RestoreCloseRequirement[0];
 
@@ -135,6 +159,28 @@ namespace Appcopier
                                                  RestoreCloseRequirement requirement, CloseResult closed)
             => new RestoreScopeEntry(module, block, requirement, closed, needsSnapshot: false);
 
+        /// <summary>
+        /// Asks the module whether the backup folder holds anything for it, treating a module that
+        /// throws as having something.
+        /// </summary>
+        /// <remarks>
+        /// The catch decides which way an unreliable answer falls, and it falls towards restoring.
+        /// A module whose probe throws has told us nothing, and silently skipping a restore the user
+        /// asked for is worse than an unnecessary close - one loses their intent, the other loses
+        /// their tabs.
+        /// </remarks>
+        private static bool HasBackup(BackupBase module, string restoreSourcePath)
+        {
+            try
+            {
+                return module.HasBackupIn(restoreSourcePath);
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+        }
+
         public static bool IsConsented(IReadOnlyList<string> consented, string processName)
         {
             if (consented == null)
@@ -163,6 +209,13 @@ namespace Appcopier
                 throw new ArgumentException("Only a blocked module has a block to describe.", nameof(entry));
 
             string title = entry.Module.Title;
+
+            // Worded exactly as the module's own restore would have worded it, because that is what
+            // the user saw before this check existed and it is still the true statement - the only
+            // change is that we now find out before closing anything rather than after.
+            if (entry.Block == RestoreBlock.NothingToRestore)
+                return StepResult.Skipped(title, "nothing was backed up for this item");
+
             string name = entry.BlockedBy.DisplayName;
 
             return entry.Block == RestoreBlock.ConsentWithheld

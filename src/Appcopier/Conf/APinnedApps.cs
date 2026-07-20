@@ -41,6 +41,12 @@ namespace Conf
                 new RestoreCloseRequirement("StartMenuExperienceHost", "the Start menu", false)
             };
 
+        // Cheaper to get wrong than a browser - the Start menu blinks and comes back - but the same
+        // defect, and fixed by the same declaration.
+        public override bool HasBackupIn(string restorePath)
+            => !string.IsNullOrWhiteSpace(restorePath)
+               && Directory.Exists(Path.Combine(restorePath, Title));
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             CopyResult copy = await Utils.CopyFolder(Folder, Path.Combine(path, Title));
