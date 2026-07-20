@@ -18,13 +18,29 @@ namespace Appcopier
     {
         internal const string VersionHeader = "# Appcopier backup log v2";
 
+        /// <param name="extraHeaderLines">
+        /// Written verbatim between the version header and the timestamp, or null for none. Verbatim
+        /// because the caller - RestoreLog - owns how its lines read; prefixing them here would put
+        /// this class in charge of wording it does not compose.
+        /// </param>
         internal static string Compose(IReadOnlyList<BackupBase> modules,
                                        IReadOnlyList<ModuleResult> results,
-                                       string when)
+                                       string when,
+                                       IEnumerable<string> extraHeaderLines = null)
         {
             StringBuilder sb = new StringBuilder();
 
             sb.AppendLine(VersionHeader);
+
+            if (extraHeaderLines != null)
+            {
+                foreach (string line in extraHeaderLines)
+                {
+                    if (line != null)
+                        sb.AppendLine(line);
+                }
+            }
+
             sb.AppendLine("# " + when);
             sb.AppendLine();
 
