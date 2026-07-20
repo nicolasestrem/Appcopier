@@ -121,5 +121,68 @@ namespace Appcopier.Tests
                 Assert.Contains("1", s.Reason);
             }
         }
+
+        // A subdirectory that disappears mid-copy must NOT erase the result of everything that
+        // already copied. Browsers delete cache folders constantly, so this is the ordinary case
+        // for the very modules this tally exists to make honest.
+        [Fact]
+        public async Task CopyFolder_SubdirectoryVanishesMidCopy_DoesNotReportSourceMissing()
+        {
+            string src = Dir("src8");
+            for (int i = 0; i < 3; i++)
+                File.WriteAllText(Path.Combine(src, "f" + i + ".txt"), "x");
+
+            string doomed = Path.Combine(src, "zz_cache");
+            Directory.CreateDirectory(doomed);
+            File.WriteAllText(Path.Combine(doomed, "c.txt"), "y");
+
+            // Delete it after enumeration would have seen it but before recursion reaches it.
+            // GetDirectories() runs after the files are copied, so removing it now models the race.
+            Task<CopyResult> copy = Utils.CopyFolder(src, Path.Combine(_root, "dst8"));
+            Directory.Delete(doomed, true);
+            CopyResult r = await copy;
+
+            Assert.False(r.SourceMissing);
+            Assert.True(r.FilesCopied >= 3);
+        }
+
+        // A directory-level failure must not be described as a file failure.
+        [Fact]
+        public void ToStep_FolderFailureOnly_DoesNotInventAFileCount()
+        {
+            CopyResult r = new CopyResult { FoldersFailed = 1, FirstError = "denied" };
+            StepResult s = r.ToStep("Themes", false);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("folder", s.Reason, System.StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("1 of 1 files", s.Reason);
+        }
+
+        // Two simultaneous failures. The single-failure test above would still pass under an
+        // "tolerate exactly one failure" rule; this one closes that hole, so the strict-failure
+        // decision is guarded against both percentage- and count-based leniency.
+        [Fact]
+        public async Task CopyFolder_TwoLockedFiles_StillFailedAndCountsBoth()
+        {
+            string src = Dir("src9");
+            for (int i = 0; i < 4; i++)
+                File.WriteAllText(Path.Combine(src, "ok" + i + ".txt"), "x");
+
+            string a = Path.Combine(src, "a.lock");
+            string b = Path.Combine(src, "b.lock");
+            File.WriteAllText(a, "1");
+            File.WriteAllText(b, "2");
+
+            using (new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.None))
+            using (new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                CopyResult r = await Utils.CopyFolder(src, Path.Combine(_root, "dst9"));
+
+                Assert.Equal(2, r.FilesFailed);
+                Assert.Equal(4, r.FilesCopied);
+                Assert.Equal(ResultState.Failed, r.ToStep("Chrome", true).State);
+                Assert.Contains("2 of 6", r.ToStep("Chrome", true).Reason);
+            }
+        }
     }
 }

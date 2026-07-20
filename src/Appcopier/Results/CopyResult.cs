@@ -10,10 +10,42 @@ namespace Appcopier
     /// </remarks>
     internal sealed class CopyResult
     {
+        /// <summary>
+        /// The top-level source folder did not exist. Set ONLY by the root call.
+        /// </summary>
+        /// <remarks>
+        /// A subdirectory vanishing mid-copy must never set this. Browsers create and delete cache
+        /// subdirectories continuously, and GetDirectories() snapshots names that are then visited
+        /// after real I/O has elapsed - so a subdirectory can be gone by the time recursion reaches
+        /// it. Since ToStep tests this flag first, letting a nested call set it would report a copy
+        /// that moved hundreds of files as "not present on this system".
+        /// </remarks>
         public bool SourceMissing { get; set; }
+
         public int FilesCopied { get; set; }
         public int FilesFailed { get; set; }
+
+        /// <summary>
+        /// A directory could not be created or enumerated, so its whole subtree was never attempted.
+        /// </summary>
+        /// <remarks>
+        /// Counted separately from FilesFailed because they are different facts. Folding a directory
+        /// failure into the file counter yields "1 of 1 files could not be copied" when zero files
+        /// were ever tried - a sentence that misdescribes the failure, which is what StepResult.Reason
+        /// exists to prevent.
+        /// </remarks>
+        public int FoldersFailed { get; set; }
+
+        /// <summary>
+        /// Sum of the source files' sizes as enumerated BEFORE copying, not bytes actually written.
+        /// </summary>
+        /// <remarks>
+        /// For a file a running browser is still writing, the enumerated length can differ from what
+        /// lands on disk. Adequate for an order-of-magnitude figure; do not present it as an exact
+        /// transferred-byte count.
+        /// </remarks>
         public long BytesCopied { get; set; }
+
         public string FirstError { get; set; }
 
         /// <summary>
@@ -35,11 +67,25 @@ namespace Appcopier
                     : StepResult.Failed(target, "expected folder for " + target + " is missing");
             }
 
+            // Folder-level failures are reported as folders, not as an invented file count.
+            if (FoldersFailed > 0 && FilesFailed == 0)
+            {
+                return StepResult.Failed(target, string.Format(
+                    "{0} folder(s) could not be read or created, so their contents were never attempted: {1}",
+                    FoldersFailed, FirstError));
+            }
+
             if (FilesFailed > 0)
             {
                 string reason = string.Format(
                     "{0} of {1} files could not be copied: {2}",
                     FilesFailed, FilesFailed + FilesCopied, FirstError);
+
+                if (FoldersFailed > 0)
+                {
+                    reason += string.Format(
+                        " (and {0} folder(s) could not be read at all)", FoldersFailed);
+                }
 
                 return StepResult.Failed(target, reason);
             }

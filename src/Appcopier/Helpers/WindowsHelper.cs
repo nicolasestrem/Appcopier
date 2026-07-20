@@ -16,11 +16,12 @@ namespace Appcopier
         internal static async Task<CopyResult> CopyFolder(string source, string destination)
         {
             CopyResult result = new CopyResult();
-            await CopyFolderInto(source, destination, result).ConfigureAwait(false);
+            await CopyFolderInto(source, destination, result, isRoot: true).ConfigureAwait(false);
             return result;
         }
 
-        private static async Task CopyFolderInto(string source, string destination, CopyResult result)
+        private static async Task CopyFolderInto(string source, string destination,
+                                                 CopyResult result, bool isRoot)
         {
             try
             {
@@ -28,10 +29,23 @@ namespace Appcopier
 
                 if (!sourceDir.Exists)
                 {
-                    // Only the top-level call can legitimately find nothing; a missing subdirectory
-                    // mid-recursion would already have been enumerated, so it cannot happen here.
-                    result.SourceMissing = true;
-                    logger.LogMessage("Source directory does not exist: " + source);
+                    if (isRoot)
+                    {
+                        result.SourceMissing = true;
+                        logger.LogMessage("Source directory does not exist: " + source);
+                        return;
+                    }
+
+                    // A subdirectory that vanished between enumeration and this visit. Browsers
+                    // delete cache folders constantly, so this is ordinary, not exotic. It is a
+                    // folder we failed to copy - NOT evidence that the backup source was absent.
+                    // Setting SourceMissing here would make ToStep discard a copy that had already
+                    // moved hundreds of files and report "not present on this system".
+                    result.FoldersFailed++;
+                    if (result.FirstError == null)
+                        result.FirstError = source + ": the folder disappeared during the copy";
+
+                    logger.LogMessage("Subdirectory vanished during copy: " + source);
                     return;
                 }
 
@@ -70,16 +84,19 @@ namespace Appcopier
                 foreach (DirectoryInfo subDirectory in sourceDir.GetDirectories())
                 {
                     string newDestinationPath = Path.Combine(destinationDir.FullName, subDirectory.Name);
-                    await CopyFolderInto(subDirectory.FullName, newDestinationPath, result).ConfigureAwait(false);
+                    await CopyFolderInto(subDirectory.FullName, newDestinationPath, result, isRoot: false)
+                        .ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
-                // Enumeration or directory creation failed. Counted as a failure rather than
-                // swallowed, so the caller cannot mistake it for an empty folder.
-                result.FilesFailed++;
+                // Enumeration or directory creation failed, so this folder's whole subtree was
+                // never attempted. Counted as a FOLDER failure, not a file one: incrementing
+                // FilesFailed here would produce "1 of 1 files could not be copied" having tried
+                // exactly zero files.
+                result.FoldersFailed++;
                 if (result.FirstError == null)
-                    result.FirstError = ex.Message;
+                    result.FirstError = source + ": " + ex.Message;
 
                 logger.LogMessage("Error copying folder " + source + " to " + destination + ": " + ex.Message);
             }
