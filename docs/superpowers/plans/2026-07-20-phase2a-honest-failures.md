@@ -2132,6 +2132,15 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
         /// cooperative user got a red row. Say no and you get Skipped, say yes and you get Failed,
         /// and either way you have no browser backup, which makes the prompt a dead control.
         /// </remarks>
+        /// <summary>
+        /// Total time allowed for a whole process tree to exit, shared across every instance.
+        /// </summary>
+        /// <remarks>
+        /// A per-process budget would multiply by the number of children, and this method runs on
+        /// the UI thread, so the ceiling has to be on the total rather than on each wait.
+        /// </remarks>
+        private const int CloseTimeoutMs = 5000;
+
         public static CloseResult CloseProcess(string processName)
         {
             Process[] processes;
@@ -2150,18 +2159,16 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
 
             CloseResult worst = CloseResult.Exited;
 
+            // Two passes, deliberately. Kill() is fast; waiting is the slow part, so killing
+            // everything first lets the whole tree unwind in parallel against ONE shared budget.
+            // A flat per-process wait would multiply by the process count - Chrome routinely shows
+            // 10-30 entries - and CloseProcess runs on the UI thread, so that is a minute-long
+            // frozen window with no feedback.
             foreach (Process process in processes)
             {
                 try
                 {
                     process.Kill();
-
-                    // Bounded. Kill() is asynchronous, so without this the caller starts copying
-                    // while the process is still flushing and releasing file handles. Five seconds
-                    // is long enough for a browser tree to unwind and short enough that a wedged
-                    // process cannot stall a backup run.
-                    if (!process.WaitForExit(5000))
-                        worst = Worse(worst, CloseResult.StillRunning);
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
@@ -2176,6 +2183,28 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
                 {
                     logger.LogMessage("Could not close " + processName + ": " + ex.Message);
                     worst = Worse(worst, CloseResult.StillRunning);
+                }
+            }
+
+            // Second pass: wait for the survivors, sharing one deadline across all of them.
+            // Without any wait the caller starts copying while the browser is still flushing and
+            // releasing file handles, so the copy hits locked files and the module fails - which
+            // made agreeing to the close prompt useless.
+            Stopwatch clock = Stopwatch.StartNew();
+
+            foreach (Process process in processes)
+            {
+                try
+                {
+                    int remaining = CloseTimeoutMs - (int)clock.ElapsedMilliseconds;
+
+                    if (remaining <= 0 || !process.WaitForExit(remaining))
+                        worst = Worse(worst, CloseResult.StillRunning);
+                }
+                catch (Exception)
+                {
+                    // Already exited, or we never had rights to wait on it. The kill pass above
+                    // already recorded anything worth reporting.
                 }
                 finally
                 {
