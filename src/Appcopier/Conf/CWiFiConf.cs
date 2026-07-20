@@ -14,6 +14,12 @@ namespace Conf
         {
             Title = "Wi-Fi networks & passwords";
             Info = "This will back up and restore credentials of Wi-Fi networks.";
+            IsWarning();
+        }
+
+        private void IsWarning()
+        {
+            WarningMessage = "Restoring this backup adds every saved network in it back to this machine, for all accounts, not just yours. This includes networks you may have since forgotten.";
         }
 
         public override ModuleResult Backup(string path)

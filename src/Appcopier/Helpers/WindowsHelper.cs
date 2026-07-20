@@ -489,7 +489,15 @@ namespace Appcopier
                 {
                     int remaining = CloseTimeoutMs - (int)waited.ElapsedMilliseconds;
 
-                    if (remaining <= 0 || !process.WaitForExit(remaining))
+                    // When the budget is spent, still ASK whether it exited rather than assuming it
+                    // did not. Killing 30 Chrome children can exhaust the budget while every one of
+                    // them died, and reporting those as still-running manufactures a failed backup
+                    // out of a completely successful close.
+                    bool exited = remaining > 0
+                        ? process.WaitForExit(remaining)
+                        : process.HasExited;
+
+                    if (!exited)
                         worst = Worse(worst, CloseResult.StillRunning);
                 }
                 catch (Exception)

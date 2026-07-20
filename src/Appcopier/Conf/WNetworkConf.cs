@@ -71,11 +71,9 @@ namespace Conf
 
             try
             {
-                // KNOWN DEFECT, left in place deliberately: ExecuteNetshCommand opens a StreamWriter
-                // on outputFilePath unconditionally and this call passes null, so every restore
-                // throws ArgumentNullException. That is a real bug rather than a dishonest one - it
-                // was already caught and logged as a failure - and repairing it belongs to a later
-                // task. It now reports Failed loudly, which is accurate.
+                // ExecuteNetshCommand now only creates its StreamWriter when an output path is
+                // actually supplied, so this null is safe - the restore runs to completion and
+                // reports its real exit code.
                 int exitCode = ExecuteNetshCommand($"exec \"{filePath}\"", null);
 
                 steps.Add(exitCode == 0
@@ -106,15 +104,32 @@ namespace Conf
             {
                 process.Start();
 
-                //  handle redirection internally using StreamWriter to write command output to file
-                using (StreamWriter outputFile = new StreamWriter(outputFilePath))
+                // The writer is created ONLY when a path was supplied. It used to be constructed
+                // unconditionally, AFTER Start() - and Restore passes null - so restoring network
+                // configuration threw once netsh was already applying the backup's addresses, DNS
+                // servers and interface metrics. The user was told the restore failed while their
+                // networking was being reconfigured, and netsh was left running unwaited.
+                StreamWriter outputFile = outputFilePath == null
+                    ? null
+                    : new StreamWriter(outputFilePath);
+
+                try
                 {
+                    // Drain stdout either way. Leaving it unread lets the pipe fill and block netsh.
                     while (!process.StandardOutput.EndOfStream)
                     {
                         string line = process.StandardOutput.ReadLine();
-                        outputFile.WriteLine(line);
+
+                        if (outputFile != null)
+                            outputFile.WriteLine(line);
+
                         logger.LogMessage(line);
                     }
+                }
+                finally
+                {
+                    if (outputFile != null)
+                        outputFile.Dispose();
                 }
 
                 process.WaitForExit();
