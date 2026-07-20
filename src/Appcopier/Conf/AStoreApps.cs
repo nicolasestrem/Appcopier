@@ -11,11 +11,52 @@ namespace Conf
 {
     public class AppStoreApps : BackupBase
     {
+        /// <summary>
+        /// The one spelling of this module's name, shared by the file it writes.
+        /// </summary>
+        public const string ModuleTitle = "Remember installed apps";
+
+        /// <summary>
+        /// The file this module writes, and the only name any reader may look for.
+        /// </summary>
+        /// <remarks>
+        /// This name existed in four spellings at once: the producer wrote ".json", one reader
+        /// looked for ".JSON", another for ".json", and the Info text shown to the user said
+        /// ".JSON". On a case-insensitive filesystem three of those happen to agree, which is
+        /// exactly why the disagreement survived - it is a latent bug that becomes real the moment
+        /// a backup folder is read from anything that respects case. The extension is lowercase
+        /// because that is what winget itself writes.
+        ///
+        /// It lives here, on the class that WRITES the file, rather than on BackupBase.RegFileNameFor:
+        /// that seam derives .reg names from a registry key, and this artifact has no key.
+        /// </remarks>
+        public const string ExportFileName = ModuleTitle + ".json";
+
+        /// <summary>
+        /// Where this module's export lives inside <paramref name="backupFolder"/>.
+        /// </summary>
+        /// <remarks>
+        /// The restore dialog composes its path through this method rather than repeating the
+        /// Path.Combine, so producer and reader cannot disagree about the filename again.
+        /// </remarks>
+        public static string ExportPathIn(string backupFolder)
+            => Path.Combine(backupFolder, ExportFileName);
+
         public AppStoreApps()
         {
-            Title = "Remember installed apps";
-            Info = "This will export all installed winget package identifiers as a .JSON file.\nThe import process allows you to restore specific apps themselves based on this file.";
+            Title = ModuleTitle;
+            Info = "This will export all installed winget package identifiers as a .json file.\nThe import process allows you to restore specific apps themselves based on this file.";
         }
+
+        // HasBackupIn is deliberately NOT overridden to test for ExportPathIn(restorePath).
+        //
+        // It looks like the obvious use of the new seam, and it would be wrong twice over. This
+        // module's restore does not read the export at all - it opens RestAppsForm, which lets the
+        // user pick ANY backup folder from its own dropdown, not the one being restored. Answering
+        // "no" here would make RestoreScope drop the module, so the dialog would never open for a
+        // user whose selected folder happens to hold no export, while the dialog itself would have
+        // been perfectly able to offer every other backup. It would also break
+        // RestoreDeclarationTests.ModulesThatCloseNothing_AssumeTheBackupHasSomethingForThem.
 
         public override IReadOnlyList<RestoreTarget> RestoreTargets
             => new[]
@@ -35,7 +76,7 @@ namespace Conf
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             // Execute winget command to list installed apps
-            string outputFilePath = Path.Combine(path, $"{Title}.json");
+            string outputFilePath = ExportPathIn(path);
 
             // Clear the target before running winget. ConfPageView reuses one timestamped folder for
             // every Backup click in an app session, so a second click can find a valid export from
@@ -70,26 +111,30 @@ namespace Conf
         /// message was written before the fact it described could be known. Even with the exit code
         /// now available it is not sufficient: winget exits 0 having written nothing when it has no
         /// source configured, and a file with no Packages array restores nothing.
+        ///
+        /// internal static rather than private so the ladder can be exercised without a real winget,
+        /// following the precedent of RestAppsForm.Describe. It reads ModuleTitle instead of the
+        /// Title instance property, which is the same string by construction.
         /// </remarks>
-        private StepResult Verify(ProcessOutcome outcome, string outputFilePath)
+        internal static StepResult Verify(ProcessOutcome outcome, string outputFilePath)
         {
             if (outcome == null)
-                return StepResult.Failed(Title, "the winget export returned no outcome");
+                return StepResult.Failed(ModuleTitle, "the winget export returned no outcome");
 
             if (!outcome.Started)
-                return StepResult.Failed(Title, "could not run the winget export: " + outcome.Error);
+                return StepResult.Failed(ModuleTitle, "could not run the winget export: " + outcome.Error);
 
             if (outcome.TimedOut)
-                return StepResult.Failed(Title, "the winget export did not finish");
+                return StepResult.Failed(ModuleTitle, "the winget export did not finish");
 
             if (outcome.Error != null)
-                return StepResult.Failed(Title, "winget ran but its outcome could not be determined: " + outcome.Error);
+                return StepResult.Failed(ModuleTitle, "winget ran but its outcome could not be determined: " + outcome.Error);
 
             if (outcome.ExitCode != 0)
-                return StepResult.Failed(Title, "winget exited with code " + outcome.ExitCode);
+                return StepResult.Failed(ModuleTitle, "winget exited with code " + outcome.ExitCode);
 
             if (!File.Exists(outputFilePath))
-                return StepResult.Failed(Title, "winget reported success but wrote no file");
+                return StepResult.Failed(ModuleTitle, "winget reported success but wrote no file");
 
             string json;
 
@@ -101,11 +146,11 @@ namespace Conf
             {
                 // Could not read it, so nothing is known about its contents - deliberately not
                 // reported as an invalid file.
-                return StepResult.Failed(Title, "could not read back the exported file: " + ex.Message);
+                return StepResult.Failed(ModuleTitle, "could not read back the exported file: " + ex.Message);
             }
 
             if (string.IsNullOrWhiteSpace(json))
-                return StepResult.Failed(Title, "winget wrote an empty file");
+                return StepResult.Failed(ModuleTitle, "winget wrote an empty file");
 
             try
             {
@@ -115,13 +160,13 @@ namespace Conf
                 JArray packages = JObject.Parse(json)["Sources"]?.FirstOrDefault()?["Packages"] as JArray;
 
                 if (packages == null)
-                    return StepResult.Failed(Title, "the exported file has no list of packages in it, so nothing could be restored from it");
+                    return StepResult.Failed(ModuleTitle, "the exported file has no list of packages in it, so nothing could be restored from it");
 
-                return StepResult.Succeeded(Title, $"exported {packages.Count} package identifier(s)");
+                return StepResult.Succeeded(ModuleTitle, $"exported {packages.Count} package identifier(s)");
             }
             catch (Exception ex)
             {
-                return StepResult.Failed(Title, "the exported file is not valid JSON: " + ex.Message);
+                return StepResult.Failed(ModuleTitle, "the exported file is not valid JSON: " + ex.Message);
             }
         }
 

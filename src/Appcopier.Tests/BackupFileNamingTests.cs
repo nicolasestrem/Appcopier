@@ -169,22 +169,11 @@ namespace Appcopier.Tests
                 FileNameFor(m, @"HKEY_CURRENT_USER\Control Panel\Desktop"));
         }
 
-        // The reader must start from what the writer produces. A module offering older names does
-        // so by appending candidates, never by replacing element 0.
-        [Fact]
-        public void RegFileNamesToTryOnRestore_StartsWithTheNameTheWriterProduces()
-        {
-            foreach (BackupBase module in RegistryWritingModules())
-            {
-                foreach (string key in KeysDeclaredBy(module))
-                {
-                    IReadOnlyList<string> candidates = NamesToTryFor(module, key);
-
-                    Assert.NotEmpty(candidates);
-                    Assert.Equal(FileNameFor(module, key), candidates[0]);
-                }
-            }
-        }
+        // A RegFileNamesToTryOnRestore_StartsWithTheNameTheWriterProduces test lived here and has
+        // been deleted along with the member it covered. Both were vacuous: the only implementation
+        // returned `new[] { RegFileNameFor(key) }`, so the assertion reduced to x[0] == x and had no
+        // possible failing input, while no restore path called the member at all. See the note in
+        // BackupBase for why the member went rather than getting wired up.
 
         private static IEnumerable<BackupBase> RegistryWritingModules()
             => typeof(BackupBase).Assembly
@@ -223,20 +212,6 @@ namespace Appcopier.Tests
             }
 
             throw new InvalidOperationException("No keys on " + module.GetType().Name);
-        }
-
-        private static IReadOnlyList<string> NamesToTryFor(BackupBase module, string key)
-        {
-            for (Type t = module.GetType(); t != null; t = t.BaseType)
-            {
-                MethodInfo m = t.GetMethod("RegFileNamesToTryOnRestore",
-                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-
-                if (m != null)
-                    return (IReadOnlyList<string>)m.Invoke(module, new object[] { key });
-            }
-
-            throw new InvalidOperationException("No RegFileNamesToTryOnRestore on " + module.GetType().Name);
         }
 
         /// <summary>

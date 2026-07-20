@@ -42,6 +42,12 @@ namespace Appcopier.Tests
             foreach (BackupBase m in Modules())
             {
                 Assert.NotEmpty(m.RestoreTargets);
+
+                // Before the IsUndeclared predicate, which would throw on a null entry and report a
+                // module bug as a broken test. A null here is its own defect: the dialog renders
+                // UnnamedTargetMarker for it, which no shipped module may ever produce.
+                Assert.DoesNotContain(m.RestoreTargets, t => t == null);
+
                 Assert.DoesNotContain(m.RestoreTargets, t => t.IsUndeclared);
             }
         }
@@ -201,8 +207,16 @@ namespace Appcopier.Tests
             Assert.Equal(m.Keys, m.RestoreTargets.Select(t => t.Path).ToArray());
         }
 
+        // Folders first, then keys - the order RestoreAsync applies them, which is the order the
+        // confirmation dialog must read them out in.
+        //
+        // Written generically over the module's own fields, so it agrees with whatever those fields
+        // say. That is the right shape for an ORDERING invariant and the wrong shape for pinning
+        // WHICH targets are declared: it passed unchanged while Phase 2c removed a folder and added
+        // a key. The literals live in ModuleTargetTests.Themes_DeclaresItsProfileFolderThenBothKeys,
+        // which replaced this test's old name.
         [Fact]
-        public void Themes_DeclaresBothFoldersThenItsKey()
+        public void Themes_DeclaresItsFoldersBeforeItsKeys()
         {
             WThemes m = new WThemes();
 
@@ -289,6 +303,11 @@ namespace Appcopier.Tests
         {
             Assert.False(RestoreTarget.Command("runs netsh").IsUndeclared);
             Assert.False(RestoreTarget.Folder(RestoreTarget.UndeclaredMarker).IsUndeclared);
+
+            // The other marker is a DIFFERENT fact - one entry of a real declaration is broken, not
+            // the module declared nothing - so a target carrying it must not read as undeclared.
+            Assert.False(RestoreTarget.Command(RestoreTarget.UnnamedTargetMarker).IsUndeclared);
+
             Assert.True(RestoreTarget.Undeclared("SomeModule").Single().IsUndeclared);
         }
 

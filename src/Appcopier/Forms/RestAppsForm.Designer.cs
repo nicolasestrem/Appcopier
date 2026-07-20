@@ -54,6 +54,11 @@
             | System.Windows.Forms.AnchorStyles.Right)));
             this.btnRestore.AutoEllipsis = true;
             this.btnRestore.BackColor = System.Drawing.SystemColors.Control;
+            // Disabled is the DEFAULT state, not something the selection handler derives on its own.
+            // LoadBackups only reaches SelectedIndex = 0 when the app folder exists and holds at
+            // least one backup, so with no backups at all the handler never fires - and Restore used
+            // to ship enabled over an empty list, which is exactly the state a new user is in.
+            this.btnRestore.Enabled = false;
             this.btnRestore.FlatAppearance.BorderSize = 0;
             this.btnRestore.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnRestore.Font = new System.Drawing.Font("Segoe UI Variable Display", 12F, System.Drawing.FontStyle.Bold);
@@ -116,6 +121,7 @@
             this.ShowIcon = false;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
             this.Text = "Restore your apps";
+            this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.RestAppsForm_FormClosing);
             this.ResumeLayout(false);
 
         }

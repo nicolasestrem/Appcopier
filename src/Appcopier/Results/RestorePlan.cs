@@ -178,6 +178,19 @@ namespace Appcopier
         /// A module whose declaration is null or empty falls back to the marker rather than
         /// contributing nothing. Contributing nothing reads exactly like a module that touches
         /// nothing, which is the one thing the marker exists to keep from happening silently.
+        ///
+        /// A null ENTRY inside a non-empty declaration gets its own, different marker. It is not
+        /// the same fact as an absent declaration - the module's other lines are real - and it is
+        /// not something to skip: a dropped line understates what the restore overwrites in the
+        /// one piece of text the user consents against. Modules are null-filtered in
+        /// <see cref="Compact"/> and close requirements in <see cref="CollectCloses"/>; this makes
+        /// the third list consistent with them instead of throwing an NRE.
+        ///
+        /// ConfPageView now wraps this ctor in a catch that abandons the restore, so a throw here
+        /// is no longer the unhandled-dialog-mid-restore it once was. That catch is the backstop,
+        /// not the fix: reaching it abandons a restore the user asked for, whereas rendering a
+        /// marker lets the run continue while still showing that one line of the declaration is
+        /// broken. Both exist on purpose, in that order.
         /// </remarks>
         private static IEnumerable<string> TargetLines(BackupBase module)
         {
@@ -195,6 +208,9 @@ namespace Appcopier
 
         private static string Render(RestoreTarget target)
         {
+            if (target == null)
+                return RestoreTarget.UnnamedTargetMarker;
+
             switch (target.Kind)
             {
                 case RestoreTargetKind.RegistryKey: return "registry key: " + target.Path;

@@ -304,5 +304,48 @@ namespace Appcopier.Tests
                 $"'{informational?.InformationalVersion}'. AssemblyInfo.cs's AssemblyFileVersion is the " +
                 "single source of truth read by both sides of the update check; see Appcopier.csproj.");
         }
+
+        // ---------------------------------------------------------------------------------------
+        // DescribeStartupFailure - the text of the last-resort startup MessageBox in Program.Main.
+        // Program's coverage lives in this file, so it goes here rather than in OsVersionTests.
+        // ---------------------------------------------------------------------------------------
+
+        [Fact]
+        public void DescribeStartupFailure_IncludesTheExceptionTypeAndMessage()
+        {
+            // Both halves matter to whoever is diagnosing this: the message says what went wrong,
+            // the type says what kind of failure it was (a NullReference in a constructor and an
+            // IO failure reading a path are investigated in completely different places).
+            var ex = new InvalidOperationException("registry key vanished");
+
+            string described = global::Appcopier.Program.DescribeStartupFailure(ex);
+
+            Assert.Contains("InvalidOperationException", described);
+            Assert.Contains("registry key vanished", described);
+        }
+
+        [Fact]
+        public void DescribeStartupFailure_NullException_DoesNotThrow()
+        {
+            // This runs on the way out of a startup failure. Throwing while DESCRIBING the first
+            // failure would destroy the only diagnostic the user ever sees.
+            string described = global::Appcopier.Program.DescribeStartupFailure(null);
+
+            Assert.False(string.IsNullOrWhiteSpace(described));
+        }
+
+        [Fact]
+        public void DescribeStartupFailure_BracesInMessage_SurviveVerbatim()
+        {
+            // The composed text goes to a MessageBox, which - unlike LogHelper - has no
+            // Console.WriteLine fallback: if a brace in the message were ever treated as a format
+            // placeholder, the FormatException would take out the error dialog itself and the user
+            // would be back to a process that vanishes silently. Hence plain concatenation.
+            var ex = new InvalidOperationException("bad {0} key");
+
+            string described = global::Appcopier.Program.DescribeStartupFailure(ex);
+
+            Assert.Contains("bad {0} key", described);
+        }
     }
 }

@@ -126,6 +126,11 @@ namespace Appcopier
         /// <paramref name="outcomes"/> means something different depending on this: nothing needed
         /// capturing, or everything that did was blocked. Saying the first when the second is true
         /// tells the user their selection changes nothing, which is false.
+        ///
+        /// Only the EMPTY-outcome call site in ConfPageView.TakeSnapshot passes it. The one site
+        /// that carries non-empty outcomes - the ModuleOutcome.Pair call at the end of TakeSnapshot -
+        /// calls Evaluate without it, so on that path blockedCount is always 0 and the branches below
+        /// that read it are unreachable whenever any module was actually considered.
         /// </param>
         internal static SnapshotDecision Evaluate(IReadOnlyList<ModuleOutcome> outcomes, int blockedCount = 0)
         {
@@ -140,13 +145,25 @@ namespace Appcopier
             {
                 ModuleOutcome outcome = outcomes[i];
 
-                if (outcome == null)
-                    continue;
-
+                // Counted BEFORE the null check, and a null entry is a failure rather than a skip.
+                // Skipping it before counting made an all-null list indistinguishable from an empty
+                // one, which then reported "none of the selected items change anything when
+                // restored" - the exact false sentence the blockedCount branch below was added to
+                // remove, reached through a different door. ModuleOutcome.Pair emits no nulls
+                // today; folding them in here makes that invariant structural rather than
+                // coincidental. A null entry adds a line of its own, so it can never displace or
+                // hide a real, named failure.
                 considered++;
 
                 // A module that produced no result did not report success - it reported nothing,
-                // and an unrun module is exactly the case the override prompt exists for.
+                // and an unrun module is exactly the case the override prompt exists for. An entry
+                // that is itself null cannot even name which module it was, so it says so.
+                if (outcome == null)
+                {
+                    failures.Add(Describe(null, "no module and no result were recorded"));
+                    continue;
+                }
+
                 if (outcome.Result == null)
                 {
                     failures.Add(Describe(outcome.Title, "no result was recorded"));

@@ -58,22 +58,20 @@ namespace Appcopier
         protected virtual string RegFileNameFor(string key)
             => $"{Title}_{GetSafeFileName(key)}.reg";
 
-        /// <summary>
-        /// The names a restore may look for, in order, for one key.
-        /// </summary>
-        /// <remarks>
-        /// Element 0 is always what <see cref="RegFileNameFor"/> writes, so the reader cannot
-        /// disagree with the writer about what this build produces. A module whose key path changed
-        /// - and whose filename therefore changed with it, because the name is derived from the key
-        /// - overrides THIS to offer the older name as a later candidate, never the writer.
-        ///
-        /// Nothing overrides it yet. It exists as a pair with RegFileNameFor because a single-string
-        /// seam cannot express a restore-side fallback at all, and discovering that later would mean
-        /// either forking the seam or bypassing it - which is how export and import drifted apart in
-        /// the first place.
-        /// </remarks>
-        protected virtual IReadOnlyList<string> RegFileNamesToTryOnRestore(string key)
-            => new[] { RegFileNameFor(key) };
+        // There is deliberately no RegFileNamesToTryOnRestore companion to the above.
+        //
+        // One was written for this phase, to let a module whose key path changed offer the older
+        // filename as a fallback on restore. It was removed before merge because nothing called it:
+        // every module's restore composes its path from RegFileNameFor directly, so an override
+        // would have been a silent no-op - a trap wearing the costume of a safety feature, and the
+        // exact drift the writer half exists to prevent.
+        //
+        // The one candidate consumer, WTelemetry's control-set correction, turned out to need more
+        // than a filename anyway: the older file's CONTENTS name ControlSet001, so applying it would
+        // rewrite the stale hive the correction exists to stop using. A fallback there has to
+        // rewrite the payload, not just find it, and it has to be covered by the pre-restore
+        // snapshot before it can honestly claim to be undoable. That is a design problem, not a
+        // naming one, and it is filed rather than half-built here.
 
         /// <summary>
         /// Turns a registry key path or folder name into something usable as a filename.
