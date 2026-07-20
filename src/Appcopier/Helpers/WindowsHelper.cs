@@ -13,24 +13,32 @@ namespace Appcopier
     {
         private static readonly LogHelper logger = LogHelper.Instance;
 
-        internal static async Task CopyFolder(string source, string destination)
+        internal static async Task<CopyResult> CopyFolder(string source, string destination)
+        {
+            CopyResult result = new CopyResult();
+            await CopyFolderInto(source, destination, result).ConfigureAwait(false);
+            return result;
+        }
+
+        private static async Task CopyFolderInto(string source, string destination, CopyResult result)
         {
             try
             {
                 DirectoryInfo sourceDir = new DirectoryInfo(source);
-                DirectoryInfo destinationDir = new DirectoryInfo(destination);
 
                 if (!sourceDir.Exists)
                 {
-                    logger.Log($"Source directory does not exist: {source}");
+                    // Only the top-level call can legitimately find nothing; a missing subdirectory
+                    // mid-recursion would already have been enumerated, so it cannot happen here.
+                    result.SourceMissing = true;
+                    logger.LogMessage("Source directory does not exist: " + source);
                     return;
                 }
 
+                DirectoryInfo destinationDir = new DirectoryInfo(destination);
+
                 if (!destinationDir.Exists)
-                {
                     destinationDir.Create();
-                    logger.Log($"Destination directory created: {destination}");
-                }
 
                 foreach (FileInfo file in sourceDir.GetFiles())
                 {
@@ -41,38 +49,39 @@ namespace Appcopier
                         using (FileStream sourceStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true))
                         using (FileStream destinationStream = new FileStream(destinationFilePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
                         {
-                            await sourceStream.CopyToAsync(destinationStream);
+                            // ConfigureAwait(false) so an aggregating caller is not marshalled back
+                            // to the UI thread once per file across a browser profile.
+                            await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
                         }
 
-                        logger.Log($"Copied file: {file.FullName} to {destinationFilePath}");
+                        result.FilesCopied++;
+                        result.BytesCopied += file.Length;
                     }
                     catch (Exception ex)
                     {
-                        logger.Log($"Error copying file {file.FullName}: {ex.Message}");
+                        result.FilesFailed++;
+                        if (result.FirstError == null)
+                            result.FirstError = file.Name + ": " + ex.Message;
+
+                        logger.LogMessage("Error copying file " + file.FullName + ": " + ex.Message);
                     }
                 }
 
                 foreach (DirectoryInfo subDirectory in sourceDir.GetDirectories())
                 {
                     string newDestinationPath = Path.Combine(destinationDir.FullName, subDirectory.Name);
-                    await CopyFolder(subDirectory.FullName, newDestinationPath).ConfigureAwait(false);
+                    await CopyFolderInto(subDirectory.FullName, newDestinationPath, result).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
-                logger.Log($"Error copying folder {source} to {destination}: {ex.Message}");
-            }
-        }
+                // Enumeration or directory creation failed. Counted as a failure rather than
+                // swallowed, so the caller cannot mistake it for an empty folder.
+                result.FilesFailed++;
+                if (result.FirstError == null)
+                    result.FirstError = ex.Message;
 
-        internal static void CopyFile(string source, string destination)
-        {
-            try
-            {
-                File.Copy(source, destination, true);
-            }
-            catch (Exception ex)
-            {
-                logger.Log(ex.Message);
+                logger.LogMessage("Error copying folder " + source + " to " + destination + ": " + ex.Message);
             }
         }
 
