@@ -193,5 +193,97 @@ namespace Appcopier.Tests
 
             Assert.Equal(ResultState.Failed, s.State);
         }
+
+        // --- Branches that had no coverage, and cannot be reached until Task 8 without these ---
+
+        [Fact]
+        public void Export_NeverStarted_IsFailed()
+        {
+            StepResult s = Utils.ExportRegistryKey(Path.Combine(_dir, "x.reg"), PresentKey, false,
+                new FakeTool(ProcessOutcome.NeverStarted("boom")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // If regedit STARTED, it may already have written to the registry. Reporting that as
+        // "could not start" would be a false claim about whether the machine was modified.
+        [Fact]
+        public void Import_StartedButOutcomeUnknown_DoesNotClaimRegeditNeverRan()
+        {
+            StepResult s = Utils.ImportRegistryKey(Valid("unknown.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.OutcomeUnknown("handle closed")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.DoesNotContain("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("may have been partly changed", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_StartedButOutcomeUnknown_DoesNotClaimRegeditNeverRan()
+        {
+            StepResult s = Utils.ExportRegistryKey(Path.Combine(_dir, "u.reg"), PresentKey, false,
+                new FakeTool(ProcessOutcome.OutcomeUnknown("handle closed")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.DoesNotContain("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_ExitZeroButEmptyFile_IsFailed()
+        {
+            string path = Path.Combine(_dir, "empty-out.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0), p => File.WriteAllBytes(p, new byte[0]));
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("empty", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_ExitZeroButWrongHeader_IsFailed()
+        {
+            string path = Path.Combine(_dir, "bad-out.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0),
+                p => File.WriteAllText(p, "REGEDIT4\r\n", new UnicodeEncoding(false, true)));
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+        }
+
+        // Provenance: a valid .reg already sitting at the target path must NOT be able to satisfy
+        // verification for an export that wrote nothing. Without the pre-delete, regedit's measured
+        // exit-0-writes-nothing behaviour would be reported as success off a stale artifact.
+        [Fact]
+        public void Export_StaleFileAtTarget_DoesNotCountAsThisRunsOutput()
+        {
+            string path = Valid("stale.reg");          // a valid .reg already present
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));   // writes nothing
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("no file", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Import_UnreadableFile_IsFailedWithoutCallingItInvalid()
+        {
+            string path = Valid("locked-in.reg");
+
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));
+                StepResult s = Utils.ImportRegistryKey(path, "HKEY_CURRENT_USER\\X", tool);
+
+                Assert.Equal(ResultState.Failed, s.State);
+                Assert.False(tool.ImportCalled);
+                Assert.Contains("could not read", s.Reason, StringComparison.OrdinalIgnoreCase);
+                // We never read it, so we must not assert anything about its contents.
+                Assert.DoesNotContain("not a valid", s.Reason, StringComparison.OrdinalIgnoreCase);
+            }
+        }
     }
 }

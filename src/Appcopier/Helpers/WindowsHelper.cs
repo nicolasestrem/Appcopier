@@ -103,13 +103,34 @@ namespace Appcopier
                     : StepResult.Failed(registryPath, "expected " + registryPath + " is missing");
             }
 
+            // Clear any file already at the target path FIRST. Otherwise the verification below
+            // can be satisfied by a file this run did not write, and the method's promise to
+            // verify what it produced would be false. Not reachable in today's modules - WThemes
+            // is the only one looping several keys into a single filename and it holds exactly one
+            // key - but it becomes live the moment a second key is added, silently.
+            try
+            {
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+            }
+            catch (Exception ex)
+            {
+                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + ex.Message);
+            }
+
             ProcessOutcome outcome = tool.Export(filePath, registryPath);
+
+            if (outcome == null)
+                return StepResult.Failed(registryPath, "the registry tool returned no outcome");
 
             if (!outcome.Started)
                 return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
 
             if (outcome.TimedOut)
                 return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.Error != null)
+                return StepResult.Failed(registryPath, "regedit ran but its outcome could not be determined: " + outcome.Error);
 
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
@@ -118,6 +139,8 @@ namespace Appcopier
 
             switch (RegFile.Validate(filePath, out readError))
             {
+                case RegFileCheck.Valid:
+                    return StepResult.Succeeded(registryPath, "exported " + registryPath);
                 case RegFileCheck.Missing:
                     return StepResult.Failed(registryPath, "regedit reported success but wrote no file");
                 case RegFileCheck.Empty:
@@ -127,7 +150,8 @@ namespace Appcopier
                 case RegFileCheck.Unreadable:
                     return StepResult.Failed(registryPath, "could not read back the exported file: " + readError);
                 default:
-                    return StepResult.Succeeded(registryPath, "exported " + registryPath);
+                    // Fail closed. A RegFileCheck member added later must not silently pass here.
+                    return StepResult.Failed(registryPath, "the exported file could not be classified");
             }
         }
 
@@ -149,6 +173,8 @@ namespace Appcopier
 
             switch (RegFile.Validate(filePath, out readError))
             {
+                case RegFileCheck.Valid:
+                    break;   // the only case that may proceed to the registry
                 case RegFileCheck.Missing:
                     return StepResult.Skipped(registryPath, "nothing was backed up for this item");
                 case RegFileCheck.Empty:
@@ -160,15 +186,31 @@ namespace Appcopier
                     // whether it is valid - and a locked or ACL-denied file is a different problem
                     // for the user to fix than a corrupt one.
                     return StepResult.Failed(registryPath, "could not read the backed-up file: " + readError);
+                default:
+                    // Fail CLOSED. Without this, a RegFileCheck member added later falls through to
+                    // regedit /s unexamined, which would invert this method's one real guarantee:
+                    // that a file we cannot vouch for never reaches the registry.
+                    return StepResult.Failed(registryPath, "the backed-up file could not be classified - not importing it");
             }
 
             ProcessOutcome outcome = tool.Import(filePath);
+
+            if (outcome == null)
+                return StepResult.Failed(registryPath, "the registry tool returned no outcome");
 
             if (!outcome.Started)
                 return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
 
             if (outcome.TimedOut)
                 return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.Error != null)
+            {
+                // regedit started, so the registry may already have been written to. Saying it
+                // could not start would be a false claim about whether the machine changed.
+                return StepResult.Failed(registryPath,
+                    "regedit ran but its outcome could not be determined, so the registry may have been partly changed: " + outcome.Error);
+            }
 
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
