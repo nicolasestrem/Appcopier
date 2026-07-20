@@ -104,18 +104,72 @@ namespace Appcopier
         }
 
         // Reg operations
-        public static bool KeyExists(string key)
+
+        /// <summary>
+        /// Whether a registry key is present, absent, or could not be determined.
+        /// </summary>
+        /// <remarks>
+        /// The third state is the point. This method is the Skipped-vs-Failed discriminator for the
+        /// whole backup path, and "I could not tell" is a failure of the tool, not an absence of the
+        /// data - reporting a permission-denied probe as Absent would silently downgrade a real
+        /// failure into a reassuring "not present on this system".
+        /// </remarks>
+        public static KeyProbe ProbeKey(string key)
         {
-            // Registry.CurrentUser or Registry.LocalMachine
-            return KeyExistsInRegistry(key, Registry.CurrentUser) || KeyExistsInRegistry(key, Registry.LocalMachine);
+            if (string.IsNullOrWhiteSpace(key))
+                return KeyProbe.Absent;
+
+            KeyProbe hkcu = ProbeUnder(key, Registry.CurrentUser);
+            if (hkcu != KeyProbe.Absent)
+                return hkcu;
+
+            return ProbeUnder(key, Registry.LocalMachine);
         }
 
-        private static bool KeyExistsInRegistry(string key, RegistryKey baseKey)
+        /// <summary>
+        /// Convenience wrapper for callers that only need a yes/no and must never throw.
+        /// </summary>
+        /// <remarks>
+        /// Indeterminate deliberately maps to FALSE here, the opposite of the backup path's mapping.
+        /// The only caller is the IsInstalled() tree-build (ConfPageView.SelectInstalled), and
+        /// auto-checking a module whose keys could not be probed would manufacture a Failed row in
+        /// the very summary this phase exists to make trustworthy.
+        /// </remarks>
+        public static bool KeyExists(string key)
+            => ProbeKey(key) == KeyProbe.Present;
+
+        private static KeyProbe ProbeUnder(string key, RegistryKey baseKey)
         {
-            // remove base keys name from full registry key path
-            using (RegistryKey registryKey = baseKey.OpenSubKey(key.Replace($"{baseKey.Name}\\", string.Empty)))
+            string prefix = baseKey.Name + "\\";
+
+            // Only probe under this hive if the path actually names it. The previous implementation
+            // stripped only the matching prefix and then probed the remainder under BOTH hives, so
+            // an HKCU path was also looked up under HKLM with "HKEY_CURRENT_USER\" still attached -
+            // always null, so the HKLM half of the check was dead for every HKCU input.
+            if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return KeyProbe.Absent;
+
+            string subKey = key.Substring(prefix.Length);
+
+            try
             {
-                return registryKey != null;
+                using (RegistryKey opened = baseKey.OpenSubKey(subKey))
+                {
+                    return opened != null ? KeyProbe.Present : KeyProbe.Absent;
+                }
+            }
+            catch (System.Security.SecurityException)
+            {
+                return KeyProbe.Indeterminate;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return KeyProbe.Indeterminate;
+            }
+            catch (Exception)
+            {
+                // A malformed path or an unexpected provider error. Not knowing is the honest answer.
+                return KeyProbe.Indeterminate;
             }
         }
 
