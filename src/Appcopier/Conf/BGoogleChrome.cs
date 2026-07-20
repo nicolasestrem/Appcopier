@@ -38,17 +38,23 @@ namespace Conf
             // Check if process is running
             if (Utils.IsProcessRunning("chrome"))
             {
-                DialogResult answer = MessageBox.Show(
-                    "The Chrome process is currently running. Do you want to close it before backup?",
-                    "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-                if (answer != DialogResult.Yes)
+                // Not asked again when the caller has already gathered consent - the pre-restore
+                // snapshot has, on the UI thread, and asking here would both duplicate it and raise
+                // an ownerless dialog from a thread-pool thread. See BackupBase.AllowPrompts.
+                if (AllowPrompts)
                 {
-                    // Previously a bare "return", reported to the user as "Back up done." This is
-                    // the canonical Skipped case in the codebase: a deliberate user choice, not an
-                    // error, and not a success either.
-                    steps.Add(StepResult.Skipped(Title, "you chose not to close Chrome, so it was not backed up"));
-                    return ModuleResult.Aggregate(steps);
+                    DialogResult answer = MessageBox.Show(
+                        "The Chrome process is currently running. Do you want to close it before backup?",
+                        "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                    if (answer != DialogResult.Yes)
+                    {
+                        // Previously a bare "return", reported to the user as "Back up done." This is
+                        // the canonical Skipped case in the codebase: a deliberate user choice, not an
+                        // error, and not a success either.
+                        steps.Add(StepResult.Skipped(Title, "you chose not to close Chrome, so it was not backed up"));
+                        return ModuleResult.Aggregate(steps);
+                    }
                 }
 
                 CloseResult closed = Utils.CloseProcess("chrome");

@@ -11,6 +11,16 @@ namespace Appcopier
         /// <summary>Every item that needed snapshotting was captured.</summary>
         Complete,
 
+        /// <summary>
+        /// Some items were captured and others had nothing to save, so part of what this restore
+        /// overwrites has no fallback.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="Complete"/> on purpose. These used to fold together, and a run
+        /// that captured four of five items reported the same verdict as one that captured all five.
+        /// </remarks>
+        PartiallyCaptured,
+
         /// <summary>Nothing was captured, and nothing failed: an empty set, or every item skipped.</summary>
         NothingCaptured,
 
@@ -111,9 +121,16 @@ namespace Appcopier
         /// that was snapshotted, which is the selection minus the modules whose restore changes
         /// nothing - so an empty list is a legitimate state, not a missing argument.
         /// </summary>
-        internal static SnapshotDecision Evaluate(IReadOnlyList<ModuleOutcome> outcomes)
+        /// <param name="blockedCount">
+        /// How many selected modules the restore is refusing before it starts. An empty
+        /// <paramref name="outcomes"/> means something different depending on this: nothing needed
+        /// capturing, or everything that did was blocked. Saying the first when the second is true
+        /// tells the user their selection changes nothing, which is false.
+        /// </param>
+        internal static SnapshotDecision Evaluate(IReadOnlyList<ModuleOutcome> outcomes, int blockedCount = 0)
         {
             List<string> failures = new List<string>();
+            List<string> notCaptured = new List<string>();
             int considered = 0;
             int captured = 0;
 
@@ -144,6 +161,17 @@ namespace Appcopier
                     case ResultState.Succeeded:
                         captured++;
                         break;
+
+                    // Reported, never dropped. Every module reaching this gate is one the restore is
+                    // about to overwrite, so a skip means that particular item has no fallback -
+                    // restoring it will write state the snapshot cannot put back. It does not force
+                    // an override, because on this path a skip means the item had nothing to capture
+                    // rather than that the capture refused: the snapshot runs with prompts
+                    // suppressed, so a module cannot decline it. Silently dropping it was how a
+                    // module could be listed as snapshotted while nothing of it was saved.
+                    default:
+                        notCaptured.Add(Describe(outcome.Title, outcome.Result.Reason));
+                        break;
                 }
             }
 
@@ -160,19 +188,45 @@ namespace Appcopier
             // told "snapshot taken" who then needs to roll back would find an empty folder.
             if (captured == 0)
             {
-                string summary = considered == 0
-                    ? "No pre-restore snapshot was taken: none of the selected items change anything when restored."
-                    : string.Format(
-                        "The pre-restore snapshot captured nothing: all {0} item(s) had nothing to back up.",
-                        considered);
+                string summary;
 
-                return SnapshotDecision.Create(SnapshotVerdict.NothingCaptured, false, summary, null);
+                if (considered > 0)
+                {
+                    summary = string.Format(
+                        "The pre-restore snapshot captured nothing: none of the {0} item(s) had anything to save.",
+                        considered);
+                }
+                else if (blockedCount > 0)
+                {
+                    summary = string.Format(
+                        "No pre-restore snapshot was taken: {0} item(s) are not being restored, and nothing else needed capturing.",
+                        blockedCount);
+                }
+                else
+                {
+                    summary = "No pre-restore snapshot was taken: none of the selected items change anything when restored.";
+                }
+
+                return SnapshotDecision.Create(SnapshotVerdict.NothingCaptured, false, summary, notCaptured);
+            }
+
+            if (notCaptured.Count > 0)
+            {
+                // Deliberately NOT the Complete verdict. Some of what is about to be overwritten has
+                // no fallback, and a summary reading "captured 4 of 5" under a heading that says the
+                // snapshot completed is the partial-reported-as-whole failure this project exists to
+                // remove.
+                string summary = string.Format(
+                    "The pre-restore snapshot captured {0} of {1} item(s). The rest had nothing to save, so restoring them cannot be undone:",
+                    captured, considered);
+
+                return SnapshotDecision.Create(SnapshotVerdict.PartiallyCaptured, false, summary, notCaptured);
             }
 
             return SnapshotDecision.Create(
                 SnapshotVerdict.Complete,
                 false,
-                string.Format("The pre-restore snapshot captured {0} of {1} item(s).", captured, considered),
+                string.Format("The pre-restore snapshot captured all {0} item(s).", captured),
                 null);
         }
 

@@ -36,14 +36,20 @@ namespace Conf
             // Check if process is running
             if (Utils.IsProcessRunning("msedge"))
             {
-                DialogResult answer = MessageBox.Show(
-                    "The Edge process is currently running. Do you want to close it before backup?",
-                    "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-                if (answer != DialogResult.Yes)
+                // See BackupBase.AllowPrompts: the pre-restore snapshot has already taken this
+                // consent on the UI thread, and prompting from here would strand it behind the
+                // disabled window.
+                if (AllowPrompts)
                 {
-                    steps.Add(StepResult.Skipped(Title, "you chose not to close Edge, so it was not backed up"));
-                    return ModuleResult.Aggregate(steps);
+                    DialogResult answer = MessageBox.Show(
+                        "The Edge process is currently running. Do you want to close it before backup?",
+                        "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                    if (answer != DialogResult.Yes)
+                    {
+                        steps.Add(StepResult.Skipped(Title, "you chose not to close Edge, so it was not backed up"));
+                        return ModuleResult.Aggregate(steps);
+                    }
                 }
 
                 CloseResult closed = Utils.CloseProcess("msedge");

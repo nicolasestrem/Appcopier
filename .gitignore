@@ -8,6 +8,10 @@ src/packages/
 # Release artifact directory used by the /release skill (a ~69 MB self-contained exe).
 publish/
 
+# dotnet test output: .trx logs, and the crash/hang dumps --blame-hang writes, which run to
+# hundreds of megabytes each.
+[Tt]est[Rr]esults/
+
 # Visual Studio user/workspace files
 .vs/
 *.user

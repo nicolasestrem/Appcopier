@@ -207,8 +207,15 @@ namespace Views
         /// snapshot is an ordinary backup, so it inherits the export verification and the honest
         /// per-module results rather than growing a second, less-tested capture path.
         /// </remarks>
+        /// <param name="allowPrompts">
+        /// False for the pre-restore snapshot. Consent was already taken on the UI thread, and a
+        /// module prompting from a thread-pool thread here would raise an ownerless dialog behind a
+        /// disabled window - and a declined prompt would return Skipped, leaving the module
+        /// uncaptured while the restore went on to overwrite it.
+        /// </param>
         private async Task<List<ModuleResult>> RunModulesBackup(IReadOnlyList<BackupBase> modules,
-                                                                string folder, string progressVerb)
+                                                                string folder, string progressVerb,
+                                                                bool allowPrompts = true)
         {
             List<ModuleResult> results = new List<ModuleResult>();
 
@@ -220,6 +227,7 @@ namespace Views
 
                 try
                 {
+                    module.AllowPrompts = allowPrompts;
                     outcome = await module.BackupAsync(folder);
                 }
                 catch (Exception ex)
@@ -277,10 +285,19 @@ namespace Views
         /// for the run; whether Chrome is open does not, and the user can reopen it while the
         /// snapshot is still being taken.
         /// </remarks>
-        private async Task<ModuleResult> RestoreOne(BackupBase config, IReadOnlyList<string> consented)
+        private async Task<ModuleResult> RestoreOne(RestoreScopeEntry entry, IReadOnlyList<string> consented)
         {
+            BackupBase config = entry.Module;
+
             try
             {
+                // Refused on the same observation the snapshot set was chosen from, rather than on a
+                // fresh one. RestoreScope holds the reasoning; the short version is that a module the
+                // snapshot left out must not be restored, and re-reading the process state here is
+                // exactly how the two halves came to disagree.
+                if (!entry.WillBeRestored)
+                    return ModuleResult.Aggregate(new[] { RestoreScope.DescribeBlock(entry) });
+
                 IReadOnlyList<RestoreCloseRequirement> requirements =
                     config.ProcessesToCloseBeforeRestore ?? new RestoreCloseRequirement[0];
 
@@ -289,15 +306,22 @@ namespace Views
 
                 foreach (RestoreCloseRequirement requirement in requirements)
                 {
-                    bool consentGiven = requirement.NeedsConsent && IsConsented(consented, requirement.ProcessName);
+                    bool consentGiven = requirement.NeedsConsent
+                        && RestoreScope.IsConsented(consented, requirement.ProcessName);
                     bool isRunning = false;
                     CloseResult closeResult = CloseResult.NotRunning;
 
                     if (requirement.NeedsConsent)
                     {
                         string processName = requirement.ProcessName;
+
                         isRunning = await Task.Run(() => Utils.IsProcessRunning(processName));
 
+                        // Re-closed rather than trusted, because consent persists for the run and the
+                        // process state does not: the user can reopen a browser while the snapshot is
+                        // still being taken. Failing here is safe in a way that failing the other way
+                        // round is not - this module WAS snapshotted, so refusing it now leaves a
+                        // usable fallback on disk.
                         if (consentGiven && isRunning)
                             closeResult = await Task.Run(() => Utils.CloseProcess(processName));
                     }
@@ -324,8 +348,7 @@ namespace Views
                     string processName = requirement.ProcessName;
                     CloseResult closed = await Task.Run(() => Utils.CloseProcess(processName));
 
-                    logger.LogMessage("Closed " + requirement.DisplayName + " before restoring " +
-                                      config.Title + ": " + closed);
+                    closeSteps.Add(DescribeJustInTimeClose(config.Title, requirement, closed));
                 }
 
                 ModuleResult outcome = await config.RestoreAsync(CurrentRestorePath);
@@ -348,21 +371,71 @@ namespace Views
             }
         }
 
-        private static bool IsConsented(IReadOnlyList<string> consented, string processName)
-            => consented != null
-               && consented.Any(p => string.Equals(p, processName, StringComparison.OrdinalIgnoreCase));
+        /// <summary>
+        /// The sentence naming processes this run has already closed, or nothing when it closed none.
+        /// </summary>
+        private static string DescribeAlreadyClosed(IDictionary<string, CloseResult> closedUpFront)
+        {
+            string[] closed = closedUpFront
+                .Where(entry => entry.Value == CloseResult.Exited)
+                .Select(entry => entry.Key)
+                .ToArray();
+
+            if (closed.Length == 0)
+                return "";
+
+            return " Note that " + string.Join(", ", closed) +
+                   " had already been closed in order to take the snapshot.";
+        }
+
+        /// <summary>
+        /// The just-in-time close, as a step so it survives into restore_log.txt.
+        /// </summary>
+        /// <remarks>
+        /// A process that would not close is reported as Skipped rather than Failed on purpose. These
+        /// are the processes Windows restarts by itself - StartMenuExperienceHost is back within
+        /// seconds - so it is running again during the copy on a healthy machine, and failing the
+        /// module for that would cry wolf on nearly every run.
+        ///
+        /// That is a judgement about noise, not a guarantee of correctness, and the step wording says
+        /// only what is known: files it held open may not have been replaced. A locked file does
+        /// surface, because the copy fails on it and Aggregate fails the module. A process that keeps
+        /// its state in memory and flushes on exit does NOT - it can let every file copy cleanly and
+        /// then write its own version back over the restore. The Start menu layout store behaves that
+        /// way, which is why the reason is worded as a caveat rather than an all-clear.
+        /// </remarks>
+        private static StepResult DescribeJustInTimeClose(string moduleTitle,
+                                                          RestoreCloseRequirement requirement,
+                                                          CloseResult closed)
+        {
+            switch (closed)
+            {
+                case CloseResult.Exited:
+                    return StepResult.Succeeded(moduleTitle,
+                        "closed " + requirement.DisplayName + " before writing its files");
+
+                case CloseResult.NotRunning:
+                    return StepResult.Skipped(moduleTitle,
+                        requirement.DisplayName + " was not running, so nothing had to be closed");
+
+                default:
+                    return StepResult.Skipped(moduleTitle,
+                        requirement.DisplayName + " could not be closed first (" + closed +
+                        "), so any files it was holding open may not have been replaced");
+            }
+        }
 
         // Restoration logic with selected configurations
-        private async Task<List<ModuleResult>> PerformRestoration(List<BackupBase> configs,
+        private async Task<List<ModuleResult>> PerformRestoration(IReadOnlyList<RestoreScopeEntry> scope,
                                                                   IReadOnlyList<string> consented)
         {
             List<ModuleResult> results = new List<ModuleResult>();
 
-            foreach (BackupBase config in configs)
+            foreach (RestoreScopeEntry entry in scope)
             {
-                linkSubHeader.Text = "Restoring: " + config.Title;
+                linkSubHeader.Text = "Restoring: " + entry.Module.Title;
 
-                results.Add(await RestoreOne(config, consented));
+                results.Add(await RestoreOne(entry, consented));
 
                 linkSubHeader.Text = "Choose settings";
             }
@@ -371,52 +444,16 @@ namespace Views
         }
 
         /// <summary>
-        /// Whether this module is actually going to overwrite anything, and so is worth snapshotting.
-        /// </summary>
-        /// <remarks>
-        /// A module the user declined to close, or whose process refused to close, will be skipped or
-        /// failed at dispatch. Snapshotting it would spend a browser-profile copy protecting files
-        /// nothing is going to write to, and a locked profile would only manufacture a gate failure
-        /// out of a restore that was never going to touch it.
-        /// </remarks>
-        private static bool WillOverwrite(BackupBase module, IReadOnlyList<string> consented,
-                                          IDictionary<string, CloseResult> closedUpFront)
-        {
-            if (!module.RestoreMakesChanges)
-                return false;
-
-            IReadOnlyList<RestoreCloseRequirement> requirements =
-                module.ProcessesToCloseBeforeRestore ?? new RestoreCloseRequirement[0];
-
-            foreach (RestoreCloseRequirement requirement in requirements)
-            {
-                if (!requirement.NeedsConsent)
-                    continue;
-
-                if (!IsConsented(consented, requirement.ProcessName))
-                    return false;
-
-                CloseResult closed;
-
-                if (closedUpFront.TryGetValue(requirement.ProcessName, out closed)
-                    && (closed == CloseResult.StillRunning || closed == CloseResult.AccessDenied))
-                    return false;
-            }
-
-            return true;
-        }
-
-        /// <summary>
         /// Takes the pre-restore snapshot and reports whether the restore may go ahead on it.
         /// </summary>
         private async Task<SnapshotDecision> TakeSnapshot(IReadOnlyList<BackupBase> snapshotSet,
-                                                          string snapshotFolderPath)
+                                                          string snapshotFolderPath, int blockedCount)
         {
             if (snapshotFolderPath == null)
                 return SnapshotGate.FolderNotCreated("a snapshot folder name could not be chosen");
 
             if (snapshotSet.Count == 0)
-                return SnapshotGate.Evaluate(new List<ModuleOutcome>());
+                return SnapshotGate.Evaluate(new List<ModuleOutcome>(), blockedCount);
 
             string createError;
 
@@ -424,7 +461,7 @@ namespace Views
                 return SnapshotGate.FolderNotCreated(createError);
 
             List<ModuleResult> results =
-                await RunModulesBackup(snapshotSet, snapshotFolderPath, "Snapshotting");
+                await RunModulesBackup(snapshotSet, snapshotFolderPath, "Snapshotting", allowPrompts: false);
 
             LogBackedUpElements(snapshotFolderPath, snapshotSet, results, new[]
             {
@@ -509,9 +546,14 @@ namespace Views
             // Stage 2: informed consent, on the UI thread, before anything is created.
             IReadOnlyList<string> consented;
 
+            // The owner is the Form, not this control: a UserControl is not something CenterParent
+            // can centre on, and a modal owned by a control this pipeline has already disabled is
+            // the shape that fails to come forward.
+            Form owner = FindForm();
+
             using (RestoreConfirmForm confirm = new RestoreConfirmForm(plan))
             {
-                if (confirm.ShowDialog(this) != DialogResult.OK)
+                if (confirm.ShowDialog(owner) != DialogResult.OK)
                 {
                     logger.LogMessage("Restore cancelled - nothing was changed.");
                     return;
@@ -535,17 +577,27 @@ namespace Views
             }
 
             // Stages 4 and 5: snapshot, then decide whether the restore may go ahead on it.
-            List<BackupBase> snapshotSet = selectedConfigs
-                .Where(m => WillOverwrite(m, consented, closedUpFront))
+            //
+            // Worked out ONCE, here, and used by both the snapshot and the dispatch loop. Deciding
+            // twice from two readings of the process state is what previously let a module be left
+            // out of the snapshot and then restored anyway.
+            IReadOnlyList<RestoreScopeEntry> scope =
+                RestoreScope.For(selectedConfigs, consented, closedUpFront);
+
+            List<BackupBase> snapshotSet = scope
+                .Where(entry => entry.NeedsSnapshot)
+                .Select(entry => entry.Module)
                 .ToList();
 
-            SnapshotDecision snapshot = await TakeSnapshot(snapshotSet, snapshotFolderPath);
+            int blockedCount = scope.Count(entry => !entry.WillBeRestored);
+
+            SnapshotDecision snapshot = await TakeSnapshot(snapshotSet, snapshotFolderPath, blockedCount);
 
             logger.LogMessage(snapshot.Summary);
 
             if (snapshot.RequiresOverride)
             {
-                DialogResult answer = MessageBox.Show(this,
+                DialogResult answer = MessageBox.Show(owner,
                     snapshot.Describe() + "\r\n" + RestorePlan.FidelityCaveat +
                     "\r\n\r\nRestore anyway, without being able to undo it?",
                     "Pre-restore snapshot", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
@@ -553,14 +605,19 @@ namespace Views
 
                 if (answer != DialogResult.Yes)
                 {
+                    // Names the processes that were already closed. They were closed to take the
+                    // snapshot, and the snapshot is what just failed - so the user gave up an open
+                    // browser for a restore that then did not happen, and "nothing ran" on its own
+                    // would be the misreport this phase exists to remove.
                     ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore,
-                        "the pre-restore snapshot did not complete and you chose not to continue."), "Restore");
+                        "the pre-restore snapshot did not complete and you chose not to continue." +
+                        DescribeAlreadyClosed(closedUpFront)), "Restore");
                     return;
                 }
             }
 
             // Stage 6.
-            List<ModuleResult> results = await PerformRestoration(selectedConfigs, consented);
+            List<ModuleResult> results = await PerformRestoration(scope, consented);
 
             // Stage 7.
             LogRestoredElements(selectedConfigs, results, snapshot, snapshotFolderPath);

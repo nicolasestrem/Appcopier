@@ -112,10 +112,13 @@ namespace Appcopier
             timer.SynchronizingObject = this;
             timer.Elapsed += QRTimerElapsed;
 
-            this.FormClosing += MainForm_FormClosing;
+            // FormClosed, not FormClosing: a FormClosing handler runs even when the close is
+            // cancelled, so tearing the timer down there would permanently kill the QR prompt for
+            // a session that carried on running.
+            this.FormClosed += MainForm_FormClosed;
         }
 
-        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
         {
             // The mouse handlers must go first: a MouseLeave raised while the form tears down would
             // otherwise touch the disposed timer.

@@ -17,6 +17,7 @@ namespace Conf
             Info = "This will backup custom theme settings, default Windows wallpapers and a copy of your current Desktop background image.";
             // Version = "This is compatible with all versions of Windows.";
             RequiresExplorerRestart = true;
+            WarningMessage = "Restoring this writes into the Windows wallpaper folder, which is shared by every account on this PC - not just yours.";
 
             LoadSettings();
         }

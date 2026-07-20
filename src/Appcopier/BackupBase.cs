@@ -23,6 +23,23 @@ namespace Appcopier
         /// </remarks>
         protected const string NothingBackedUp = "nothing was backed up for this item";
 
+        /// <summary>
+        /// Whether this module may ask the user a question while backing up.
+        /// </summary>
+        /// <remarks>
+        /// The pre-restore snapshot sets this false, and that is not a convenience. A module that
+        /// prompts there raises an ownerless MessageBox from a thread-pool thread while the window
+        /// is already disabled, so it can paint behind the app and strand the restore - and a "no"
+        /// answer returns Skipped, which is indistinguishable at the gate from "there was nothing to
+        /// back up". The module would then be left uncaptured and restored anyway, which is the
+        /// whole defect this phase exists to remove.
+        ///
+        /// Consent for closing these processes is gathered once, on the UI thread, before the
+        /// snapshot starts. Asking again from module code would be asking a second time for
+        /// something already agreed.
+        /// </remarks>
+        internal bool AllowPrompts { get; set; } = true;
+
         // Property to display Info
         public string Title { get; set; }
 

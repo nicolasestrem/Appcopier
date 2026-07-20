@@ -146,7 +146,10 @@ returns `Run` / `Skip(step)` / `Fail(step)`.
   `BackupAsync` — which contains its own running-process prompt at `BGoogleChrome.cs:32` — finds
   nothing running and never prompts. One consent covers both halves of the operation.
 - The dispatch loop re-checks `IsProcessRunning` per consented module and re-closes if the user
-  reopened the browser mid-run. Consent persists for the run; the process state does not.
+  reopened the browser mid-run. Consent persists for the run; the process state does not. **That
+  re-check may only narrow the set, never widen it**: which modules are restored at all was already
+  settled by `RestoreScope` from the up-front close, and re-deriving it here is the defect recorded
+  in "Record of corrections" below. A module the scope refused is refused before the re-check runs.
 
 The close outcome becomes a visible step, folded in via `ModuleResult.Aggregate(closeStep + steps)`.
 `Aggregate` remains the single construction path, so a failed close dominates by Rule 2 without any
@@ -226,18 +229,45 @@ smoke matrix.
 
 ```csharp
 public enum RestoreTargetKind { RegistryKey, Folder, Command }
+public enum RestoreBlock      { None, ConsentWithheld, CouldNotClose }
+public enum RestoreAction     { Run, Skip, Fail }
+public enum SnapshotVerdict   { Complete, NothingCaptured, ModulesFailed, FolderNotCreated }
+public enum ShellOutcome      { RestartedByWindows, Restarted, FailedToStart, NotAttempted }
 
-public sealed class RestoreTarget          // Kind + Path, factory-validated non-empty
+public sealed class RestoreTarget           // Kind + Path, factory-validated non-empty
 public sealed class RestoreCloseRequirement // ProcessName + DisplayName + NeedsConsent
-public sealed class RestorePlan             // pure: ConfirmationText, consent entries, FidelityCaveat
+public sealed class RestoreConsentEntry     // one checkbox: ProcessName + DisplayName + Label
+public sealed class RestorePlan             // pure: ConfirmationText, ConsentEntries,
+                                            //       InformationalCloseLines, FidelityCaveat
 public static class SnapshotNaming          // NameFor(DateTime) + Unique(name, exists)
-public static class SnapshotGate            // Evaluate(results) -> Proceed | RequiresOverride(failures)
-public static class RestoreDispatch         // Decide(...) -> Run | Skip(step) | Fail(step)
-public sealed class ExplorerRestartResult   // CloseResult + ShellOutcome + Error + Describe()
-public static class RestoreLog              // Compose(...) over BackupLog.Compose
+public sealed class RestoreScopeEntry       // Module + Block + BlockedBy + NeedsSnapshot + WillBeRestored
+public static class RestoreScope            // For(modules, consented, closedUpFront) -> the one scope
+                                            // both halves read; DescribeBlock(entry) -> StepResult
+public sealed class RestoreDecision          // Action + CloseStep + JustInTimeClose
+public static class RestoreDispatch          // Decide(moduleTitle, requirement, consentGiven,
+                                             //        isRunning, closeResult) -> Run | Skip | Fail
+                                             // Fold(closeStep, moduleResult) -> ModuleResult
+public sealed class ExplorerRestartResult    // CloseResult + ShellOutcome + Error + Describe()
+
+internal sealed class SnapshotDecision       // Verdict + RequiresOverride + Failures + Summary + Describe()
+internal static class SnapshotGate           // FolderNotCreated(error); Evaluate(outcomes) -> SnapshotDecision
+internal static class RestoreLog             // Compose(...) over BackupLog.Compose; FallbackFileName(when)
 ```
 
-`ShellOutcome` is `RestartedByWindows | Restarted | FailedToStart | NotAttempted`.
+The last three are `internal`, not `public` as drafted: they traffic in `ModuleOutcome`, which is itself
+internal, and a public signature over an internal type does not compile. The test project sees them
+through the existing `InternalsVisibleTo("Appcopier.Tests")`, so nothing is lost.
+
+`RestoreDispatch.Decide` takes a **module title plus the values it decides on**, not a `BackupBase`. A
+module is a live object with an `IsInstalled()` and a `Backup(path)` on it; taking one would make the
+decision table constructible only by instantiating real modules, which is the opposite of what a pure
+decision function is for. Every input — consent, running state, close outcome — is passed in, so the
+whole table is exercisable off a real machine.
+
+`RestorePlan` exposes `RestoreConsentEntry` (the deduplicated per-process checkbox) alongside
+`InformationalCloseLines` (the closes the user is told about but not asked about). They are separate
+properties because a checkbox is a question, and there is nothing to decline about a process that comes
+straight back on its own.
 
 Every 2b outcome flows through the existing `StepResult` / `ModuleResult.Aggregate` / `RunSummary`
 machinery. No new result-construction path is introduced, and `ResultState` gains no `Partial`.
@@ -264,9 +294,11 @@ thread ahead of any dispatch to the pool.
 
 1. Build `RestorePlan` from `selectedConfigs`, `CurrentRestorePath`, and a fresh snapshot name.
 2. Show `RestoreConfirmForm`. Cancel → log line, return. **Nothing is created before consent.**
-3. Close consented browsers once, up front (`Task.Run` per process). Unclosable → that module fails at
-   dispatch and leaves the snapshot set; snapshotting a locked profile only manufactures a gate failure.
-4. Create the snapshot folder and run the backup pipeline over the snapshot set.
+3. Close consented browsers once, up front (`Task.Run` per process), then build the run's
+   `RestoreScope` from that one close result. Declined or unclosable → the module leaves the snapshot
+   set *and* is refused at dispatch, from the same entry. Snapshotting a locked profile only
+   manufactures a gate failure; restoring one that was not snapshotted is the defect below.
+4. Create the snapshot folder and run the backup pipeline over the scope's snapshot set.
 5. `SnapshotGate` — proceed, or require the override confirmation of Decision 5.
 6. Dispatch loop, with `RestoreDispatch.Decide` ahead of each module.
 7. Write `restore_log.txt`.
@@ -301,8 +333,15 @@ The whole pipeline gets the disable-form/`finally` guard `btnBackup_Click` alrea
 5. `SnapshotNaming` format, freshness, and collision suffixing.
 6. `SnapshotGate` rows: folder-create failure, any `Failed`, all-`Skipped`, empty snapshot set.
 7. `RestoreDispatch.Decide` full table, and that folding a failed close step preserves Rule 2.
-8. `RestoreLog.Compose` content rows, the without-snapshot variant, and the fallback filename.
-9. `BackupLog.Compose`'s `extraHeaderLines` extension, with the existing format as a regression row.
+8. `RestoreScope`, over every combination of module shape × consent state × `CloseResult`: the
+   invariant that **a module the snapshot leaves out is a module the restore refuses** — for every
+   entry, `NeedsSnapshot == false && RestoreMakesChanges == true` implies `WillBeRestored == false`.
+   Asserted as a sweep rather than a row list, because the defect it guards was not any single wrong
+   row: each half was right on its own, and only the combination was wrong. A test that enumerated the
+   cases someone thought of would have passed on the broken code. Plus `DescribeBlock`'s two wordings,
+   which must read identically to `RestoreDispatch`'s own refusals — same refusal, different evidence.
+9. `RestoreLog.Compose` content rows, the without-snapshot variant, and the fallback filename.
+10. `BackupLog.Compose`'s `extraHeaderLines` extension, with the existing format as a regression row.
 
 **The gap.** The suite covers the decision logic — plan composition, gate rules, dispatch decisions,
 naming, log composition, read-back classification — and **none of the evidence those decisions
@@ -318,12 +357,13 @@ layer along; the compensating verification is the same shape.
 | 1 | Restore with Chrome running, consent checked | Chrome closes once; no prompt during the snapshot; profile restored; close step in `restore_log.txt` |
 | 2 | Same, consent unchecked | Module `Skipped` with the backup-mirror wording; Chrome untouched |
 | 3 | Cancel the confirmation | No snapshot folder created; nothing changed; log line only |
-| 4 | Force a snapshot failure (deny write on `app\`) | Override dialog appears with No focused; No → "did not run" summary |
+| 4 | Force a snapshot failure (deny write on `app\`) with Chrome consented and running | Override dialog appears with No focused; No → "did not run" summary that also **names Chrome as having been closed to take the snapshot** — the user gave up an open browser for a restore that then did not happen |
+| 4b | Restore with a large Chrome tree consented, so the close overruns its 5 s budget | The module is treated one way in both halves: either snapshotted **and** restored, or refused in both. Never restored without a snapshot folder containing it (the defect in "Record of corrections") |
 | 5 | Override with Yes | Restore proceeds; `restore_log.txt` records the missing snapshot |
 | 6 | Two restores in one session | Two distinct "(pre-restore)" folders |
 | 7 | Restore the "(pre-restore)" folder itself | Rollback works end-to-end through the normal flow; both logs shown |
 | 8 | Registry restore, elevated then unelevated | "key is present after the import"; unelevated `HKLM` shows "could not confirm", never a false `Failed` (N4) |
-| 9 | Restart Explorer button | Exactly one shell returns, zero stray windows (N2, both branches); failure path shows the dialog |
+| 9 | Restart Explorer button | Exactly one shell returns, zero stray windows (N2, both branches). The button hides **only** when a shell actually came back; on `FailedToStart` it reports the failure in a dialog and stays visible, so the retry is still available |
 | 10 | `APinnedApps` restore | Start menu blinks, respawns, layout applied (N3) |
 | 11 | QR hover; then close the app with the timer pending | Dialog in front and owned; no crash on close |
 
@@ -356,6 +396,25 @@ Kept so overturned claims are not reintroduced.
   into this session's backup folder and collide across restores.
 - *"Ask per module whether to close the browser."* Rejected: serial prompts from module code is the
   worker-thread dialog pattern this phase removes, and it splits consent from the caveat.
+- *"The snapshot set and the dispatch decision can each read the process state for themselves."* This
+  was never written as one claim, which is why it survived review: Decision 3 said declined and
+  unclosable modules leave the snapshot set, and Decision 7 said the dispatch loop re-checks
+  `IsProcessRunning` per consented module. Both are individually defensible. Together they are a hole.
+  `Utils.CloseProcess` reports `StillRunning` whenever its shared five-second budget expires — routine
+  for a Chrome tree of twenty-odd processes — and those processes are gone seconds later. So the module
+  was dropped from the snapshot on the up-front reading, and then, tens of seconds later, found
+  not-running by the fresh reading and **restored anyway**: a live profile overwritten with nothing on
+  disk to undo it, while `restore_log.txt` recorded that a snapshot had completed. The two halves were
+  not disagreeing about a decision; they were disagreeing about a fact, and the more dangerous reading
+  won because it was the one taken last.
+
+  The correction is that **one decision serves both halves**. `RestoreScope.For` is taken once, from
+  the up-front close, and both the snapshot set and the dispatch loop read the same entries. The
+  invariant it enforces: *a module the snapshot leaves out is a module the restore refuses.* The
+  per-module re-check of Decision 7 survives, but only as a further refusal — it can fail a module the
+  scope allowed, never rescue one the scope refused, because a module the scope allowed has a snapshot
+  on disk and a module it refused does not.
+
 - *"Post-import `Indeterminate` should fail, like the export path."* Wrong, and backwards: on export the
   probe is the only evidence; post-import, exit code 0 already supports "applied". Failing there would
   report a false failure on every unelevated `HKLM` import — the cry-wolf direction.

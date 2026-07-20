@@ -200,8 +200,13 @@ namespace Appcopier.Tests
 
             Assert.False(d.RequiresOverride);
             Assert.Equal(SnapshotVerdict.NothingCaptured, d.Verdict);
-            Assert.Empty(d.Failures);
             Assert.Contains("captured nothing", d.Summary);
+
+            // Listed rather than dropped. Nothing FAILED here - these are legitimate absences - but
+            // every one of them is an item the restore will overwrite with no fallback, and the
+            // record has to name them.
+            Assert.Contains(d.Failures, f => f.Contains("Mouse"));
+            Assert.Contains(d.Failures, f => f.Contains("Touchpad"));
         }
 
         // Every selected module had RestoreMakesChanges false, so nothing was snapshotted. This is
@@ -239,16 +244,54 @@ namespace Appcopier.Tests
         }
 
         // Rule 4's shape on the snapshot side: some captured, some legitimately absent. Nothing
-        // failed, so demanding an override here would be the cry-wolf direction.
+        // failed, so demanding an override here would be the cry-wolf direction - but it is not
+        // Complete either, and it must name what it did not capture. A skipped module is one the
+        // restore is about to overwrite with no fallback for it, and this branch previously dropped
+        // it silently and then reported the run as complete.
         [Fact]
-        public void Gate_SucceededPlusSkipped_ProceedsAsComplete()
+        public void Gate_SucceededPlusSkipped_ProceedsButDoesNotClaimCompleteness()
         {
             SnapshotDecision d = SnapshotGate.Evaluate(Outcomes(
                 new ModuleOutcome("Mouse", Ok()),
                 new ModuleOutcome("Gaming", Skipped())));
 
             Assert.False(d.RequiresOverride);
-            Assert.Equal(SnapshotVerdict.Complete, d.Verdict);
+            Assert.Equal(SnapshotVerdict.PartiallyCaptured, d.Verdict);
+
+            // Named, not merely counted: the user has to know WHICH item has no fallback.
+            Assert.Contains(d.Failures, f => f.Contains("Gaming"));
+            Assert.Contains("Gaming", d.Describe());
+        }
+
+        // The whole point of separating the two verdicts. A run that captured everything and a run
+        // that captured all but one must not read the same.
+        [Fact]
+        public void Gate_CompleteAndPartial_DoNotReadTheSame()
+        {
+            SnapshotDecision complete = SnapshotGate.Evaluate(Outcomes(
+                new ModuleOutcome("Mouse", Ok())));
+
+            SnapshotDecision partial = SnapshotGate.Evaluate(Outcomes(
+                new ModuleOutcome("Mouse", Ok()),
+                new ModuleOutcome("Gaming", Skipped())));
+
+            Assert.NotEqual(complete.Verdict, partial.Verdict);
+            Assert.NotEqual(complete.Summary, partial.Summary);
+        }
+
+        // Empty because everything was refused is not the same fact as empty because nothing writes,
+        // and saying the second when the first is true tells the user their selection changes
+        // nothing - which is false, and is the class of claim this phase exists to remove.
+        [Fact]
+        public void Gate_EmptyBecauseEverythingWasBlocked_DoesNotClaimNothingChanges()
+        {
+            SnapshotDecision blocked = SnapshotGate.Evaluate(new List<ModuleOutcome>(), blockedCount: 2);
+            SnapshotDecision inert = SnapshotGate.Evaluate(new List<ModuleOutcome>());
+
+            Assert.Equal(SnapshotVerdict.NothingCaptured, blocked.Verdict);
+            Assert.DoesNotContain("change anything", blocked.Summary);
+            Assert.Contains("change anything", inert.Summary);
+            Assert.NotEqual(inert.Summary, blocked.Summary);
         }
 
         // Whichever way it went, restore_log.txt gets a line. A branch with an empty summary would
