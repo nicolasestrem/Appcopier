@@ -5,19 +5,32 @@ using System.Windows.Forms;
 namespace Appcopier
 {
     /// <summary>
-    /// The two words needed to describe a run: a past-tense verb for the success headline and a
-    /// noun for the did-not-run message. One string cannot serve both - "Restored" reads fine in
-    /// "Restored 3 items" but produces "Restored did not run." where "Restore did not run." is needed.
+    /// The word forms needed to describe a run in every grammatical position its sentences use.
+    /// One string cannot serve all of them - "Restored" reads fine in "Restored 3 items" but
+    /// produces "Restored did not run." where "Restore did not run." is needed, and "Nothing was
+    /// restore." is not a sentence either. Add a form here rather than a literal if a new sentence
+    /// needs the verb in a position these four don't cover.
     /// </summary>
     internal sealed class RunVerb
     {
-        public string Past { get; }   // "Backed up" / "Restored"
-        public string Noun { get; }   // "Backup"    / "Restore"
+        public string Past { get; }        // "Backed up"  / "Restored"   - starts a headline
+        public string PastLower { get; }   // "backed up"  / "restored"   - mid-sentence
+        public string Noun { get; }        // "Backup"     / "Restore"    - subject of a sentence
+        public string Infinitive { get; }  // "back up"    / "restore"    - after "nothing to"
 
-        private RunVerb(string past, string noun) { Past = past; Noun = noun; }
+        private RunVerb(string past, string pastLower, string noun, string infinitive)
+        {
+            Past = past;
+            PastLower = pastLower;
+            Noun = noun;
+            Infinitive = infinitive;
+        }
 
-        public static readonly RunVerb Backup = new RunVerb("Backed up", "Backup");
-        public static readonly RunVerb Restore = new RunVerb("Restored", "Restore");
+        public static readonly RunVerb Backup =
+            new RunVerb("Backed up", "backed up", "Backup", "back up");
+
+        public static readonly RunVerb Restore =
+            new RunVerb("Restored", "restored", "Restore", "restore");
     }
 
     internal enum RunState
@@ -42,8 +55,13 @@ namespace Appcopier
         public string Headline { get; private set; }
         public string Detail { get; private set; }
 
+        // DidNotRun is a warning, not information: the user picked a backup folder and it was not
+        // there, so they asked for something and did not get it. Only Done and NothingDone are
+        // genuinely informational.
         public MessageBoxIcon Icon
-            => State == RunState.Problems ? MessageBoxIcon.Warning : MessageBoxIcon.Information;
+            => State == RunState.Problems || State == RunState.DidNotRun
+                ? MessageBoxIcon.Warning
+                : MessageBoxIcon.Information;
 
         internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)
         {
@@ -78,8 +96,8 @@ namespace Appcopier
                 return new RunSummary
                 {
                     State = RunState.NothingDone,
-                    Headline = "Nothing was backed up.",
-                    Detail = "None of the selected items were present on this system."
+                    Headline = "Nothing was " + verb.PastLower + ".",
+                    Detail = "None of the selected items had anything to " + verb.Infinitive + "."
                 };
             }
 
@@ -89,8 +107,8 @@ namespace Appcopier
 
             if (skipped.Length > 0)
             {
-                detail += string.Format("\r\n\r\n{0} item(s) had nothing to back up on this system.",
-                    skipped.Length);
+                detail += string.Format("\r\n\r\n{0} item(s) had nothing to {1}.",
+                    skipped.Length, verb.Infinitive);
             }
 
             return new RunSummary

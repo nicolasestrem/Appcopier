@@ -1,5 +1,6 @@
 using Appcopier;
 using System.Collections.Generic;
+using System.Windows.Forms;
 using Xunit;
 
 namespace Appcopier.Tests
@@ -76,6 +77,33 @@ namespace Appcopier.Tests
             RunSummary s = RunSummary.For(new List<ModuleResult> { Ok() }, true, RunVerb.Restore);
             Assert.StartsWith("Restored", s.Headline);
         }
+
+        // Every user-facing sentence runs for BOTH directions. Three separate bugs came from
+        // hardcoding a backup verb into one of them, so each is pinned against the restore verb.
+
+        [Fact]
+        public void AllSkipped_Restore_DoesNotSayBackedUp()
+        {
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, RunVerb.Restore);
+
+            Assert.DoesNotContain("backed up", s.Headline, System.StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("back up", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("restored", s.Headline, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void SucceededPlusSkipped_Restore_FootnoteDoesNotSayBackUp()
+        {
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, RunVerb.Restore);
+
+            Assert.DoesNotContain("back up", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("restore", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void DidNotRun_IsAWarningNotInformation()
+            => Assert.Equal(MessageBoxIcon.Warning,
+                   RunSummary.For(new List<ModuleResult>(), false, RunVerb.Restore).Icon);
 
         [Fact]
         public void Problems_DetailNamesEveryFailedModule()
