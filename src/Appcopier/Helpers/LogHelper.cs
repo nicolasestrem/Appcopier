@@ -41,6 +41,23 @@ namespace Appcopier
             }
         }
 
+        /// <summary>
+        /// Logs an already-composed message, with no <see cref="string.Format"/> pass over it.
+        /// </summary>
+        /// <remarks>
+        /// Use this for anything whose text is data rather than a template - result reason strings,
+        /// registry paths, exception messages. Log(string, params object[]) treats its first
+        /// argument as a format string, so a single brace in the text throws FormatException inside
+        /// AppendLog, which routes the line to Console.WriteLine - invisible in a WinForms app.
+        /// The message is not lost loudly; it is lost silently, which is worse.
+        /// </remarks>
+        public void LogMessage(string message)
+        {
+            // "{0}" as the template and the caller's text as an ARGUMENT: string.Format then has
+            // nothing to parse in the untrusted half.
+            Log("{0}", message ?? string.Empty);
+        }
+
         private void AppendLog(string format, params object[] args)
         {
             try
