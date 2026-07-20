@@ -2143,6 +2143,20 @@ This is the atomic task. `Backup(string)` cannot return `void` and `ModuleResult
 
 **Do not retype any registry key, folder path, or `Title` string.** Keep the existing `Key` / `Keys` / `Folder` field values exactly as they are. Changing a `Title` or a filename expression would make existing v0.30.0 backups unrestorable.
 
+> **The compiler will not catch every site.** The registry rename produces hard `CS0117` errors, so
+> those call sites cannot be missed. `Utils.CopyFolder` is different: it changed from `Task` to
+> `Task<CopyResult>`, and every existing caller writes `await Utils.CopyFolder(...)` discarding the
+> value — which is **legal C# and compiles silently**. Ten such sites exist:
+>
+> ```
+> APinnedApps.cs:32,37   BGoogleChrome.cs:44,49   BMicrosoftEdge.cs:44,49
+> BMozillaFirefox.cs:44,49   WThemes.cs:70,90
+> ```
+>
+> Run `grep -rn "CopyFolder" src/Appcopier/Conf/` and confirm every one captures the result and
+> folds it via `ToStep`. Missing one leaves that module reporting success for every folder copy —
+> the exact bug this phase exists to remove, reintroduced by omission, with a green build.
+
 - [ ] **Step 1: Change `BackupBase`**
 
 Replace `src/Appcopier/BackupBase.cs` entirely:
