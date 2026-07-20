@@ -22,6 +22,19 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[] { RestoreTarget.Folder(Folder) };
+
+        // "firefox" matches the backup path above: see the matching note in BGoogleChrome.
+        public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+            => new[] { new RestoreCloseRequirement("firefox", "Mozilla Firefox", true) };
+
+        // See the matching note in BGoogleChrome: this is what stops Firefox being closed for a
+        // restore that has nothing to restore.
+        public override bool HasBackupIn(string restorePath)
+            => !string.IsNullOrWhiteSpace(restorePath)
+               && Directory.Exists(Path.Combine(restorePath, Title));
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
@@ -29,14 +42,20 @@ namespace Conf
             // Check if process is running
             if (Utils.IsProcessRunning("firefox"))
             {
-                DialogResult answer = MessageBox.Show(
-                    "The Firefox process is currently running. Do you want to close it before backup?",
-                    "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-                if (answer != DialogResult.Yes)
+                // See BackupBase.AllowPrompts: the pre-restore snapshot has already taken this
+                // consent on the UI thread, and prompting from here would strand it behind the
+                // disabled window.
+                if (AllowPrompts)
                 {
-                    steps.Add(StepResult.Skipped(Title, "you chose not to close Firefox, so it was not backed up"));
-                    return ModuleResult.Aggregate(steps);
+                    DialogResult answer = MessageBox.Show(
+                        "The Firefox process is currently running. Do you want to close it before backup?",
+                        "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                    if (answer != DialogResult.Yes)
+                    {
+                        steps.Add(StepResult.Skipped(Title, "you chose not to close Firefox, so it was not backed up"));
+                        return ModuleResult.Aggregate(steps);
+                    }
                 }
 
                 CloseResult closed = Utils.CloseProcess("firefox");

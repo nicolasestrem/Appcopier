@@ -235,14 +235,26 @@ namespace Appcopier
         /// </summary>
         /// <remarks>
         /// The pre-flight matters more than the exit code here. regedit /s returns 0 on a file it
-        /// only partially applied, so a successful run is reported as "applied", never "verified" -
-        /// reading the keys back to prove an import took is Phase 2b. Refusing a malformed file
-        /// BEFORE launching regedit is the one strong guarantee available on this path.
+        /// only partially applied, so refusing a malformed file BEFORE launching regedit is the one
+        /// strong guarantee available on this path.
+        ///
+        /// The read-back afterwards is deliberately weaker than the export path's. It proves the key
+        /// EXISTS after the import; it does not prove any value under it matches the backup, and a
+        /// partially-applied file leaves the key present. So the wording stays "applied" and never
+        /// becomes "verified".
+        ///
+        /// The tri-state maps in the opposite direction to ExportRegistryKey, and that asymmetry is
+        /// the whole point. Absence is affirmative evidence the import did not take, so it fails.
+        /// Indeterminate is no evidence at all and must NOT overturn exit code 0 - the concrete case
+        /// is an unelevated probe of an HKLM key that regedit has just written under elevation, and
+        /// failing there would report a false failure on every such import.
         /// </remarks>
         internal static StepResult ImportRegistryKey(string filePath, string registryPath,
-                                                     IRegistryTool tool = null)
+                                                     IRegistryTool tool = null,
+                                                     Func<string, KeyProbe> probe = null)
         {
             tool = tool ?? DefaultRegistryTool;
+            probe = probe ?? ProbeKey;
 
             string readError;
 
@@ -290,8 +302,43 @@ namespace Appcopier
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
 
-            return StepResult.Applied(registryPath, registryPath);
+            // A key whose hive ProbeKey does not understand always probes Absent, which would turn
+            // this method's strongest branch into a reported failure on the strength of a lookup
+            // that was never performed. Such a key gets the plain claim instead.
+            if (!IsProbeableKeyPath(registryPath))
+                return StepResult.Applied(registryPath, registryPath);
+
+            switch (probe(registryPath))
+            {
+                case KeyProbe.Present:
+                    return StepResult.Succeeded(registryPath,
+                        "applied " + registryPath + "; the key is present after the import");
+                case KeyProbe.Absent:
+                    return StepResult.Failed(registryPath,
+                        "regedit reported success but " + registryPath + " is not present after the import");
+                case KeyProbe.Indeterminate:
+                    return StepResult.Succeeded(registryPath,
+                        "applied " + registryPath + "; could not confirm the key is present afterwards");
+                default:
+                    // Fail OPEN here, unlike the export path. A KeyProbe member added later carries
+                    // no evidence about this key, and exit code 0 already supports "applied" - so
+                    // the claim is narrowed rather than inverted into a failure.
+                    return StepResult.Applied(registryPath, registryPath);
+            }
         }
+
+        /// <summary>
+        /// Whether <see cref="ProbeKey"/> can actually look this path up.
+        /// </summary>
+        /// <remarks>
+        /// ProbeKey understands HKEY_CURRENT_USER and HKEY_LOCAL_MACHINE only, and reports anything
+        /// else as Absent - indistinguishable from a key it looked for and did not find. Callers that
+        /// treat Absent as evidence have to ask this first.
+        /// </remarks>
+        internal static bool IsProbeableKeyPath(string key)
+            => key != null
+               && (key.StartsWith(Registry.CurrentUser.Name + "\\", StringComparison.OrdinalIgnoreCase)
+                   || key.StartsWith(Registry.LocalMachine.Name + "\\", StringComparison.OrdinalIgnoreCase));
 
         // Reg operations
 
@@ -378,27 +425,53 @@ namespace Appcopier
             return KeyProbe.Indeterminate;
         }
 
-        // Restart explorer.exe if required for back up closure
-        public static void RestartExplorer()
+        /// <summary>
+        /// Closes the Windows shell and brings back exactly one, reporting what happened.
+        /// </summary>
+        /// <remarks>
+        /// The previous implementation started a shell once per KILLED process, so a user with six
+        /// File Explorer windows open got six shells. Killing is delegated to CloseProcess, which
+        /// already bounds its wait and survives processes that vanish mid-kill.
+        ///
+        /// The probe before starting is not optimisation. explorer.exe launched while a shell is
+        /// already running opens a stray file-browser window instead of becoming the shell, and
+        /// Windows' AutoRestartShell usually beats us to it - so the N-shells bug would come straight
+        /// back at N=2. Carries a 5s close budget, so callers must not run it on the UI thread.
+        /// </remarks>
+        public static ExplorerRestartResult RestartExplorer()
         {
-            // Retrieve explorer.exe process
-            Process[] explorerProcesses = Process.GetProcessesByName("explorer");
+            CloseResult close = CloseProcess("explorer");
 
-            foreach (Process explorerProcess in explorerProcesses)
+            bool shellAlreadyRunning = IsProcessRunning("explorer");
+            string startError = null;
+
+            if (ExplorerRestartResult.ShouldStartShell(close, shellAlreadyRunning))
+                startError = TryStartShell();
+
+            ExplorerRestartResult result = new ExplorerRestartResult(
+                close,
+                ExplorerRestartResult.DecideShellOutcome(close, shellAlreadyRunning, startError),
+                startError);
+
+            logger.LogMessage(result.Describe());
+            return result;
+        }
+
+        /// <summary>
+        /// Starts one explorer.exe, returning why it could not rather than throwing.
+        /// </summary>
+        private static string TryStartShell()
+        {
+            try
             {
-                try
+                using (Process started = Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = false }))
                 {
-                    // Kill explorer process
-                    explorerProcess.Kill();
-                    explorerProcess.WaitForExit();
-
-                    // Start new explorer process
-                    Process.Start("explorer.exe");
+                    return started == null ? "Windows did not start explorer.exe." : null;
                 }
-                catch (Exception ex)
-                {
-                    logger.Log($"Error restarting explorer.exe: {ex.Message}");
-                }
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
             }
         }
 

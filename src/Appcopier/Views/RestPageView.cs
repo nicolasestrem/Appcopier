@@ -72,20 +72,44 @@ namespace Views
         {
             string selectedBackupPath = listRestoration.SelectedItem?.ToString();
 
-            if (!string.IsNullOrEmpty(selectedBackupPath))
-            {
-                string logFilePath = Path.Combine(Data.DataRootDir + selectedBackupPath, "backup_log.txt");
+            if (string.IsNullOrEmpty(selectedBackupPath))
+                return;
 
-                if (File.Exists(logFilePath))
-                {
-                    linkISubHeader.Visible = true;
-                    // Load and display log file content in rtbLog
-                    rtbLog.Text = File.ReadAllText(logFilePath);
-                }
-                else
-                {
-                    rtbLog.Text = "No backup log available for this backup.";
-                }
+            string folder = Data.DataRootDir + selectedBackupPath;
+
+            string backupLog = ReadLogOrNull(Path.Combine(folder, "backup_log.txt"));
+
+            // A pre-restore snapshot folder also holds the log of the restore it was taken for. That
+            // log names what the restore changed, so it is the reason someone would be looking at
+            // this folder at all - showing only the backup half would hide the half they came for.
+            string restoreLog = ReadLogOrNull(Path.Combine(folder, "restore_log.txt"));
+
+            if (backupLog == null && restoreLog == null)
+            {
+                rtbLog.Text = "No backup log available for this backup.";
+                return;
+            }
+
+            linkISubHeader.Visible = true;
+
+            rtbLog.Text = backupLog == null ? restoreLog
+                : restoreLog == null ? backupLog
+                : backupLog + "\r\n\r\n" + restoreLog;
+        }
+
+        /// <summary>
+        /// The log's text, or null when there is none to show. Never throws: an unreadable log must
+        /// not stop the user picking the backup it sits beside.
+        /// </summary>
+        private static string ReadLogOrNull(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch (Exception ex)
+            {
+                return "Could not read " + Path.GetFileName(path) + ": " + ex.Message;
             }
         }
     }

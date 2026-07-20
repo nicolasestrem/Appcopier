@@ -94,6 +94,28 @@ namespace Appcopier.Tests
             }
         }
 
+        // A post-import probe that answers whatever the row under test needs and records that it was
+        // actually consulted. Injected because the production probe reads the real registry, where
+        // HKEY_CURRENT_USER\X is genuinely absent - every import row would otherwise assert the
+        // Absent branch by accident.
+        private sealed class FakeProbe
+        {
+            private readonly KeyProbe _answer;
+
+            public bool Called;
+
+            public FakeProbe(KeyProbe answer) => _answer = answer;
+
+            public KeyProbe Probe(string key)
+            {
+                Called = true;
+                return _answer;
+            }
+        }
+
+        private static Func<string, KeyProbe> Answers(KeyProbe answer)
+            => new FakeProbe(answer).Probe;
+
         // --- Export ---
 
         [Fact]
@@ -201,7 +223,7 @@ namespace Appcopier.Tests
         public void Import_ValidFileAndZeroExit_IsSucceeded()
         {
             StepResult s = Utils.ImportRegistryKey(Valid("in.reg"), "HKEY_CURRENT_USER\\X",
-                new FakeTool(ProcessOutcome.Ran(0)));
+                new FakeTool(ProcessOutcome.Ran(0)), Answers(KeyProbe.Present));
 
             Assert.Equal(ResultState.Succeeded, s.State);
         }
@@ -212,7 +234,7 @@ namespace Appcopier.Tests
         public void Import_Success_SaysAppliedAndNeverVerified()
         {
             StepResult s = Utils.ImportRegistryKey(Valid("in2.reg"), "HKEY_CURRENT_USER\\X",
-                new FakeTool(ProcessOutcome.Ran(0)));
+                new FakeTool(ProcessOutcome.Ran(0)), Answers(KeyProbe.Present));
 
             Assert.Contains("applied", s.Reason, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("verified", s.Reason, StringComparison.OrdinalIgnoreCase);
@@ -384,6 +406,147 @@ namespace Appcopier.Tests
                 // We never read it, so we must not assert anything about its contents.
                 Assert.DoesNotContain("not a valid", s.Reason, StringComparison.OrdinalIgnoreCase);
             }
+        }
+
+        // --- Post-import read-back ---
+
+        [Fact]
+        public void Import_ProbeSaysPresent_IsSucceededAndSaysSo()
+        {
+            FakeProbe probe = new FakeProbe(KeyProbe.Present);
+
+            StepResult s = Utils.ImportRegistryKey(Valid("present.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.Ran(0)), probe.Probe);
+
+            Assert.True(probe.Called);
+            Assert.Equal(ResultState.Succeeded, s.State);
+            Assert.Contains("the key is present after the import", s.Reason);
+        }
+
+        // The whole reason the read-back exists: regedit /s exits 0 on imports that did nothing, so
+        // exit code 0 with the key still missing is affirmative evidence of a failed restore.
+        [Fact]
+        public void Import_ProbeSaysAbsent_IsFailedDespiteExitZero()
+        {
+            StepResult s = Utils.ImportRegistryKey(Valid("absent.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.Ran(0)), Answers(KeyProbe.Absent));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("is not present after the import", s.Reason);
+        }
+
+        // The opposite mapping to the export path, and the reason for it: an unelevated probe of an
+        // HKLM key regedit has just written under elevation lands here. Failing would report a false
+        // failure on an import that worked.
+        [Fact]
+        public void Import_ProbeIndeterminate_StaysSucceededAndClaimsNoConfirmation()
+        {
+            StepResult s = Utils.ImportRegistryKey(Valid("unknown-probe.reg"),
+                "HKEY_LOCAL_MACHINE\\Software\\Appcopier", new FakeTool(ProcessOutcome.Ran(0)),
+                Answers(KeyProbe.Indeterminate));
+
+            Assert.Equal(ResultState.Succeeded, s.State);
+            Assert.Contains("could not confirm", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // ProbeKey answers Absent for a hive it does not parse, which is indistinguishable from a
+        // key it looked for and did not find. Treating that as evidence would fail every import of
+        // such a key on the strength of a lookup that never happened.
+        [Theory]
+        [InlineData("HKEY_CLASSES_ROOT\\.txt")]
+        [InlineData("HKEY_USERS\\.DEFAULT\\Control Panel")]
+        [InlineData("HKCU\\Control Panel\\Mouse")]
+        public void Import_HiveTheProbeCannotParse_IsSucceededWithoutProbing(string key)
+        {
+            FakeProbe probe = new FakeProbe(KeyProbe.Absent);
+
+            StepResult s = Utils.ImportRegistryKey(Valid("hive.reg"), key,
+                new FakeTool(ProcessOutcome.Ran(0)), probe.Probe);
+
+            Assert.False(probe.Called);
+            Assert.Equal(ResultState.Succeeded, s.State);
+            Assert.Contains("applied", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Theory]
+        [InlineData("HKEY_CURRENT_USER\\Control Panel\\Mouse", true)]
+        [InlineData("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft", true)]
+        [InlineData("HKEY_CLASSES_ROOT\\.txt", false)]
+        [InlineData("HKEY_USERS\\.DEFAULT", false)]
+        [InlineData("HKEY_CURRENT_USER", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void IsProbeableKeyPath_MatchesWhatProbeKeyActuallyUnderstands(string key, bool expected)
+            => Assert.Equal(expected, Utils.IsProbeableKeyPath(key));
+
+        // The read-back narrows the wording; it must never upgrade it. Presence proves the key
+        // exists, not that a single value under it matches the backup.
+        [Theory]
+        [InlineData(KeyProbe.Present)]
+        [InlineData(KeyProbe.Indeterminate)]
+        public void Import_NoReadBackOutcomeEverClaimsVerification(KeyProbe answer)
+        {
+            StepResult s = Utils.ImportRegistryKey(Valid("wording_" + answer + ".reg"),
+                "HKEY_CURRENT_USER\\X", new FakeTool(ProcessOutcome.Ran(0)), Answers(answer));
+
+            Assert.DoesNotContain("verified", s.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("restored", s.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("applied", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Regression rows: the read-back sits AFTER the pre-flight and after the exit-code checks,
+        // so a probe that would answer Present must not be able to rescue any of them.
+        [Fact]
+        public void Import_MalformedFile_StillFailsEvenIfTheKeyIsPresent()
+        {
+            string bad = Path.Combine(_dir, "bad-preflight.reg");
+            File.WriteAllText(bad, "REGEDIT4\r\n", new UnicodeEncoding(false, true));
+
+            FakeProbe probe = new FakeProbe(KeyProbe.Present);
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));
+
+            StepResult s = Utils.ImportRegistryKey(bad, "HKEY_CURRENT_USER\\X", tool, probe.Probe);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(tool.ImportCalled);
+            Assert.False(probe.Called);
+        }
+
+        [Fact]
+        public void Import_MissingFile_StillSkipsEvenIfTheKeyIsPresent()
+        {
+            FakeProbe probe = new FakeProbe(KeyProbe.Present);
+
+            StepResult s = Utils.ImportRegistryKey(Path.Combine(_dir, "absent-file.reg"),
+                "HKEY_CURRENT_USER\\X", new FakeTool(ProcessOutcome.Ran(0)), probe.Probe);
+
+            Assert.Equal(ResultState.Skipped, s.State);
+            Assert.False(probe.Called);
+        }
+
+        [Fact]
+        public void Import_NonZeroExit_StillFailsEvenIfTheKeyIsPresent()
+        {
+            FakeProbe probe = new FakeProbe(KeyProbe.Present);
+
+            StepResult s = Utils.ImportRegistryKey(Valid("nonzero.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.Ran(1)), probe.Probe);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(probe.Called);
+        }
+
+        [Fact]
+        public void Import_Timeout_StillFailsEvenIfTheKeyIsPresent()
+        {
+            FakeProbe probe = new FakeProbe(KeyProbe.Present);
+
+            StepResult s = Utils.ImportRegistryKey(Valid("timeout.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.Timeout()), probe.Probe);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(probe.Called);
+            Assert.Contains("did not exit", s.Reason, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

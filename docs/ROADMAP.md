@@ -9,7 +9,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | --- | --- | --- |
 | 1 | .NET 8 migration, test harness, repo/tooling cleanup | **Done** — [spec](superpowers/specs/2026-07-20-net8-migration-design.md) |
 | 2a | Make failure representable and reported | **Done** — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
-| 2b | Restore safety: snapshot, rollback, confirmation | Not started |
+| 2b | Restore safety: snapshot, rollback, confirmation | **Done** — [spec](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md) |
 | 2c | Known module bugs | Not started |
 | 3 | Module coverage: dev tooling and power-user settings | Not started |
 | 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
@@ -82,36 +82,83 @@ Deferred out of 2a: full persistent file logging. `LogHelper` writes only to a `
 error trace dies with the window. 2a fixes only the format-string hazard that would silently swallow
 reason strings containing braces; the rest is its own workstream.
 
-### Phase 2b — restore safety
+### Phase 2b — restore safety (done)
 
-- Snapshot current state before any restore, so a bad `.reg` import can be rolled back. Restore is currently
-  irreversible.
-- Real confirmation before destructive restore, stating what will be overwritten.
-- Guard the unchecked `Process.Kill()` in `RestartExplorer` (which kills *every* Explorer process).
-  *`Utils.CloseProcess` was done in 2a — both the guard and, in the end, the bounded `WaitForExit`.
-  The wait was originally deferred to this phase on the grounds that it changes what gets copied
-  rather than what gets reported. That was true and still missed the point: without it, agreeing to
-  close the browser could not produce a good backup, so the prompt was a control that could not lead
-  anywhere. Doing half of a fix left the user worse off than doing none of it.*
-- Systematically close a target app before overwriting its profile; the helpers exist but the restore path
-  does not use them.
-- Write a restore-time log. There is currently no audit trail of what a restore changed.
+Full design: [`superpowers/specs/2026-07-20-phase2b-restore-safety-design.md`](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md).
+
+2a made restore *report* honestly; 2b makes it *behave* safely. All of the following landed:
+
+- ~~Snapshot current state before any restore~~ — a restore now runs an ordinary backup of the items it
+  is about to overwrite into a `(pre-restore)` folder first, so rollback is the existing restore flow.
+  The decision not to build a delete-then-import rollback engine is recorded in the spec: it buys
+  fidelity by adding registry *deletion* to the phase whose purpose is to make destruction safe. The
+  additive-merge limitation is disclosed to the user instead of being papered over.
+- ~~Real confirmation before destructive restore~~ — a dialog listing every item's registry keys,
+  folders and commands, defaulting to Cancel, and carrying the per-module `WarningMessage`s that were
+  previously shown only while browsing the tree.
+- ~~Guard the unchecked `Process.Kill()` in `RestartExplorer`~~ — it killed every Explorer process and
+  started a shell once *per kill*. It now closes once, starts at most one shell, starts none when
+  Windows already restarted it, and returns a result instead of `void`.
+- ~~Systematically close a target app before overwriting its profile~~ — consent is gathered once, on
+  the UI thread, in the confirmation dialog, and flows into a pure per-module dispatch decision.
+  Declining skips the module; a process that will not close fails it.
+- ~~Write a restore-time log~~ — `restore_log.txt`, written into the snapshot folder beside the artifact
+  that undoes the restore, and surfaced in `RestPageView`.
+- Read-back verification of registry imports, deferred *into* 2b by the 2a spec, also landed. The
+  mapping is deliberately asymmetric: a key absent after an import is a failure, a key that cannot be
+  probed is not. The reasoning is in the spec, and it is the opposite of the export path's mapping.
+
+Also pulled in: the QR-code timer below, because this phase added the app's first consequential modal
+dialog and the timer's defect was a dialog-ownership defect.
 
 ### MainForm's QR-code timer
 
-Found while hardening the link handlers; deferred here because none of it is specific to links, and
-all of it predates the .NET 8 migration.
+Found while hardening the link handlers. The first two items were **fixed in 2b**; the third belongs to
+the persistent-logging workstream and is still open.
 
-- `MainForm`'s `System.Timers.Timer` has no `SynchronizingObject`, so `QRTimerElapsed` runs on a
-  thread-pool thread. Its `MessageBox` therefore has no owner and can paint *behind* the main window
-  while the app stays clickable — a user sees nothing happen and clicks again, stacking up hidden
-  dialogs. Setting `SynchronizingObject` marshals the whole handler to the UI thread and fixes this.
-- That same timer is never stopped or disposed — it is not added to `components` and there is no
-  `FormClosing` handler — so an `Elapsed` still pending when the form closes runs against a disposed
-  control. Harmless today only because the log call swallows `ObjectDisposedException`.
+- ~~`MainForm`'s `System.Timers.Timer` has no `SynchronizingObject`~~, so `QRTimerElapsed` ran on a
+  thread-pool thread and its `MessageBox` had no owner — it could paint *behind* the main window while
+  the app stayed clickable, so a user saw nothing happen and clicked again, stacking up hidden dialogs.
+- ~~That same timer is never stopped or disposed~~ — it was in neither `components` nor any teardown
+  path, so an `Elapsed` still pending at close ran against a disposed control.
 - `LogHelper.Log` is invoke-safe only by accident: `Control.InvokeRequired` returns false when the
   target has no created handle, so in that state it touches the `RichTextBox` from whatever thread
   called it. The catch-all hides it. This is part of the persistent-logging work above.
+
+### Follow-ups left by Phase 2b
+
+Raised by the safety review of the 2b branch and deliberately not fixed there. None is reachable in
+ordinary use today; each is recorded because the reason it is unreachable is a coincidence rather
+than a guarantee.
+
+- **The Explorer auto-restart probe is taken with no settle delay.** `RestartExplorer` asks
+  `IsProcessRunning("explorer")` on the line after `CloseProcess` returns, but Windows relaunches the
+  shell through winlogon some hundreds of milliseconds later — so the probe reads absent, Appcopier
+  starts a shell, and Windows starts a second one. The guard bounds the damage to one stray window
+  (versus N before 2b) and the risk is disclosed, but as written the `RestartedByWindows` branch may
+  be close to dead code. **Measure N2 on the smoke matrix before changing anything** — if the
+  relaunch is faster than assumed, the code is already right and a speculative delay would only slow
+  the button down.
+- **`AllowPrompts` is shared mutable state.** It is set on the module instance before each backup and
+  restored in a `finally`, which is correct but depends on one caller remembering. `BackupAsync(path,
+  allowPrompts)` — or a scoped guard — removes the class rather than the instance, and would make it
+  testable at the module level instead of only through a `UserControl` the suite cannot instantiate.
+  Deferred because it is a 23-signature change that 2b explicitly chose not to make.
+- **`results` is index-aligned against `selectedConfigs` but produced by iterating `scope`.** The two
+  are parallel only because both null-filters happen to be no-ops today. If they ever diverge,
+  `restore_log.txt` attributes every outcome to the wrong module. Cheap to make structural by
+  projecting from `scope`.
+- **`RestorePlan` composition sits outside any catch** on an `async void` chain, and `Render`
+  dereferences each `RestoreTarget` unguarded. Unreachable today because every factory validates, but
+  a future module returning a list containing null would reach WinForms' unhandled-exception dialog
+  mid-restore.
+- **`SnapshotGate.Evaluate` counts an all-null outcome list as `considered == 0`**, which with no
+  blocked modules produces "none of the selected items change anything when restored" — the same
+  false sentence the blocked-count fix removed, through a different door. `ModuleOutcome.Pair` never
+  emits nulls today.
+- **A null entry in `ProcessesToCloseBeforeRestore` is handled inconsistently**: `RestoreScope` skips
+  it, `ConfPageView` dereferences it and reports the module as an unhandled error. The asymmetry
+  fails closed, which is the right direction, but the message is not one a user can act on.
 
 ### Phase 2c — known module bugs
 

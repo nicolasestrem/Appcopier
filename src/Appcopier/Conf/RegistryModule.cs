@@ -1,4 +1,5 @@
 using Appcopier;
+using System.Collections.Generic;
 using System.IO;
 
 namespace Conf
@@ -26,6 +27,11 @@ namespace Conf
         protected abstract bool AbsenceIsNormal { get; }
 
         public override bool IsInstalled() => Utils.KeyExists(Key);
+
+        // Written once for all ten subclasses, from the same Key the import uses, so a subclass
+        // cannot declare one key and overwrite another.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[] { RestoreTarget.RegistryKey(Key) };
 
         public override ModuleResult Backup(string path)
             => ModuleResult.Aggregate(new[]

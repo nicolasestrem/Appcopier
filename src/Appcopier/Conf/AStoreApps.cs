@@ -1,6 +1,7 @@
 using Appcopier;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -15,6 +16,21 @@ namespace Conf
             Title = "Remember installed apps";
             Info = "This will export all installed winget package identifiers as a .JSON file.\nThe import process allows you to restore specific apps themselves based on this file.";
         }
+
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[]
+            {
+                RestoreTarget.Command(
+                    "opens the app reinstall dialog; this item changes nothing by itself, and any " +
+                    "installs happen only from choices made inside that dialog")
+            };
+
+        /// <remarks>
+        /// The one module that opts out, and the reason is Restore returning Skipped: it writes
+        /// nothing, so snapshotting it would spend a full winget export - measured at ~29 s, and
+        /// allowed up to ten minutes - protecting a restore that cannot change anything.
+        /// </remarks>
+        public override bool RestoreMakesChanges => false;
 
         public override async Task<ModuleResult> BackupAsync(string path)
         {

@@ -46,6 +46,31 @@ Adding a new module requires touching **two** places:
 1. Create the class in `Conf/` inheriting `BackupBase` — or `RegistryModule` for a single-key export (namespace `Conf`).
 2. Register it in `ConfPageView.InitializeConfigurations()` (`src/Appcopier/Views/ConfPageView.cs`) with its category node name ("Settings", "Apps", "Browser", "Devices", "Gaming", "Credentials").
 
+…and it must **declare what its restore touches** (see "Restore safety" below). `RegistryModule` subclasses inherit that declaration from their `Key`; everything else states it explicitly. `RestoreDeclarationTests` enumerates every registered module and fails if one does not.
+
+### Restore safety (read before writing a module that restores)
+
+A restore snapshots what it is about to overwrite, asks the user to confirm it, and logs what it did.
+None of that works unless modules declare their own restore surface, so `BackupBase` carries three
+virtuals:
+
+- `RestoreTargets` — the registry keys, folders, or commands this module's restore writes to. These
+  are read out to the user in the confirmation dialog *before* anything is overwritten. The default is
+  a loud `Undeclared` marker, not an empty list: a module that forgets shows a visible wart in the text
+  users read before consenting, rather than quietly claiming to touch nothing.
+- `ProcessesToCloseBeforeRestore` — the app that owns those files. Set `NeedsConsent` when the user must
+  agree to close it (browsers); leave it false only for a process that restarts itself, which is closed
+  just-in-time instead of being offered as a choice. Never overwrite a live profile without one of these.
+- `RestoreMakesChanges` — leave it `true` unless the module's restore genuinely writes nothing (only
+  `AStoreApps`, which opens a dialog). Setting it false exempts the module from being snapshotted, so
+  getting it wrong means a restore that cannot be undone. This is the same class of judgement call as
+  `absenceIsNormal`.
+
+The orchestration lives in `ConfPageView`, not in modules: consent is gathered once on the UI thread and
+`RestoreDispatch.Decide` turns it into a per-module Run/Skip/Fail. **Never show a dialog from module
+code on the restore path** — modules run on thread-pool threads, where a `MessageBox` has no owner and
+can paint behind the main window.
+
 ### Reporting outcomes (read before writing a module)
 
 This app's core failure mode was announcing success it had not verified. The rules below exist to keep
@@ -59,8 +84,14 @@ that from coming back; each was written after the corresponding mistake was actu
   "I could not tell" is a tool failure, not an absence. Getting this flag wrong is the cry-wolf
   failure in one direction and a hidden problem in the other.
 - **Never claim more than you verified.** Registry exports are checkable (exit code *and* the file
-  exists, is non-empty, and has a valid header). Imports are not — `regedit /s` returns 0 on files it
-  only partially applied — so restore-side reasons say **applied**, never *verified* or *restored*.
+  exists, is non-empty, and has a valid header). Imports are checked by reading the key back afterwards,
+  but `regedit /s` still returns 0 on files it only partially applied and a present key does not prove
+  its values match — so restore-side reasons say **applied**, never *verified* or *restored*.
+- **Post-import probing is the mirror image of pre-export probing, on purpose.** Exporting, a key that
+  cannot be probed is `Failed`, because the probe is the only evidence for the claim. Importing, a key
+  that cannot be probed is still `Succeeded` ("could not confirm"), because exit code 0 already supports
+  "applied" and failing there would cry wolf on every unelevated `HKLM` import. Only an *absent* key
+  after an import is a failure.
 - **An exit code is not evidence.** Measured on Windows 11: `regedit /e` on a nonexistent key exits 0
   and writes nothing; `netsh wlan export` printed "saved successfully" with exit code 0 while writing
   nothing. Always check the artifact the command was supposed to produce.

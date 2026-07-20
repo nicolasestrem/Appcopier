@@ -17,6 +17,7 @@ namespace Conf
             Info = "This will backup custom theme settings, default Windows wallpapers and a copy of your current Desktop background image.";
             // Version = "This is compatible with all versions of Windows.";
             RequiresExplorerRestart = true;
+            WarningMessage = "Restoring this writes into the Windows wallpaper folder, which is shared by every account on this PC - not just yours.";
 
             LoadSettings();
         }
@@ -53,6 +54,24 @@ namespace Conf
             }
 
             return b1 || b2;
+        }
+
+        // Both halves, in the order RestoreAsync applies them. Read from the fields on every access:
+        // see the matching note in WPersonalization.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+        {
+            get
+            {
+                List<RestoreTarget> targets = new List<RestoreTarget>();
+
+                foreach (string f in Folders)
+                    targets.Add(RestoreTarget.Folder(f));
+
+                foreach (string k in Keys)
+                    targets.Add(RestoreTarget.RegistryKey(k));
+
+                return targets;
+            }
         }
 
         /// <remarks>
