@@ -107,33 +107,56 @@ namespace Appcopier
 
             timer = new System.Timers.Timer();
             timer.Interval = 500;
+            // Without this the Elapsed handler runs on a thread-pool thread and its MessageBox has no
+            // owner, so it can paint behind the main window while the app stays clickable.
+            timer.SynchronizingObject = this;
             timer.Elapsed += QRTimerElapsed;
+
+            this.FormClosing += MainForm_FormClosing;
+        }
+
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            // The mouse handlers must go first: a MouseLeave raised while the form tears down would
+            // otherwise touch the disposed timer.
+            picQR.MouseEnter -= picQR_MouseEnter;
+            picQR.MouseLeave -= picQR_MouseLeave;
+
+            if (timer != null)
+            {
+                timer.Stop();
+                timer.Elapsed -= QRTimerElapsed;
+                timer.Dispose();
+                timer = null;
+            }
         }
 
         private void picQR_MouseEnter(object sender, EventArgs e)
         {
             isMouseOverQRCode = true;
-            timer.Start();
+            timer?.Start();
         }
 
         private void picQR_MouseLeave(object sender, EventArgs e)
         {
             isMouseOverQRCode = false;
-            timer.Stop();
+            timer?.Stop();
         }
 
         private void QRTimerElapsed(object sender, ElapsedEventArgs e)
         {
             // This method will be called when timer elapses
-            timer.Stop();
+            timer?.Stop();
 
-            // Runs on a System.Timers.Timer thread. .NET Framework swallowed exceptions thrown by
-            // Elapsed handlers; .NET 8 does not, so anything escaping this method terminates the
-            // process. Nothing in here is worth losing the app over - not even the dialog itself,
-            // which can fail on a machine with no interactive window station.
+            // Marshalled to the UI thread by SynchronizingObject, but an Elapsed already queued when
+            // the form closed still arrives after teardown - hence the null timer check below.
+            // .NET Framework swallowed exceptions thrown by Elapsed handlers; .NET 8 does not, so
+            // anything escaping this method terminates the process. Nothing in here is worth losing
+            // the app over - not even the dialog itself, which can fail on a machine with no
+            // interactive window station.
             try
             {
-                if (isMouseOverQRCode)
+                if (isMouseOverQRCode && timer != null)
                 {
                     DialogResult result = MessageBox.Show("Do you want to view the introduction directly in your Desktop Browser?", "Intro", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
