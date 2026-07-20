@@ -90,10 +90,30 @@ namespace Conf
             }
         }
 
+        /// <summary>
+        /// Runs the restore on the caller's thread instead of a thread-pool thread.
+        /// </summary>
+        /// <remarks>
+        /// The base RestoreAsync wraps Restore in Task.Run, and this is the one module whose Restore
+        /// opens a window. Thread-pool threads are MTA; Windows Forms requires STA, which Program.Main
+        /// declares. ShowDialog from the pool therefore spins up a second message loop on a thread
+        /// that is not apartment-correct: the dialog has no owner and can paint behind the main
+        /// window, and the COM-backed parts of it (clipboard, drag and drop, shell dialogs) are
+        /// unreliable. Every caller reaches this through an await on the UI thread, so returning a
+        /// completed Task keeps the dialog on the thread that owns the window.
+        ///
+        /// Not marked async on purpose: there is nothing to await, and async here would move the
+        /// body back off the caller's thread in every case but the first.
+        /// </remarks>
+        public override Task<ModuleResult> RestoreAsync(string path)
+            => Task.FromResult(Restore(path));
+
         /// <remarks>
         /// This module restores nothing itself. It opens RestAppsForm, and the installs happen
         /// later from inside that dialog, so Skipped is the only honest answer available here -
         /// claiming a result it does not have would be a new lie in a phase built to remove them.
+        ///
+        /// Call this only from the UI thread - see RestoreAsync above.
         /// </remarks>
         public override ModuleResult Restore(string path)
         {

@@ -676,6 +676,22 @@ namespace Appcopier
         }
 
         /// <summary>
+        /// How long to wait for Windows Terminal before giving up on it.
+        /// </summary>
+        /// <remarks>
+        /// Much longer than RegeditTool's 60s, on purpose. This wait covers winget, which can spend
+        /// minutes updating its sources or downloading a package on a slow link, and the terminal
+        /// window is visible (CreateNoWindow is false) - so the user can see it working and can
+        /// answer any prompt it puts up. Killing a legitimately slow export would be a false failure
+        /// report, which is the exact thing this phase exists to remove.
+        ///
+        /// The timeout is a backstop for a wedged process, not a progress budget. It has to exist:
+        /// AStoreApps.BackupAsync awaits this from ConfPageView.RunBackup with the window disabled,
+        /// so an unbounded wait left the whole app frozen with no way out but Task Manager.
+        /// </remarks>
+        private const int WtTimeoutMs = 600000;
+
+        /// <summary>
         /// Runs Windows Terminal and waits for it, reporting how it went.
         /// </summary>
         /// <remarks>
@@ -714,7 +730,24 @@ namespace Appcopier
                             return ProcessOutcome.NeverStarted("Windows Terminal did not start");
 
                         started = true;
-                        proc.WaitForExit();
+
+                        if (!proc.WaitForExit(WtTimeoutMs))
+                        {
+                            try
+                            {
+                                proc.Kill(entireProcessTree: true);
+                                // Kill is asynchronous; without this the using block disposes while
+                                // the process may still be terminating.
+                                proc.WaitForExit(5000);
+                            }
+                            catch (Exception)
+                            {
+                                // A leaked process is the better trade than losing the timeout signal.
+                            }
+
+                            return ProcessOutcome.Timeout();
+                        }
+
                         return ProcessOutcome.Ran(proc.ExitCode);
                     }
                 }

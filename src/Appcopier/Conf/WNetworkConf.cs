@@ -102,19 +102,25 @@ namespace Conf
 
             using (Process process = new Process { StartInfo = psi })
             {
-                process.Start();
-
-                // The writer is created ONLY when a path was supplied. It used to be constructed
-                // unconditionally, AFTER Start() - and Restore passes null - so restoring network
-                // configuration threw once netsh was already applying the backup's addresses, DNS
-                // servers and interface metrics. The user was told the restore failed while their
-                // networking was being reconfigured, and netsh was left running unwaited.
+                // The writer is created ONLY when a path was supplied, and BEFORE Start(). It used
+                // to be constructed unconditionally, after Start() - and Restore passes null - so
+                // restoring network configuration threw once netsh was already applying the backup's
+                // addresses, DNS servers and interface metrics. The user was told the restore failed
+                // while their networking was being reconfigured, and netsh was left running unwaited.
+                //
+                // Opening the file first closes the remaining half of that: a locked file, a missing
+                // directory or a denied path makes the constructor throw, and if netsh were already
+                // running we would abandon it with nobody draining its stdout - the pipe fills, netsh
+                // blocks on the write, and the process survives the Dispose below as an orphan.
+                // Nothing has been started yet at this point, so the throw is just a failed backup.
                 StreamWriter outputFile = outputFilePath == null
                     ? null
                     : new StreamWriter(outputFilePath);
 
                 try
                 {
+                    process.Start();
+
                     // Drain stdout either way. Leaving it unread lets the pipe fill and block netsh.
                     while (!process.StandardOutput.EndOfStream)
                     {

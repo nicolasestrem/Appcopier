@@ -49,6 +49,46 @@ namespace Appcopier.Tests
             Assert.Equal(ResultState.Failed, r.State);
         }
 
+        /// <summary>
+        /// Stands in for AppStoreApps so the thread behaviour can be observed without a dialog.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately does NOT call base.Restore: that opens RestAppsForm modally, which in a test
+        /// run means a message loop nobody will ever close.
+        /// </remarks>
+        private sealed class ProbeStoreApps : AppStoreApps
+        {
+            public int RestoreThreadId { get; private set; }
+
+            public override ModuleResult Restore(string path)
+            {
+                RestoreThreadId = Environment.CurrentManagedThreadId;
+
+                return ModuleResult.Aggregate(new[] { StepResult.Skipped(Title, "probe") });
+            }
+        }
+
+        // AppStoreApps is the one module whose Restore opens a window, and Windows Forms windows
+        // belong to the STA thread that owns the message loop. The base RestoreAsync hands the body
+        // to Task.Run - a thread-pool thread, which is MTA - so this module overrides it.
+        //
+        // Both assertions are needed. The thread id alone is weak: the caller here is itself a pool
+        // thread, so a Task.Run continuation could in principle land back on it. Having already
+        // completed before the Task was handed back is what pins "ran inline, not scheduled".
+        [Fact]
+        public async Task AppStoreApps_RestoreAsync_RunsInlineOnTheCallingThread()
+        {
+            ProbeStoreApps probe = new ProbeStoreApps();
+            int callerThreadId = Environment.CurrentManagedThreadId;
+
+            Task<ModuleResult> pending = probe.RestoreAsync("C:\\nowhere");
+
+            Assert.True(pending.IsCompleted);
+            Assert.Equal(callerThreadId, probe.RestoreThreadId);
+
+            Assert.Equal(ResultState.Skipped, (await pending).State);
+        }
+
         // Restoring from a folder containing no .reg file must be Skipped, not a false success.
         //
         // A freshly created, uniquely named folder rather than %TEMP% itself: this used to pass only
