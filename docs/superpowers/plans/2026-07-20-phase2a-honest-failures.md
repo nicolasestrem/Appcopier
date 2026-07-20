@@ -2071,7 +2071,7 @@ git commit -m "Make folder copy return a tally instead of an indistinguishable T
 
 **Files:**
 - Modify: `src/Appcopier/Helpers/WindowsHelper.cs` — `IsProcessRunning`, `CloseProcess`, `RunWT`
-- Create: `src/Appcopier/Helpers/IProcessRunner.cs`
+- (No new interface file. An earlier draft listed `IProcessRunner.cs`; the seam turned out to be unnecessary here because `RunWTAsync` returns `ProcessOutcome` directly and has no unit tests that need to fake it. Task 5 introduced the one seam this phase actually uses, `IRegistryTool`.)
 
 **Interfaces:**
 - Consumes: `ProcessOutcome` (Task 5).
