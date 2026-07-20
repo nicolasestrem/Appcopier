@@ -60,9 +60,13 @@ namespace Appcopier
             // Rule 3. Everything was legitimately absent. This is Skipped, not Succeeded: folding
             // it up to success would claim a module was backed up having written zero bytes, which
             // is exactly what GGaming and WTelemetry do on a stock consumer machine.
+            //
+            // "nothing to do", not "nothing to back up": Aggregate serves both directions, and
+            // AStoreApps' restore-side Skipped reads "nothing to back up: handled interactively in
+            // the app restore dialog" otherwise - a backup verb on a restore.
             if (ok.Length == 0)
             {
-                string reason = "nothing to back up: " +
+                string reason = "nothing to do: " +
                     string.Join("; ", skipped.Select(s => s.Reason).Distinct());
 
                 return new ModuleResult(ResultState.Skipped, reason, all);

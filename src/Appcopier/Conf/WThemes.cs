@@ -73,7 +73,9 @@ namespace Conf
                 // No try/catch here any more: CopyFolder does not throw, it returns counts. The
                 // catch this replaced logged the failure and then let the module report success.
                 CopyResult copy = await Utils.CopyFolder(folder, backupFolderPath).ConfigureAwait(true);
-                steps.Add(copy.ToStep(folder, false));
+                // Title, not the full filesystem path: Aggregate renders the target into
+                // user-facing text, and a path produces rows reading "captured C:\Windows\...".
+                steps.Add(copy.ToStep(Title, false));
             }
 
             foreach (string k in Keys)
@@ -96,7 +98,8 @@ namespace Conf
                 // absenceIsNormal is true on this side: the folder being read is one this app wrote,
                 // and a backup taken before this module existed legitimately does not contain it.
                 CopyResult copy = await Utils.CopyFolder(backupFolderPath, folder).ConfigureAwait(true);
-                steps.Add(copy.ToStep(folder, true));
+                // Title, not the full filesystem path: see the matching comment in BackupAsync.
+                steps.Add(copy.ToStep(Title, true));
             }
 
             foreach (string k in Keys)

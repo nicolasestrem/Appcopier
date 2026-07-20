@@ -58,13 +58,17 @@ namespace Conf
         {
             CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
 
-            return ModuleResult.Aggregate(new[] { ToStep(copy) });
+            // No custom wording here: an absent source on restore means the BACKUP FOLDER has no
+            // Edge data, not that Edge has never been launched on this machine - that claim about
+            // the live machine was never checked, so it falls through to ToStep's default wording.
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true) });
         }
 
         /// <remarks>
-        /// Edge ships with Windows, so a missing profile folder almost never means "Edge is not
-        /// installed" - it means the browser has never been launched on this account. Wording it as
-        /// absent software would send the user looking for a problem that is not there.
+        /// Backup-only. Edge ships with Windows, so a missing profile folder almost never means
+        /// "Edge is not installed" - it means the browser has never been launched on this account.
+        /// Wording it as absent software would send the user looking for a problem that is not
+        /// there. That reasoning applies only to the live machine BackupAsync just checked.
         /// </remarks>
         private StepResult ToStep(CopyResult copy)
         {

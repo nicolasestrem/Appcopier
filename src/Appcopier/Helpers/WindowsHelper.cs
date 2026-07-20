@@ -421,9 +421,10 @@ namespace Appcopier
         /// modules reach this from an async void click handler, so an escape here took down the
         /// entire run and every result collected with it.
         ///
-        /// Deliberately does NOT wait for exit. Adding a bounded wait would change what gets copied
-        /// (a still-flushing browser holds its SQLite files), which is a reliability fix rather than
-        /// a reporting one, and it belongs with the browser-module work.
+        /// Waits, bounded, after killing. Kill() is asynchronous, so without this the caller starts
+        /// copying while the process is still flushing and releasing file handles - a just-killed
+        /// Chrome still holds its SQLite files, so the copy that follows hits locked files. See the
+        /// wait itself for why five seconds.
         /// </remarks>
         public static CloseResult CloseProcess(string processName)
         {
@@ -448,6 +449,13 @@ namespace Appcopier
                 try
                 {
                     process.Kill();
+
+                    // Bounded. Kill() is asynchronous, so without this the caller starts copying
+                    // while the process is still flushing and releasing file handles. Five seconds
+                    // is long enough for a browser tree to unwind and short enough that a wedged
+                    // process cannot stall a backup run.
+                    if (!process.WaitForExit(5000))
+                        worst = Worse(worst, CloseResult.StillRunning);
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
