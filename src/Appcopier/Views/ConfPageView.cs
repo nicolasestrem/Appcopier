@@ -164,8 +164,13 @@ namespace Views
                 // Log backed-up elements
                 LogBackedUpElements(CurrentBackupPath, selectedConfigs);
 
-                logger.Log("Back up done.");
-                MessageBox.Show("Back up done.", "", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                RunSummary summary = RunSummary.For(results, true, RunVerb.Backup);
+
+                logger.LogMessage(summary.Headline);
+                logger.LogMessage(summary.Detail);
+
+                MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
+                    "Backup", MessageBoxButtons.OK, summary.Icon);
             }
             else
             {
@@ -235,16 +240,27 @@ namespace Views
         // Asynchronous method to handle restoration after the user selects restoration path
         public async Task HandleRestorationAfterSelection()
         {
+            bool ran = CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath);
+
             List<ModuleResult> results = await PerformRestoration(selectedConfigs);
 
-            // Check if any selected configuration requires a restart
-            bool requiresRestart = selectedConfigs.Any(config => config.RequiresExplorerRestart);
+            // Gated on a successful restore of a module that declares RequiresExplorerRestart, not
+            // merely on the declaration: a module that failed or was skipped never touched Explorer
+            // state, so offering to restart it would be a no-op dressed up as a fix.
+            bool requiresRestart = selectedConfigs
+                .Zip(results, (config, result) => new { config, result })
+                .Any(x => x.config.RequiresExplorerRestart && x.result.State == ResultState.Succeeded);
 
             // Show or hide restart button based on requirement
             btnRestartExplorer.Visible = requiresRestart;
 
-            logger.Log("Restore done.");
-            MessageBox.Show("Restore done.", "", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            RunSummary summary = RunSummary.For(results, ran, RunVerb.Restore);
+
+            logger.LogMessage(summary.Headline);
+            logger.LogMessage(summary.Detail);
+
+            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
+                "Restore", MessageBoxButtons.OK, summary.Icon);
         }
 
         private void btnRestore_Click(object sender, EventArgs e)
