@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace Appcopier
@@ -39,6 +41,68 @@ namespace Appcopier
         /// close; being wrong the other way silently cancels a restore the user asked for.
         /// </remarks>
         public virtual bool HasBackupIn(string restorePath) => true;
+
+        /// <summary>
+        /// The backup file this module writes for one registry key.
+        /// </summary>
+        /// <remarks>
+        /// A loop over N keys must produce N distinct filenames. Six modules each carried their own
+        /// copy of this line, and the seventh - WThemes - built the name from the Title alone inside
+        /// a foreach over its keys, so every key resolved to one file. That was harmless only while
+        /// it had a single key, and the fix for its other defect was to add a second one.
+        ///
+        /// What made it worth writing once rather than fixing in place: with two keys the second
+        /// export deletes the first (Utils.TryDeleteExport) and writes over it while both steps
+        /// report Succeeded, and the restore imports that one file once per key while the
+        /// post-import probe finds every key present, because the keys exist on the live machine
+        /// regardless of what the file contained. Every row green, one key never captured.
+        /// </remarks>
+        protected virtual string RegFileNameFor(string key)
+            => $"{Title}_{GetSafeFileName(key)}.reg";
+
+        // There is deliberately no RegFileNamesToTryOnRestore companion to the above.
+        //
+        // One was written for this phase, to let a module whose key path changed offer the older
+        // filename as a fallback on restore. It was removed before merge because nothing called it:
+        // every module's restore composes its path from RegFileNameFor directly, so an override
+        // would have been a silent no-op - a trap wearing the costume of a safety feature, and the
+        // exact drift the writer half exists to prevent.
+        //
+        // The one candidate consumer, WTelemetry's control-set correction, turned out to need more
+        // than a filename anyway: the older file's CONTENTS name ControlSet001, so applying it would
+        // rewrite the stale hive the correction exists to stop using. A fallback there has to
+        // rewrite the payload, not just find it, and it has to be covered by the pre-restore
+        // snapshot before it can honestly claim to be undoable. That is a design problem, not a
+        // naming one, and it is filed rather than half-built here.
+
+        /// <summary>
+        /// Turns a registry key path or folder name into something usable as a filename.
+        /// </summary>
+        /// <remarks>
+        /// Hoisted from six identical private copies. They differed only in the order of the
+        /// Replace calls, which cannot matter here: every replacement maps to the same character,
+        /// and no replacement produces a character another one searches for.
+        ///
+        /// The six copies each listed the characters their author happened to think of, and all six
+        /// missed the same ones - notably &lt; &gt; and | which Windows also rejects in a filename,
+        /// and the control characters. Asking the framework which characters are invalid removes the
+        /// list from this file entirely, so it cannot be short again. Registry key paths contain
+        /// none of the newly covered characters, so every filename this already produced is
+        /// unchanged; the pinned literals in BackupFileNamingTests are what holds that.
+        /// </remarks>
+        protected static string GetSafeFileName(string value)
+        {
+            if (value == null)
+                return string.Empty;
+
+            char[] invalid = Path.GetInvalidFileNameChars();
+            StringBuilder safe = new StringBuilder(value.Length);
+
+            foreach (char c in value)
+                safe.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+
+            return safe.ToString();
+        }
 
         /// <summary>
         /// Whether this module may ask the user a question while backing up.

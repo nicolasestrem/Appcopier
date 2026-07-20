@@ -10,7 +10,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 1 | .NET 8 migration, test harness, repo/tooling cleanup | **Done** — [spec](superpowers/specs/2026-07-20-net8-migration-design.md) |
 | 2a | Make failure representable and reported | **Done** — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
 | 2b | Restore safety: snapshot, rollback, confirmation | **Done** — [spec](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md) |
-| 2c | Known module bugs | Not started |
+| 2c | Known module bugs | **Done** — [spec](superpowers/specs/2026-07-20-phase2c-module-bugs-design.md) |
 | 3 | Module coverage: dev tooling and power-user settings | Not started |
 | 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
 
@@ -127,9 +127,14 @@ the persistent-logging workstream and is still open.
 
 ### Follow-ups left by Phase 2b
 
-Raised by the safety review of the 2b branch and deliberately not fixed there. None is reachable in
-ordinary use today; each is recorded because the reason it is unreachable is a coincidence rather
-than a guarantee.
+Raised by the safety review of the 2b branch. None was reachable in ordinary use; each was recorded
+because the reason it was unreachable is a coincidence rather than a guarantee.
+
+Two of the six were in fact **fixed inside the 2b commit itself** and this prose was never updated to
+match — `CHANGELOG.md` recorded both correctly, so the record contradicted itself for the length of one
+commit. Corrected below in 2c. It is worth noting how it happened: the entries were written when they
+were deferred, the deferral was reversed during implementation, and nobody re-read the list. That is
+the same class of drift as a stale comment, in the document whose whole job is being the accurate record.
 
 - **The Explorer auto-restart probe is taken with no settle delay.** `RestartExplorer` asks
   `IsProcessRunning("explorer")` on the line after `CloseProcess` returns, but Windows relaunches the
@@ -144,28 +149,40 @@ than a guarantee.
   allowPrompts)` — or a scoped guard — removes the class rather than the instance, and would make it
   testable at the module level instead of only through a `UserControl` the suite cannot instantiate.
   Deferred because it is a 23-signature change that 2b explicitly chose not to make.
-- **`results` is index-aligned against `selectedConfigs` but produced by iterating `scope`.** The two
-  are parallel only because both null-filters happen to be no-ops today. If they ever diverge,
-  `restore_log.txt` attributes every outcome to the wrong module. Cheap to make structural by
-  projecting from `scope`.
-- **`RestorePlan` composition sits outside any catch** on an `async void` chain, and `Render`
-  dereferences each `RestoreTarget` unguarded. Unreachable today because every factory validates, but
-  a future module returning a list containing null would reach WinForms' unhandled-exception dialog
-  mid-restore.
-- **`SnapshotGate.Evaluate` counts an all-null outcome list as `considered == 0`**, which with no
-  blocked modules produces "none of the selected items change anything when restored" — the same
-  false sentence the blocked-count fix removed, through a different door. `ModuleOutcome.Pair` never
-  emits nulls today.
-- **A null entry in `ProcessesToCloseBeforeRestore` is handled inconsistently**: `RestoreScope` skips
-  it, `ConfPageView` dereferences it and reports the module as an unhandled error. The asymmetry
-  fails closed, which is the right direction, but the message is not one a user can act on.
+- ~~**`results` is index-aligned against `selectedConfigs` but produced by iterating `scope`.**~~
+  **Was already fixed in 2b**, not deferred: `ConfPageView` projects `restoredModules` from `scope`
+  and pairs against that everywhere, so the alignment is structural. `selectedConfigs` is no longer
+  used for pairing at all.
+- ~~**`RestorePlan` composition sits outside any catch**, and `Render` dereferences each
+  `RestoreTarget` unguarded.~~ **Fixed in 2c.** A null entry now renders its own marker — a different
+  sentence from the undeclared marker, because "the module declared nothing" and "one line of the
+  declaration is broken" are different facts — and the composition is wrapped in a catch that
+  abandons the restore rather than half-describing it. Nothing is written when Appcopier cannot say
+  what it would write.
+- ~~**`SnapshotGate.Evaluate` counts an all-null outcome list as `considered == 0`**~~ **Fixed in
+  2c.** A null entry is counted before the null check and folded into the existing failure branch, so
+  it forces the prompt instead of vanishing. `ModuleOutcome.Pair` still never emits nulls; the point
+  was to make the invariant structural rather than coincidental.
+- ~~**A null entry in `ProcessesToCloseBeforeRestore` is handled inconsistently**~~ **Was already
+  fixed in 2b**, not deferred: all four readers now guard identically, and the one that was missing
+  carries a comment explaining the symmetry.
 
 ### Phase 2c — known module bugs
 
 Each of these becomes *visible* once 2a lands, which is why they follow rather than lead.
 
-- `WTelemetry` hardcodes `ControlSet001` instead of `CurrentControlSet` — wrong on systems booted from a
-  different control set.
+- ~~`WTelemetry` hardcodes `ControlSet001` instead of `CurrentControlSet`~~ **Fixed in 2c.** The entry
+  above understated it: this is not "wrong on systems booted from a different control set", it is
+  *silently* wrong on them. `ControlSet001` normally still exists as a stale hive after such a boot, so
+  the key probed present, the export succeeded and the row was green over configuration the running
+  system was not using — the silent-wrong-data direction, not cry-wolf, which is why it survived. The
+  fix also raises the stakes of a restore, from an inert write to a live service key, so the module
+  gained a `WarningMessage`. **The filename is derived from the key, so this orphans the DiagTrack file
+  in pre-2c backups**, which now report "nothing was backed up for this item". A restore-side fallback
+  was designed and then deferred out of 2c on two grounds recorded in the spec: it would write outside
+  the pre-restore snapshot while the gate still reported the restore undoable, and the old file's
+  *contents* name `ControlSet001`, so applying it would re-commit the defect. An honest fallback has to
+  rewrite the payload, not just find the file.
 - `WNetworkConf.ExecuteNetshCommand` does `new StreamWriter(outputFilePath)` on both paths, and `Restore`
   passed `null`. **Fixed in 2a after a safety audit disproved the reasoning for deferring it.** The
   defect was worse than recorded here: `process.Start()` ran *before* the throw, so netsh was already
@@ -174,7 +191,13 @@ Each of these becomes *visible* once 2a lands, which is why they follow rather t
   reconfigured. "Broken, not dishonest" was exactly backwards.
 - ~~`CWiFiConf` restore imports only `xmlFiles[0]`~~ **Fixed in 2a**, along with the filename-filter
   half of the pair — correcting only one would have left the module still restoring nothing useful.
-- `AStoreApps` restore is dead code; the real `winget import` is commented out.
+- ~~`AStoreApps` restore is dead code; the real `winget import` is commented out.~~ **This entry was
+  false at the time 2c started, and is corrected rather than fixed.** 2a deleted the commented-out
+  block; restore is a deliberate, tested delegation — `RestoreAsync` returns a completed task so
+  `ShowDialog` runs on the STA UI thread rather than a thread-pool thread, and it reports `Skipped`
+  because the installs happen from choices made inside the dialog. `winget import` is also the wrong
+  feature: the dialog exists so the user can reinstall a *subset*, which import cannot express. Left as
+  a record that a stale roadmap entry cost a planning cycle before anyone read the code.
 - ~~`Utils.RunWTAsync` waits on `wt.exe`, which is a launcher rather than the work~~ **Measured and
   fixed in 2a.** Filed here as a suspicion, then confirmed on a real backup, 2026-07-20: the app
   reported `Remember installed apps FAILED — winget reported success but wrote no file` and wrote
@@ -189,11 +212,32 @@ Each of these becomes *visible* once 2a lands, which is why they follow rather t
   `ProcessOutcome`. `async void` returns to its caller at the first `await`, so `AStoreApps` logged
   success before winget had started — it was structurally incapable of reporting a real result, which
   made it a prerequisite for the phase rather than cleanup.
-- `OSHelper` dereferences registry values with no null check.
-- `WThemes` backs up `%Windir%\Web\Wallpaper` — the stock OS wallpapers, identical on every machine — but
-  not the actual active wallpaper.
-- `Forms/RestAppsForm` wires `Click` to the `SelectedIndexChanged` handler, and its filename casing is
-  inconsistent between load and restore (works only because Windows is case-insensitive).
+- ~~`OSHelper` dereferences registry values with no null check.~~ **Fixed in 2c**, and it was the most
+  severe item on this list rather than the tidiest. It runs from `ConfPageView`'s constructor, which is
+  evaluated as the *argument* to `Application.Run` and therefore outside the message pump — and there
+  was no `ThreadException` or `AppDomain.UnhandledException` handler anywhere in the tree. A missing
+  `UBR` value, which is real on sysprepped and container images, terminated the process via WER with no
+  window, no dialog and no log line. `Program.Main` now reports and rethrows.
+- ~~`WThemes` backs up `%Windir%\Web\Wallpaper` … but not the actual active wallpaper.~~ **Fixed in
+  2c.** Measured 2026-07-20: that folder is 20 files / 20.0 MB, about 95% of the module's bytes, and
+  was its only write to a directory shared by every account on the PC. It now captures
+  `HKCU\Control Panel\Desktop`, so the *pointer* to the wallpaper survives and not just the pixels —
+  which the module was already copying. Two things are disclosed rather than fixed: the key carries
+  display-specific passengers (`WindowMetrics` with its `AppliedDPI`, the `Colors` subkey) that
+  `regedit` cannot leave behind, and the pointer is an absolute path containing the user name, so
+  under a different account name the desktop comes back black while the row still reads Succeeded.
+- ~~`Forms/RestAppsForm` wires `Click` to the `SelectedIndexChanged` handler, and its filename casing is
+  inconsistent~~ **Fixed in 2c**, and the first half was understated here as a wiring inconsistency: it
+  was silent data loss. The handler starts by clearing the checked-list, and the combo is a
+  `DropDownList`, so *opening the dropdown* discarded every app the user had ticked — in the one dialog
+  whose purpose is choosing a subset. The filename had four spellings, not two; the fourth was in the
+  `Info` text, the only one a user reads.
+- Two further `RestAppsForm` defects this list never recorded, both fixed in 2c: `btnRestore_Click`
+  re-parsed the export to build an argument the install loop ignored, and the loop was `async void`
+  called un-awaited with nothing disabling the button — so a second click started a concurrent
+  *elevated* install run. Its parse-error log line also went through `LogHelper.Log`, whose first
+  argument is a format string, carrying a JSON parse error: the one message needed to diagnose a
+  broken export was the one guaranteed to be discarded.
 
 Modernization was originally listed here and has moved to [Phase 4](#phase-4--modernization). It shares
 no code with the safety work, and mixing UI theming into a review of destructive registry operations

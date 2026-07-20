@@ -41,6 +41,9 @@ module bugs that are *not* regressions.
 - `src/Appcopier/BackupBase.cs` — abstract base every backup module inherits: `Title`, `Info`, `WarningMessage`, `RequiresExplorerRestart`, `IsInstalled()`, `Backup(path)`, `Restore(path)`, plus `BackupAsync`/`RestoreAsync` wrappers (Task.Run around the sync methods). `Backup`/`Restore` return a `ModuleResult`, not `void` — see "Reporting outcomes" below.
 - `src/Appcopier/Conf/*.cs` — one class per backup area. Filename prefix letter encodes the category: `A` = Apps, `B` = Browser, `C` = Credentials, `D` = Devices, `G` = Gaming, `W` = Windows settings. Most modules call `Utils.ExportRegistryKey()` / `Utils.ImportRegistryKey()` (regedit `/e` and `/s`) and/or `Utils.CopyFolder()`.
 - `src/Appcopier/Conf/RegistryModule.cs` — base for the ten modules that capture exactly one registry key to `{Title}.reg`. Subclasses supply data (`Key`, `AbsenceIsNormal`) and inherit the decision logic, so the skipped-vs-failed rule is written once. **Prefer inheriting this over hand-rolling `Backup`/`Restore`** when a module is a single-key export.
+- **A loop over N targets must build N distinct filenames.** Build the path with `BackupBase.RegFileNameFor(key)`; never `Title + ".reg"` inside a `foreach` over `Keys`. `WThemes` did the latter, which was harmless only while it had one key — a second export would delete the first via `TryDeleteExport` and write over it while *both* steps reported success, and the restore would import that one file once per key while the post-import probe found every key present, because the keys exist on the live machine regardless of what the file contained. Every row green, one key never captured. `BackupFileNamingTests` catches this by giving a module a synthetic extra key and observing the filename `RestoreAsync` actually computes — not by calling the seam, which a broken call site would still pass.
+- **Keyless artifacts are named by a `const` on the class that writes them**, not through that seam: it derives `.reg` names from a registry key, and something like `AStoreApps`' `.json` export has no key. `AppStoreApps.ExportFileName` is the pattern. The rule is the same either way — a name kept away from its producer drifts. That one was spelled four ways at once, including in the `Info` text the user reads.
+- **Changing a module's registry key changes its backup filename**, because the name is derived from the key. That orphans the file in every existing backup, which then restores as `Skipped("nothing was backed up for this item")`. Decide deliberately and disclose it; do not reach for a filename fallback without checking what the old file *contains*, since a `.reg` written for the old key applies to the old key no matter which key you pass `regedit`.
 
 Adding a new module requires touching **two** places:
 1. Create the class in `Conf/` inheriting `BackupBase` — or `RegistryModule` for a single-key export (namespace `Conf`).
@@ -65,6 +68,16 @@ virtuals:
   `AStoreApps`, which opens a dialog). Setting it false exempts the module from being snapshotted, so
   getting it wrong means a restore that cannot be undone. This is the same class of judgement call as
   `absenceIsNormal`.
+
+A declaration must contain **no null entries**. The dialog renders a per-entry marker for one, which is
+loud on purpose, but it is a wart shown to a user deciding whether to consent — not a supported way to
+declare a target. `RestoreDeclarationTests` fails on it.
+
+**Anything a restore writes must be inside the pre-restore snapshot.** The snapshot is taken by running
+the module's own `Backup`, so a restore path that writes somewhere `Backup` does not read is invisible to
+it — and `SnapshotGate` will still report the restore as fully undoable, because it has no way to know.
+That asymmetry is what pushed the `WTelemetry` legacy-filename fallback out of Phase 2c: a caveat inside
+a step reason does not correct a verdict the user reads as "this can be undone".
 
 The orchestration lives in `ConfPageView`, not in modules: consent is gathered once on the UI thread and
 `RestoreDispatch.Decide` turns it into a per-module Run/Skip/Fail. **Never show a dialog from module

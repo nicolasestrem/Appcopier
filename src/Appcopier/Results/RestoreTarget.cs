@@ -30,6 +30,20 @@ namespace Appcopier
         /// </remarks>
         public const string UndeclaredMarker = "(this item does not declare what it overwrites)";
 
+        /// <summary>
+        /// The text shown in place of a single declaration entry that came through as null.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately a DIFFERENT sentence from <see cref="UndeclaredMarker"/>. "The module
+        /// declared nothing at all" and "one entry of the module's declaration is broken" are
+        /// different facts, and the dialog the user consents against must not conflate them: the
+        /// second means the module's other lines are real and one thing it overwrites is unnamed.
+        /// The ctor of this type rejects an empty path, so only a null LIST ENTRY reaches this -
+        /// which is a bug in the module, and it fails closed and loudly rather than silently
+        /// dropping the line and understating what the restore touches.
+        /// </remarks>
+        public const string UnnamedTargetMarker = "(this item overwrites something it does not name)";
+
         public RestoreTargetKind Kind { get; }
 
         /// <summary>Never null, never empty. A key path, a folder path, or a command description.</summary>

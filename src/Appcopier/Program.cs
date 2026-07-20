@@ -64,6 +64,26 @@ namespace Appcopier
         internal const string UnknownVersion = "unknown";
 
         /// <summary>
+        /// Builds the text shown when the app fails before its window exists.
+        /// </summary>
+        /// <remarks>
+        /// Plain concatenation and total on a null argument: this runs on the way out of a startup
+        /// failure, so a NullReferenceException or a FormatException raised while DESCRIBING the
+        /// first failure would replace the only diagnostic the user is ever going to see. The
+        /// exception's own message is included verbatim - it goes to a MessageBox, which unlike
+        /// LogHelper has no Console.WriteLine fallback, so a brace in the text must not be
+        /// interpreted as a format placeholder.
+        /// </remarks>
+        internal static string DescribeStartupFailure(Exception ex)
+        {
+            if (ex == null)
+                return "Appcopier could not start. No exception details are available.";
+
+            return "Appcopier could not start." + Environment.NewLine + Environment.NewLine +
+                   ex.GetType().FullName + ": " + (ex.Message ?? string.Empty);
+        }
+
+        /// <summary>
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
@@ -71,7 +91,35 @@ namespace Appcopier
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+
+            // The MainForm constructor is evaluated as the ARGUMENT to Application.Run, so it runs
+            // BEFORE the message pump starts. WinForms' ThreadExceptionDialog only catches
+            // exceptions that surface inside the pump, and nothing in this tree registers
+            // Application.ThreadException or AppDomain.UnhandledException - so without this catch a
+            // throw during construction escapes to the CLR unhandled path and the process is torn
+            // down by WER with no dialog, no log and no window. The user just sees nothing happen.
+            //
+            // Application.SetUnhandledExceptionMode is deliberately NOT called here. Leaving it at
+            // the default (CatchException) means in-pump exceptions are absorbed by WinForms before
+            // they can reach this frame, which is what keeps this handler scoped to startup rather
+            // than silently becoming the app's global exception policy.
+            try
+            {
+                Application.Run(new MainForm());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    DescribeStartupFailure(ex),
+                    "Appcopier",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+
+                // Rethrown rather than swallowed or turned into Environment.Exit: the rethrow is
+                // what leaves the Windows Error Reporting / Event Log record with the real stack
+                // in it, which is the only artifact anyone can diagnose from after the fact.
+                throw;
+            }
         }
     }
 }

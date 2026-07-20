@@ -16,6 +16,18 @@ namespace Views
     {
         private static readonly LogHelper logger = LogHelper.Instance;
 
+        /// <summary>
+        /// The greeting shown in the log pane. {0} is the OS build string from OsHelper.GetVersion.
+        /// </summary>
+        /// <remarks>
+        /// A const rather than an inline interpolation so the composition is testable without
+        /// constructing the control. GetVersion degrades to a self-describing token rather than to
+        /// an empty string precisely so this sentence cannot come out with a double space or a
+        /// stray " ." in it; OsVersionTests asserts that for every degraded shape.
+        /// </remarks>
+        internal const string IntroTemplate =
+            "This app supports you in backing up, sharing, and restoring your key settings of your Windows 11 {0} on this or another system.";
+
         internal string CurrentBackupPath = Data.DataRootDir + Data.NowShort + "\\";
         internal string CurrentRestorePath = "";
 
@@ -41,7 +53,7 @@ namespace Views
             BackColor =
             rtbLog.BackColor = Color.FromArgb(250, 250, 250);
             // Dynamically set OS information
-            rtbLog.Text = $"This app supports you in backing up, sharing, and restoring your key settings of your Windows 11 {OsHelper.GetVersion()} on this or another system.";
+            rtbLog.Text = string.Format(IntroTemplate, OsHelper.GetVersion());
             // Log messages to target rtbLog
             logger.SetTarget(rtbLog);
         }
@@ -589,8 +601,33 @@ namespace Views
                 logger.LogMessage("Could not choose a snapshot folder name: " + ex.Message);
             }
 
-            RestorePlan plan = new RestorePlan(selectedConfigs, CurrentRestorePath,
-                snapshotFolderPath ?? "(no snapshot folder could be named)");
+            // Composing the plan reads four virtual members off every selected module -
+            // RestoreTargets, ProcessesToCloseBeforeRestore, Title and WarningMessage - and any of
+            // the four can throw from a module written later. This stage sits between the try above
+            // and the confirmation dialog, and the whole chain up to the async void click handler
+            // has no catch, so an escaping exception here would surface as WinForms' unhandled
+            // exception dialog mid-restore.
+            //
+            // Fail closed: the plan IS the description the user consents against, so no description
+            // means no consent, and no consent means nothing is touched.
+            RestorePlan plan;
+
+            try
+            {
+                plan = new RestorePlan(selectedConfigs, CurrentRestorePath,
+                    snapshotFolderPath ?? "(no snapshot folder could be named)");
+            }
+            catch (Exception ex)
+            {
+                logger.LogMessage("Could not describe what this restore would overwrite: " + ex.Message);
+
+                MessageBox.Show(FindForm(),
+                    "What this restore would overwrite could not be described, so you were not asked " +
+                    "to confirm it and nothing has been changed.\r\n\r\n" + ex.Message,
+                    "Restore", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                return;
+            }
 
             // Stage 2: informed consent, on the UI thread, before anything is created.
             IReadOnlyList<string> consented;

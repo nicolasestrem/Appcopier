@@ -240,6 +240,64 @@ namespace Appcopier.Tests
             Assert.Contains(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
         }
 
+        // A null entry inside a real declaration is a bug in the module, and the dialog is the last
+        // place it may be silently absorbed: dereferencing it threw out of a stage with no catch
+        // above it, and dropping the line would understate what the restore overwrites.
+        [Fact]
+        public void NullTargetEntry_RendersItsOwnMarkerInsteadOfThrowing()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Half declarer", new[]
+            {
+                RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse"),
+                null
+            }));
+
+            Assert.Contains(@"HKEY_CURRENT_USER\Control Panel\Mouse", plan.ConfirmationText);
+            Assert.Contains(RestoreTarget.UnnamedTargetMarker, plan.ConfirmationText);
+        }
+
+        // "The module declared nothing" and "one entry of its declaration is broken" are different
+        // facts. Rendering the undeclared marker here would tell the user the real, named targets
+        // this module DID declare do not exist.
+        [Fact]
+        public void NullTargetEntry_DoesNotClaimTheModuleDeclaredNothing()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Half declarer", new[]
+            {
+                RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse"),
+                null
+            }));
+
+            Assert.DoesNotContain(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
+        }
+
+        [Fact]
+        public void SeveralNullTargetEntries_RenderOneMarkerEach()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Broken declarer", new RestoreTarget[]
+            {
+                null,
+                RestoreTarget.Folder(@"C:\Users\me\AppData\Local\Microsoft\Windows\Themes"),
+                null
+            }));
+
+            string[] lines = plan.ConfirmationText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+
+            Assert.Equal(2, lines.Count(l => l.Trim() == RestoreTarget.UnnamedTargetMarker));
+            Assert.Contains(@"C:\Users\me\AppData\Local\Microsoft\Windows\Themes", plan.ConfirmationText);
+        }
+
+        // Two markers, two facts. One sentence used for both would make the dialog unable to say
+        // which of them happened.
+        [Fact]
+        public void TheTwoMarkers_AreDifferentSentences()
+        {
+            Assert.NotEqual(RestoreTarget.UndeclaredMarker, RestoreTarget.UnnamedTargetMarker);
+            Assert.False(string.IsNullOrWhiteSpace(RestoreTarget.UnnamedTargetMarker));
+            Assert.DoesNotContain(RestoreTarget.UnnamedTargetMarker, RestoreTarget.UndeclaredMarker);
+            Assert.DoesNotContain(RestoreTarget.UndeclaredMarker, RestoreTarget.UnnamedTargetMarker);
+        }
+
         // --- Against the shipped modules ---
 
         [Fact]

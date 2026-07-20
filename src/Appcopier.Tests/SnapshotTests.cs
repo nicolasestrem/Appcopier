@@ -294,6 +294,73 @@ namespace Appcopier.Tests
             Assert.NotEqual(inert.Summary, blocked.Summary);
         }
 
+        // A null entry is not a module that succeeded, and it is not a module that had nothing to
+        // save either - it is an entry nothing was recorded for, which is the same "I could not
+        // tell" the missing-result branch already refuses to convert into success.
+        [Fact]
+        public void Gate_NullOutcomeEntry_CountsAsAFailureRatherThanBeingSkipped()
+        {
+            SnapshotDecision d = SnapshotGate.Evaluate(Outcomes(new ModuleOutcome[] { null }));
+
+            Assert.True(d.RequiresOverride);
+            Assert.Equal(SnapshotVerdict.ModulesFailed, d.Verdict);
+            Assert.Single(d.Failures);
+        }
+
+        // The defect this replaced: skipping a null before counting it left considered == 0, so an
+        // all-null list fell through to the sentence claiming the selection changes nothing. That
+        // is asserted against the LIE rather than against whichever branch happens to answer, so
+        // rewording the branches cannot quietly reintroduce it.
+        [Fact]
+        public void Gate_AllNullOutcomes_NeverClaimTheSelectionChangesNothing()
+        {
+            SnapshotDecision d = SnapshotGate.Evaluate(Outcomes(new ModuleOutcome[] { null, null }));
+
+            Assert.DoesNotContain("change anything", d.Summary);
+            Assert.DoesNotContain("change anything", d.Describe());
+        }
+
+        // The denominator is what the user reads as "how much of my restore has a fallback". A null
+        // that vanished from it would make a half-recorded snapshot read as a whole one.
+        [Fact]
+        public void Gate_NullAmongRealEntries_IsCountedInTheDenominator()
+        {
+            SnapshotDecision d = SnapshotGate.Evaluate(Outcomes(new ModuleOutcome("Mouse", Ok()), null));
+
+            Assert.Contains("1 of 2", d.Summary);
+        }
+
+        // A null contributes a line of its own; it must not stand in for, or swallow, the failure
+        // of a module the user can actually act on.
+        [Fact]
+        public void Gate_NullEntry_DoesNotDisplaceANamedFailure()
+        {
+            SnapshotDecision d = SnapshotGate.Evaluate(Outcomes(
+                new ModuleOutcome("Wi-Fi networks & passwords", Failed("netsh wrote no files")),
+                null));
+
+            Assert.Equal(2, d.Failures.Count);
+            Assert.Contains(d.Failures, f => f.Contains("Wi-Fi networks & passwords") && f.Contains("netsh wrote no files"));
+            Assert.Contains("Wi-Fi networks & passwords", d.Describe());
+        }
+
+        // No outcomes at all is a legitimate state - nothing needed capturing. A list of nulls is a
+        // list of things that were meant to be recorded and were not, and the two must not report
+        // the same verdict.
+        [Fact]
+        public void Gate_ANullListIsNotTheSameAsAListOfNulls()
+        {
+            SnapshotDecision empty = SnapshotGate.Evaluate(null);
+            SnapshotDecision nulls = SnapshotGate.Evaluate(Outcomes(new ModuleOutcome[] { null }));
+
+            Assert.Equal(SnapshotVerdict.NothingCaptured, empty.Verdict);
+            Assert.False(empty.RequiresOverride);
+
+            Assert.Equal(SnapshotVerdict.ModulesFailed, nulls.Verdict);
+            Assert.True(nulls.RequiresOverride);
+            Assert.NotEqual(empty.Summary, nulls.Summary);
+        }
+
         // Whichever way it went, restore_log.txt gets a line. A branch with an empty summary would
         // leave the record silent about the one thing it exists to say.
         [Theory]
