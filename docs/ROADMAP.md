@@ -8,8 +8,17 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | .NET 8 migration, test harness, repo/tooling cleanup | **Done** — [spec](superpowers/specs/2026-07-20-net8-migration-design.md) |
-| 2 | Safety and correctness overhaul | Not started |
+| 2a | Make failure representable and reported | In progress — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
+| 2b | Restore safety: snapshot, rollback, confirmation | Not started |
+| 2c | Known module bugs | Not started |
 | 3 | Module coverage: dev tooling and power-user settings | Not started |
+| 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
+
+Phase 2 was originally written as one phase. It is four independent workstreams, and splitting it was
+the first decision of the 2a design. 2a is the foundation: until failure can be *expressed*, none of the
+others can be verified. Modernization moved out of Phase 2 entirely — dark mode and
+rollback-a-bad-registry-import share no code, and bundling them means the reviewer scrutinising
+destructive operations is also diffing ARGB values.
 
 ## Direction
 
@@ -45,25 +54,40 @@ cannot tell you when they fail.
 **A backup tool that misreports success is worse than no backup tool** — the user finds out at restore time,
 which is exactly when they have no fallback.
 
-### Honest reporting
+### Phase 2a — honest reporting (in progress)
+
+Full design: [`superpowers/specs/2026-07-20-phase2a-honest-failures-design.md`](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md).
+
+The root defect is structural, not a collection of missing checks: `BackupBase.Backup(string)` returns
+`void`, `Utils` swallows every exception, so the call chain is *incapable* of expressing failure. 2a
+threads a `ModuleResult` (`Succeeded` / `Skipped` / `Failed` + reason) through `BackupBase` → 23 modules
+→ `Utils` → the views, and everything below depends on it landing first.
 
 - `Views/ConfPageView.cs` shows "Back up done." and "Restore done." unconditionally, even when every module
   threw. Both must reflect real per-module outcomes.
 - Replace the silent-catch pattern throughout `Conf/` and `Helpers/WindowsHelper.cs`: failures currently
   write a log line and return as if successful.
 - `Utils.ExportImportRegistryKey` never checks an exit code and never verifies the `.reg` file exists, so a
-  missing or corrupt file imports silently.
+  missing or corrupt file imports silently. Measured 2026-07-20: `regedit /e` on a nonexistent key exits
+  **0 and writes no file**, so the file check is mandatory, not belt-and-braces.
 - `backup_log.txt` records what was *selected*, not what *succeeded*. It should record outcomes.
-- Add persistent file logging. `LogHelper` writes only to a `RichTextBox`, so every error trace dies with
-  the window — including the ones that would explain a failed restore.
+- `CWiFiConf` restore matches `WLAN*.xml` but `netsh` writes `<interface>-<SSID>.xml` — measured 0 of 19
+  files matched. Pulled into 2a because honest reporting would otherwise render total data loss as a
+  tidy "Skipped".
 
-### Restore safety
+Deferred out of 2a: full persistent file logging. `LogHelper` writes only to a `RichTextBox`, so every
+error trace dies with the window. 2a fixes only the format-string hazard that would silently swallow
+reason strings containing braces; the rest is its own workstream.
+
+### Phase 2b — restore safety
 
 - Snapshot current state before any restore, so a bad `.reg` import can be rolled back. Restore is currently
   irreversible.
 - Real confirmation before destructive restore, stating what will be overwritten.
 - Guard the unchecked `Process.Kill()` in `Utils.CloseProcess` and `RestartExplorer` (which kills *every*
-  Explorer process).
+  Explorer process). *The `CloseProcess` guard moves into 2a — it is a live path to an unhandled
+  UI-thread exception that aborts a whole run. Adding the bounded `WaitForExit` stays here, since it
+  changes what gets copied rather than what gets reported.*
 - Systematically close a target app before overwriting its profile; the helpers exist but the restore path
   does not use them.
 - Write a restore-time log. There is currently no audit trail of what a restore changed.
@@ -84,10 +108,18 @@ all of it predates the .NET 8 migration.
   target has no created handle, so in that state it touches the `RichTextBox` from whatever thread
   called it. The catch-all hides it. This is part of the persistent-logging work above.
 
-### Known module bugs
+### Phase 2c — known module bugs
+
+Each of these becomes *visible* once 2a lands, which is why they follow rather than lead.
 
 - `WTelemetry` hardcodes `ControlSet001` instead of `CurrentControlSet` — wrong on systems booted from a
   different control set.
+- `WNetworkConf.ExecuteNetshCommand` does `new StreamWriter(outputFilePath)` on both paths, and `Restore`
+  passes `null` — so *every* restore throws `ArgumentNullException` before `WaitForExit`, while the netsh
+  process may still be applying config in the background. Left out of 2a because it already reports a
+  failure today: it is broken, not dishonest.
+- `CWiFiConf` restore imports only `xmlFiles[0]`, discarding every saved network but one. *(The filename
+  filter half of this pair is fixed in 2a; this half stays here.)*
 - `AStoreApps` restore is dead code; the real `winget import` is commented out.
 - `Utils.RunWT` is `async void` with a `WorkingDirectory` that may not exist, so the `Win32Exception` is
   rethrown on the sync context and crashes the app.
@@ -97,14 +129,9 @@ all of it predates the .NET 8 migration.
 - `Forms/RestAppsForm` wires `Click` to the `SelectedIndexChanged` handler, and its filename casing is
   inconsistent between load and restore (works only because Windows is case-insensitive).
 
-### Modernization carried into this phase
-
-- Rewrite the update checker against the GitHub Releases API. It currently downloads `AssemblyInfo.cs` and
-  string-parses it with raw index arithmetic; any reformat breaks it. Note the compatibility constraint in
-  the Phase 1 spec — deployed clients still parse that file, so the format must survive the change.
-- Replace obsolete `WebClient` with `HttpClient` (the two `SYSLIB0014` warnings).
-- Per-monitor DPI awareness (currently System-aware; the `WFAC010` warning marks this).
-- Dark mode. Colors are hardcoded light-theme ARGB values across the views.
+Modernization was originally listed here and has moved to [Phase 4](#phase-4--modernization). It shares
+no code with the safety work, and mixing UI theming into a review of destructive registry operations
+serves neither.
 
 ## Phase 3 — module coverage
 
@@ -129,6 +156,17 @@ profile, and copy live locked databases. Fix or retire them; do not extend the p
 `APinnedApps` copies a build-specific Start menu database that is notoriously non-portable between machines;
 `DUSB` targets a near-empty key; `WUpdates` targets WSUS-era policy keys rather than modern Windows 11
 update settings.
+
+## Phase 4 — modernization
+
+Independent of the safety work and of each other; can land any time after Phase 1, in any order.
+
+- Rewrite the update checker against the GitHub Releases API. It currently downloads `AssemblyInfo.cs` and
+  string-parses it with raw index arithmetic; any reformat breaks it. Note the compatibility constraint in
+  the Phase 1 spec — deployed clients still parse that file, so the format must survive the change.
+- Replace obsolete `WebClient` with `HttpClient` (the two `SYSLIB0014` warnings).
+- Per-monitor DPI awareness (currently System-aware; the `WFAC010` warning marks this).
+- Dark mode. Colors are hardcoded light-theme ARGB values across the views.
 
 ## Cross-machine portability
 

@@ -28,6 +28,7 @@ Notable changes to Appcopier are documented in this file.
 - Claude Code project automation under `.claude/`, now tracked in the repository: hooks that block edits to generated `bin/`/`obj/` artifacts and run a `dotnet build` compile check after every C# edit, a `windows-safety-reviewer` subagent for auditing destructive Windows operations (registry imports, process kills, restore overwrites), and two skills — `new-backup-module` (scaffolds a `Conf/` module and registers it) and `/release` (guided version-bump/publish/tag/release flow). Only `.claude/settings.local.json` stays ignored, since it holds per-user paths.
 - `CLAUDE.md` with build instructions and an architecture overview; this `CHANGELOG.md`.
 - `docs/superpowers/specs/2026-07-20-net8-migration-design.md`, the design record for the .NET 8 migration and the phased roadmap that follows it.
+- `docs/superpowers/specs/2026-07-20-phase2a-honest-failures-design.md`, the design record for Phase 2a — threading a `ModuleResult` through the backup/restore chain so the app can report failure at all. No code changes yet; the spec records the decisions, the measured `regedit`/`netsh` behaviour they rest on, and what was deliberately deferred. `docs/ROADMAP.md` is restructured to match: Phase 2 splits into 2a (honest reporting), 2b (restore safety) and 2c (module bugs), and modernization moves out to its own Phase 4.
 - `src/NuGet.config` declaring nuget.org as a package source, so restore works on machines whose user-level NuGet configuration has no sources.
 
 ### Removed
