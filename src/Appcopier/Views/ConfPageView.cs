@@ -103,6 +103,23 @@ namespace Views
             btnBackup.Enabled = false;
             this.Enabled = false;
 
+            // The whole body is wrapped so the window is re-enabled in a finally. This is an async
+            // void handler that disables the form on its first two lines: anything escaping it is
+            // unhandled AND leaves the main window permanently dead, with no way back short of
+            // killing the process.
+            try
+            {
+                await RunBackup();
+            }
+            finally
+            {
+                this.Enabled = true;
+                btnBackup.Enabled = true;
+            }
+        }
+
+        private async Task RunBackup()
+        {
             selectedConfigs.Clear();
 
             bool isAtLeastOneChecked = treeConfigurations.Nodes
@@ -112,9 +129,16 @@ namespace Views
             // At least one node is checked, then proceed!
             if (isAtLeastOneChecked)
             {
-                if (!Directory.Exists(CurrentBackupPath))
+                string createError;
+
+                if (!TryCreateBackupFolder(out createError))
                 {
-                    Directory.CreateDirectory(CurrentBackupPath);
+                    // Reported as a run that DID NOT RUN, not as a crash and not as a silent
+                    // no-op: the user asked for a backup and got nothing, and they need to be
+                    // told which of those two it was.
+                    ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Backup,
+                        "the backup folder could not be created: " + createError), "Backup");
+                    return;
                 }
 
                 foreach (TreeNode parentNode in treeConfigurations.Nodes)
@@ -164,21 +188,50 @@ namespace Views
                 // Log backed-up elements
                 LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
 
-                RunSummary summary = RunSummary.For(results, true, RunVerb.Backup);
-
-                logger.LogMessage(summary.Headline);
-                logger.LogMessage(summary.Detail);
-
-                MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
-                    "Backup", MessageBoxButtons.OK, summary.Icon);
+                ShowSummary(
+                    RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Backup),
+                    "Backup");
             }
             else
             {
                 MessageBox.Show("Nothing has been selected for backup. Please choose your settings to be backed up beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
 
-            this.Enabled = true;
-            btnBackup.Enabled = true;
+        /// <summary>
+        /// Creates the backup folder, reporting rather than throwing if it cannot.
+        /// </summary>
+        /// <remarks>
+        /// Ordinary failures, not exotic ones: the exe under Program Files on a standard-user
+        /// account, a full disk, a path over the length limit. This used to be a bare
+        /// Directory.CreateDirectory outside any try, in an async void handler.
+        /// </remarks>
+        private bool TryCreateBackupFolder(out string error)
+        {
+            error = null;
+
+            try
+            {
+                if (!Directory.Exists(CurrentBackupPath))
+                    Directory.CreateDirectory(CurrentBackupPath);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                logger.LogMessage("Could not create the backup folder " + CurrentBackupPath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private static void ShowSummary(RunSummary summary, string caption)
+        {
+            logger.LogMessage(summary.Headline);
+            logger.LogMessage(summary.Detail);
+
+            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
+                caption, MessageBoxButtons.OK, summary.Icon);
         }
 
         // Write a backup_log.txt that records outcomes, not just the selection.
@@ -248,13 +301,9 @@ namespace Views
             // Show or hide restart button based on requirement
             btnRestartExplorer.Visible = requiresRestart;
 
-            RunSummary summary = RunSummary.For(results, ran, RunVerb.Restore);
-
-            logger.LogMessage(summary.Headline);
-            logger.LogMessage(summary.Detail);
-
-            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
-                "Restore", MessageBoxButtons.OK, summary.Icon);
+            ShowSummary(
+                RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), ran, RunVerb.Restore),
+                "Restore");
         }
 
         private void btnRestore_Click(object sender, EventArgs e)

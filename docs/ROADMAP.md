@@ -8,7 +8,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | .NET 8 migration, test harness, repo/tooling cleanup | **Done** — [spec](superpowers/specs/2026-07-20-net8-migration-design.md) |
-| 2a | Make failure representable and reported | In progress — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
+| 2a | Make failure representable and reported | **Done** — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
 | 2b | Restore safety: snapshot, rollback, confirmation | Not started |
 | 2c | Known module bugs | Not started |
 | 3 | Module coverage: dev tooling and power-user settings | Not started |
@@ -48,13 +48,13 @@ measured size comparison and the flags that matter.
 
 ## Phase 2 — safety and correctness
 
-The highest-value work remaining. Appcopier runs elevated and performs destructive operations, and today it
-cannot tell you when they fail.
+The highest-value work remaining. Appcopier runs elevated and performs destructive operations, and until
+2a it could not tell you when they failed.
 
 **A backup tool that misreports success is worse than no backup tool** — the user finds out at restore time,
 which is exactly when they have no fallback.
 
-### Phase 2a — honest reporting (in progress)
+### Phase 2a — honest reporting (done)
 
 Full design: [`superpowers/specs/2026-07-20-phase2a-honest-failures-design.md`](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md).
 
@@ -63,8 +63,11 @@ The root defect is structural, not a collection of missing checks: `BackupBase.B
 threads a `ModuleResult` (`Succeeded` / `Skipped` / `Failed` + reason) through `BackupBase` → 23 modules
 → `Utils` → the views, and everything below depends on it landing first.
 
-- `Views/ConfPageView.cs` shows "Back up done." and "Restore done." unconditionally, even when every module
-  threw. Both must reflect real per-module outcomes.
+All of the following landed. Kept as a record of what the phase actually addressed:
+
+- ~~`Views/ConfPageView.cs` shows "Back up done." and "Restore done." unconditionally~~ — both now
+  reflect real per-module outcomes, via a four-state summary that also distinguishes "nothing was
+  present to back up" from "the run never happened".
 - Replace the silent-catch pattern throughout `Conf/` and `Helpers/WindowsHelper.cs`: failures currently
   write a log line and return as if successful.
 - `Utils.ExportImportRegistryKey` never checks an exit code and never verifies the `.reg` file exists, so a
@@ -84,10 +87,12 @@ reason strings containing braces; the rest is its own workstream.
 - Snapshot current state before any restore, so a bad `.reg` import can be rolled back. Restore is currently
   irreversible.
 - Real confirmation before destructive restore, stating what will be overwritten.
-- Guard the unchecked `Process.Kill()` in `Utils.CloseProcess` and `RestartExplorer` (which kills *every*
-  Explorer process). *The `CloseProcess` guard moves into 2a — it is a live path to an unhandled
-  UI-thread exception that aborts a whole run. Adding the bounded `WaitForExit` stays here, since it
-  changes what gets copied rather than what gets reported.*
+- Guard the unchecked `Process.Kill()` in `RestartExplorer` (which kills *every* Explorer process).
+  *`Utils.CloseProcess` was done in 2a — both the guard and, in the end, the bounded `WaitForExit`.
+  The wait was originally deferred to this phase on the grounds that it changes what gets copied
+  rather than what gets reported. That was true and still missed the point: without it, agreeing to
+  close the browser could not produce a good backup, so the prompt was a control that could not lead
+  anywhere. Doing half of a fix left the user worse off than doing none of it.*
 - Systematically close a target app before overwriting its profile; the helpers exist but the restore path
   does not use them.
 - Write a restore-time log. There is currently no audit trail of what a restore changed.
@@ -115,14 +120,18 @@ Each of these becomes *visible* once 2a lands, which is why they follow rather t
 - `WTelemetry` hardcodes `ControlSet001` instead of `CurrentControlSet` — wrong on systems booted from a
   different control set.
 - `WNetworkConf.ExecuteNetshCommand` does `new StreamWriter(outputFilePath)` on both paths, and `Restore`
-  passes `null` — so *every* restore throws `ArgumentNullException` before `WaitForExit`, while the netsh
-  process may still be applying config in the background. Left out of 2a because it already reports a
-  failure today: it is broken, not dishonest.
-- `CWiFiConf` restore imports only `xmlFiles[0]`, discarding every saved network but one. *(The filename
-  filter half of this pair is fixed in 2a; this half stays here.)*
+  passed `null`. **Fixed in 2a after a safety audit disproved the reasoning for deferring it.** The
+  defect was worse than recorded here: `process.Start()` ran *before* the throw, so netsh was already
+  applying the backup's addresses, DNS servers and interface metrics when the exception fired — and
+  was never waited on or killed. The user was told the restore failed while their networking was being
+  reconfigured. "Broken, not dishonest" was exactly backwards.
+- ~~`CWiFiConf` restore imports only `xmlFiles[0]`~~ **Fixed in 2a**, along with the filename-filter
+  half of the pair — correcting only one would have left the module still restoring nothing useful.
 - `AStoreApps` restore is dead code; the real `winget import` is commented out.
-- `Utils.RunWT` is `async void` with a `WorkingDirectory` that may not exist, so the `Win32Exception` is
-  rethrown on the sync context and crashes the app.
+- ~~`Utils.RunWT` is `async void`~~ **Fixed in 2a**: it is now `RunWTAsync` returning a
+  `ProcessOutcome`. `async void` returns to its caller at the first `await`, so `AStoreApps` logged
+  success before winget had started — it was structurally incapable of reporting a real result, which
+  made it a prerequisite for the phase rather than cleanup.
 - `OSHelper` dereferences registry values with no null check.
 - `WThemes` backs up `%Windir%\Web\Wallpaper` — the stock OS wallpapers, identical on every machine — but
   not the actual active wallpaper.

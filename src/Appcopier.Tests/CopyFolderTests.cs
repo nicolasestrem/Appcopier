@@ -128,22 +128,39 @@ namespace Appcopier.Tests
         [Fact]
         public async Task CopyFolder_SubdirectoryVanishesMidCopy_DoesNotReportSourceMissing()
         {
+            // The branch under test needs the doomed folder to still exist when GetDirectories()
+            // enumerates it and be gone when recursion VISITS it. Hitting that window reliably
+            // dictates the layout below:
+            //
+            //  - the root holds no files, so nothing awaits before GetDirectories() runs and the
+            //    delete below cannot land early (it would then never be enumerated at all, and the
+            //    vanishing branch would never be entered);
+            //  - "aa_slow" sorts first and holds a large file, so the copy is still busy inside it
+            //    when the test thread resumes at the first incomplete await;
+            //  - "zz_doomed" sorts last, so it is visited only after that copy finishes.
             string src = Dir("src8");
-            for (int i = 0; i < 3; i++)
-                File.WriteAllText(Path.Combine(src, "f" + i + ".txt"), "x");
 
-            string doomed = Path.Combine(src, "zz_cache");
+            string slow = Path.Combine(src, "aa_slow");
+            Directory.CreateDirectory(slow);
+            for (int i = 0; i < 3; i++)
+                File.WriteAllText(Path.Combine(slow, "f" + i + ".txt"), "x");
+            File.WriteAllBytes(Path.Combine(slow, "big.bin"), new byte[8 * 1024 * 1024]);
+
+            string doomed = Path.Combine(src, "zz_doomed");
             Directory.CreateDirectory(doomed);
             File.WriteAllText(Path.Combine(doomed, "c.txt"), "y");
 
-            // Delete it after enumeration would have seen it but before recursion reaches it.
-            // GetDirectories() runs after the files are copied, so removing it now models the race.
             Task<CopyResult> copy = Utils.CopyFolder(src, Path.Combine(_root, "dst8"));
             Directory.Delete(doomed, true);
             CopyResult r = await copy;
 
             Assert.False(r.SourceMissing);
             Assert.True(r.FilesCopied >= 3);
+
+            // Without this the test passes even when the vanishing branch is never entered - it
+            // would then assert only that nothing went wrong.
+            Assert.True(r.FoldersFailed >= 1);
+            Assert.Contains("disappeared", r.FirstError, System.StringComparison.OrdinalIgnoreCase);
         }
 
         // A directory-level failure must not be described as a file failure.

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Text;
 
@@ -62,9 +61,5 @@ namespace Appcopier
                 default: return "FAILED";
             }
         }
-
-        /// <summary>Whether this is a v0.30.0-era file, which listed selections and had no header.</summary>
-        internal static bool IsLegacy(string text)
-            => string.IsNullOrEmpty(text) || !text.StartsWith(VersionHeader, StringComparison.Ordinal);
     }
 }

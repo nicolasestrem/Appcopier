@@ -53,14 +53,5 @@ namespace Appcopier.Tests
             string text = BackupLog.Compose(Modules(), new List<ModuleResult> { Ok() }, "2026-07-20");
             Assert.Contains("Mouse", text);
         }
-
-        // A v0.30.0 file is a bare list of titles with no header.
-        [Fact]
-        public void IsLegacy_OldFormatFile_IsDetected()
-            => Assert.True(BackupLog.IsLegacy("Mouse (DMouse)\r\nKeyboard (DKeyboard)\r\n"));
-
-        [Fact]
-        public void IsLegacy_NewFormatFile_IsNot()
-            => Assert.False(BackupLog.IsLegacy(BackupLog.VersionHeader + "\r\nMouse  OK\r\n"));
     }
 }

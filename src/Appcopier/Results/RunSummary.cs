@@ -63,7 +63,14 @@ namespace Appcopier
                 ? MessageBoxIcon.Warning
                 : MessageBoxIcon.Information;
 
-        internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)
+        /// <param name="because">
+        /// Why the run never started, when <paramref name="ran"/> is false. Defaults to the missing
+        /// backup folder that RestPageView hits. The backup path passes its own cause rather than
+        /// accepting that default: telling the user a folder "could not be found" when in fact it
+        /// could not be CREATED is the same category of untruth this phase exists to remove.
+        /// </param>
+        internal static RunSummary For(IReadOnlyList<ModuleOutcome> outcomes, bool ran, RunVerb verb,
+                                       string because = null)
         {
             if (!ran)
             {
@@ -71,15 +78,17 @@ namespace Appcopier
                 {
                     State = RunState.DidNotRun,
                     Headline = verb.Noun + " did not run.",
-                    Detail = verb.Noun + " did not run because the backup folder could not be found."
+                    Detail = verb.Noun + " did not run because " +
+                             (because ?? "the backup folder could not be found.")
                 };
             }
 
-            ModuleResult[] all = (results ?? new List<ModuleResult>()).Where(r => r != null).ToArray();
+            ModuleOutcome[] all = (outcomes ?? new List<ModuleOutcome>())
+                .Where(o => o != null && o.Result != null).ToArray();
 
-            ModuleResult[] failed = all.Where(r => r.State == ResultState.Failed).ToArray();
-            ModuleResult[] ok = all.Where(r => r.State == ResultState.Succeeded).ToArray();
-            ModuleResult[] skipped = all.Where(r => r.State == ResultState.Skipped).ToArray();
+            ModuleOutcome[] failed = all.Where(o => o.Result.State == ResultState.Failed).ToArray();
+            ModuleOutcome[] ok = all.Where(o => o.Result.State == ResultState.Succeeded).ToArray();
+            ModuleOutcome[] skipped = all.Where(o => o.Result.State == ResultState.Skipped).ToArray();
 
             if (failed.Length > 0)
             {
@@ -87,7 +96,7 @@ namespace Appcopier
                 {
                     State = RunState.Problems,
                     Headline = string.Format("{0} of {1} items had problems.", failed.Length, all.Length),
-                    Detail = string.Join("\r\n", failed.Select(r => "  - " + r.Reason))
+                    Detail = string.Join("\r\n", failed.Select(Line))
                 };
             }
 
@@ -103,7 +112,7 @@ namespace Appcopier
 
             // Skipped items are reported, but never as a problem and never added to a failure
             // count. Absences are the normal state of a real machine.
-            string detail = string.Join("\r\n", ok.Select(r => "  - " + r.Reason));
+            string detail = string.Join("\r\n", ok.Select(Line));
 
             if (skipped.Length > 0)
             {
@@ -118,5 +127,16 @@ namespace Appcopier
                 Detail = detail
             };
         }
+
+        /// <summary>
+        /// One detail line, led by the module's title.
+        /// </summary>
+        /// <remarks>
+        /// The title is not decoration. Without it the Problems detail was a bare list of reasons -
+        /// "1 of 2 operations failed: regedit exited with code 1" - and the user had no way to tell
+        /// which of the items they selected that was.
+        /// </remarks>
+        private static string Line(ModuleOutcome outcome)
+            => "  - " + outcome.Title + ": " + outcome.Result.Reason;
     }
 }

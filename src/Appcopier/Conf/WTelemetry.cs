@@ -64,10 +64,11 @@ namespace Conf
             return ModuleResult.Aggregate(steps);
         }
 
-        // True for both keys. The DataCollection policy key exists only where Group Policy set it,
-        // so it is absent on a clean Home or Pro install, and the DiagTrack service key is routinely
-        // removed by debloat scripts. This module therefore aggregates to Skipped on a stock
-        // consumer machine - the correct answer, not a case to work around.
+        // True for both keys, because both are REMOVABLE without anything being wrong: the
+        // DataCollection policy key exists only where Group Policy or an edition difference put it
+        // there, and the DiagTrack service key is a routine target of debloat scripts. Both were
+        // probed on the development machine and found PRESENT, so this is not a claim that they are
+        // typically missing - only that their absence is a legitimate state and not a failure.
         private static bool AbsenceIsNormal(string key) => true;
 
         // Helper method to create a safe file name from registry key

@@ -65,9 +65,11 @@ namespace Conf
             return ModuleResult.Aggregate(steps);
         }
 
-        // True for both keys. GameBar and GameDVR are commonly disabled by policy or stripped by
-        // debloat scripts, so an absent key means nothing is configured - not that anything broke.
-        // Like WTelemetry, this module legitimately aggregates to Skipped on such a machine.
+        // True for both keys, because both are REMOVABLE without anything being wrong: GameBar and
+        // GameDVR can be disabled by policy or stripped by debloat scripts, and an absent key then
+        // means nothing is configured rather than that something broke. Both were probed on the
+        // development machine and found PRESENT - the flag covers the machines where they are not,
+        // it does not assert that absence is the common case.
         private static bool AbsenceIsNormal(string key) => true;
 
         // Helper method to create a safe file name from registry key

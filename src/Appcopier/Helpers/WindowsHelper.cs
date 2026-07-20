@@ -134,15 +134,10 @@ namespace Appcopier
             // verify what it produced would be false. Not reachable in today's modules - WThemes
             // is the only one looping several keys into a single filename and it holds exactly one
             // key - but it becomes live the moment a second key is added, silently.
-            try
-            {
-                if (File.Exists(filePath))
-                    File.Delete(filePath);
-            }
-            catch (Exception ex)
-            {
-                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + ex.Message);
-            }
+            string clearError = TryDeleteExport(filePath);
+
+            if (clearError != null)
+                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + clearError);
 
             ProcessOutcome outcome = tool.Export(filePath, registryPath);
 
@@ -152,14 +147,16 @@ namespace Appcopier
             if (!outcome.Started)
                 return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
 
+            // The three branches below abandon an export that regedit may have been part-way through
+            // writing. See AbandonExport for why deleting the fragment is the fix, not tidiness.
             if (outcome.TimedOut)
-                return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+                return AbandonExport(filePath, registryPath, "regedit did not exit - it may be showing an error dialog");
 
             if (outcome.Error != null)
-                return StepResult.Failed(registryPath, "regedit ran but its outcome could not be determined: " + outcome.Error);
+                return AbandonExport(filePath, registryPath, "regedit ran but its outcome could not be determined: " + outcome.Error);
 
             if (outcome.ExitCode != 0)
-                return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
+                return AbandonExport(filePath, registryPath, "regedit exited with code " + outcome.ExitCode);
 
             string readError;
 
@@ -179,6 +176,47 @@ namespace Appcopier
                     // Fail closed. A RegFileCheck member added later must not silently pass here.
                     return StepResult.Failed(registryPath, "the exported file could not be classified");
             }
+        }
+
+        /// <summary>
+        /// Removes the file at <paramref name="filePath"/> if it is there, returning why if it could
+        /// not. Never throws.
+        /// </summary>
+        private static string TryDeleteExport(string filePath)
+        {
+            try
+            {
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// Fails an export and removes whatever regedit may have been part-way through writing.
+        /// </summary>
+        /// <remarks>
+        /// The delete is the point, not tidiness. RegFile.Validate is header-only by design, so a
+        /// truncated export with an intact header later passes ImportRegistryKey's pre-flight,
+        /// reaches regedit /s, exits 0 and is reported as applied. The user would be told the backup
+        /// failed and then told the restore of that same known-bad artifact worked.
+        ///
+        /// A delete failure is logged and then dropped rather than returned: it must never displace
+        /// the real reason the export failed, which is what the user has to act on.
+        /// </remarks>
+        private static StepResult AbandonExport(string filePath, string registryPath, string reason)
+        {
+            string deleteError = TryDeleteExport(filePath);
+
+            if (deleteError != null)
+                logger.LogMessage("Could not remove the incomplete export at " + filePath + ": " + deleteError);
+
+            return StepResult.Failed(registryPath, reason);
         }
 
         /// <summary>

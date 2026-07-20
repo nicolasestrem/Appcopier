@@ -30,12 +30,22 @@ namespace Appcopier.Tests
             Assert.Equal(ResultState.Failed, r.State);
         }
 
+        // The two failures carry DISTINCT reasons deliberately. With the same reason on both, this
+        // could not tell "names the first failure" apart from "names any failure" - it passed
+        // either way, which made the assertion worthless.
         [Fact]
         public void Aggregate_Failed_ReasonNamesCountAndFirstFailure()
         {
-            ModuleResult r = ModuleResult.Aggregate(new[] { Ok("a"), Bad("b"), Bad("c") });
+            ModuleResult r = ModuleResult.Aggregate(new[]
+            {
+                Ok("a"),
+                StepResult.Failed("b", "access denied"),
+                StepResult.Failed("c", "regedit exited with code 1")
+            });
+
             Assert.Contains("2 of 3", r.Reason);
             Assert.Contains("access denied", r.Reason);
+            Assert.DoesNotContain("regedit exited with code 1", r.Reason);
         }
 
         // --- Rule 3: all skipped stays skipped (the rule the inventory forced) ---
@@ -57,10 +67,57 @@ namespace Appcopier.Tests
         }
 
         [Fact]
-        public void Aggregate_SucceededPlusSkipped_ReasonNamesTheSkippedTarget()
+        public void Aggregate_SucceededPlusSkipped_ReasonQuotesTheStepsOwnSkipReason()
         {
-            ModuleResult r = ModuleResult.Aggregate(new[] { Ok("Personalize"), Skip("Accent") });
-            Assert.Contains("Accent", r.Reason);
+            ModuleResult r = ModuleResult.Aggregate(new[]
+            {
+                Ok("Personalize"),
+                StepResult.Skipped("Accent", "not present on this system")
+            });
+
+            Assert.Contains("1 skipped", r.Reason);
+            Assert.Contains("not present on this system", r.Reason);
+        }
+
+        // Aggregate serves BOTH directions and has no RunVerb, so it must never invent text about
+        // the machine. On a restore the file was absent from the BACKUP - asserting "not present on
+        // this system" would be a claim about the user's live hardware that the restore never
+        // checked, and the step's own reason already says the right thing.
+        [Fact]
+        public void Aggregate_Restore_DoesNotClaimAnythingAboutTheLiveMachine()
+        {
+            ModuleResult r = ModuleResult.Aggregate(new[]
+            {
+                StepResult.Applied("Mouse.reg", "1 key"),
+                StepResult.Skipped("Touchpad.reg", "nothing was backed up for this item")
+            });
+
+            Assert.Contains("nothing was backed up for this item", r.Reason);
+            Assert.DoesNotContain("not present on this system", r.Reason);
+            Assert.DoesNotContain("captured", r.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Rule 5 used to render the step's TARGET, which threw away every count the modules
+        // compute: "copied 1204 file(s)" was reported as "Google Chrome".
+        [Fact]
+        public void Aggregate_SingleSucceededStep_KeepsItsReasonNotItsTarget()
+        {
+            ModuleResult r = ModuleResult.Aggregate(new[]
+            {
+                StepResult.Succeeded("Google Chrome", "copied 1204 file(s)")
+            });
+
+            Assert.Equal("copied 1204 file(s)", r.Reason);
+        }
+
+        [Fact]
+        public void Aggregate_AllSucceeded_ReasonIsDirectionNeutral()
+        {
+            ModuleResult r = ModuleResult.Aggregate(new[] { Ok("a"), Ok("b") });
+
+            Assert.DoesNotContain("captured", r.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("backed up", r.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("2", r.Reason);
         }
 
         // Rule 4 must not read as a bare ratio - "1 of 2" under a "Done" heading reads as

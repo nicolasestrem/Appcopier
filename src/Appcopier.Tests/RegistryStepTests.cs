@@ -251,6 +251,7 @@ namespace Appcopier.Tests
             StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
 
             Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("not a valid", s.Reason, StringComparison.OrdinalIgnoreCase);
         }
 
         // Provenance: a valid .reg already sitting at the target path must NOT be able to satisfy
@@ -266,6 +267,72 @@ namespace Appcopier.Tests
 
             Assert.Equal(ResultState.Failed, s.State);
             Assert.Contains("no file", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // --- A failed export must not leave a landmine behind ---
+        //
+        // RegFile.Validate is header-only by design, so a truncated export with an intact header
+        // sails through ImportRegistryKey's pre-flight, reaches regedit /s, exits 0 and is reported
+        // as applied. The user would be told the backup failed and then told the restore of that
+        // same known-bad file worked. These three pin the delete on each abandoning branch.
+
+        // A part-written export: correct header, then cut off mid-key. This is what regedit leaves
+        // when it is killed or times out part-way through writing.
+        private static void WriteTruncated(string path)
+            => File.WriteAllText(path, RegFile.Header + "\r\n\r\n[HKEY_CURRENT_U",
+                   new UnicodeEncoding(false, true));
+
+        [Fact]
+        public void Export_NonZeroExit_RemovesThePartWrittenFile()
+        {
+            string path = Path.Combine(_dir, "partial-exit.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(1), WriteTruncated);
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(File.Exists(path));
+        }
+
+        [Fact]
+        public void Export_Timeout_RemovesThePartWrittenFile()
+        {
+            string path = Path.Combine(_dir, "partial-timeout.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Timeout(), WriteTruncated);
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(File.Exists(path));
+        }
+
+        [Fact]
+        public void Export_OutcomeUnknown_RemovesThePartWrittenFile()
+        {
+            string path = Path.Combine(_dir, "partial-unknown.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.OutcomeUnknown("handle closed"), WriteTruncated);
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.False(File.Exists(path));
+        }
+
+        // The end-to-end shape of the bug: without the delete, the truncated file left by a failed
+        // export passes the import pre-flight and reaches the registry.
+        [Fact]
+        public void Export_FailedThenImport_HasNothingToImport()
+        {
+            string path = Path.Combine(_dir, "landmine.reg");
+
+            Utils.ExportRegistryKey(path, PresentKey, false,
+                new FakeTool(ProcessOutcome.Ran(1), WriteTruncated));
+
+            FakeTool importer = new FakeTool(ProcessOutcome.Ran(0));
+            StepResult s = Utils.ImportRegistryKey(path, "HKEY_CURRENT_USER\\X", importer);
+
+            Assert.Equal(ResultState.Skipped, s.State);
+            Assert.False(importer.ImportCalled);
         }
 
         [Fact]

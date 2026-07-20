@@ -1,5 +1,7 @@
 using Appcopier;
 using Conf;
+using System;
+using System.IO;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -48,11 +50,25 @@ namespace Appcopier.Tests
         }
 
         // Restoring from a folder containing no .reg file must be Skipped, not a false success.
+        //
+        // A freshly created, uniquely named folder rather than %TEMP% itself: this used to pass only
+        // while the machine's temp directory happened not to contain a Mouse.reg, so a stray file
+        // left there by anything at all would silently invert the assertion.
         [Fact]
         public void S1Module_RestoreWithNoBackedUpFile_IsSkipped()
         {
-            ModuleResult r = new DMouse().Restore(System.IO.Path.GetTempPath());
-            Assert.Equal(ResultState.Skipped, r.State);
+            string dir = Path.Combine(Path.GetTempPath(), "acshape_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                ModuleResult r = new DMouse().Restore(dir);
+                Assert.Equal(ResultState.Skipped, r.State);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
         }
     }
 }

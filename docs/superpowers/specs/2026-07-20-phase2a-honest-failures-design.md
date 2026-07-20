@@ -108,6 +108,21 @@ and partially-applied files; the effect of the undocumented extra key argument a
 `netsh` exit code with the wireless adapter disabled. Until measured, exit code is treated as
 necessary-but-not-sufficient everywhere.
 
+> **Waiver, recorded rather than quietly dropped.** That measurement session did **not** happen before
+> the reason strings were frozen, and the phase shipped anyway. The gate was written as a precondition;
+> treating it as one would have blocked the branch on an elevated session that could not be run here.
+>
+> What makes the waiver defensible is that the unmeasured facts were all specified *conservatively* —
+> every rule that depends on them degrades to under-claiming rather than over-claiming. Imports are
+> reported as "applied" rather than "verified"; a file that cannot be read is reported as unreadable
+> rather than invalid; an exit code is never sufficient on its own. Being wrong about any of these
+> makes the app say less than it could, not more than it knows.
+>
+> What the waiver costs: the reason *strings* for permission-denied and partially-applied cases are
+> written against assumed behaviour, so their wording may not match what regedit actually does. That is
+> a text-accuracy risk, not a correctness one. The measurements remain on the Task 12 smoke matrix and
+> should be taken before the next release, not before this merge.
+
 ## The types
 
 ```csharp

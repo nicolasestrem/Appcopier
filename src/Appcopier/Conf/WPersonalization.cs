@@ -66,9 +66,11 @@ namespace Conf
         }
 
         // Per-key, and it CANNOT be inferred from IsInstalled(): that returns true as soon as any
-        // one key exists, so "installed" says nothing about the others. Explorer\Accent is the
-        // canonical legitimately-absent key - treating it as a failure would mark this module red
-        // on a large share of perfectly healthy machines.
+        // one key exists, so "installed" says nothing about the others. Explorer\Accent is treated
+        // as legitimately absent because it is REMOVABLE - a key Windows writes on demand and that
+        // policy or a cleanup tool can take away. It was probed on the development machine and
+        // found PRESENT; the flag exists for the machines where it is not, so that a healthy one
+        // is never marked red.
         private static bool AbsenceIsNormal(string key)
             => key.EndsWith(@"\Accent", System.StringComparison.OrdinalIgnoreCase);
 
