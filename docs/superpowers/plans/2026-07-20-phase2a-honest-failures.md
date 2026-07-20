@@ -2827,15 +2827,32 @@ exists to remove.
 ```csharp
 internal sealed class RunVerb
 {
-    public string Past { get; }   // "Backed up" / "Restored"
-    public string Noun { get; }   // "Backup"    / "Restore"
+    public string Past { get; }        // "Backed up"  / "Restored"   - starts a headline
+    public string PastLower { get; }   // "backed up"  / "restored"   - mid-sentence
+    public string Noun { get; }        // "Backup"     / "Restore"    - subject of a sentence
+    public string Infinitive { get; }  // "back up"    / "restore"    - after "nothing to"
 
-    private RunVerb(string past, string noun) { Past = past; Noun = noun; }
+    private RunVerb(string past, string pastLower, string noun, string infinitive)
+    {
+        Past = past;
+        PastLower = pastLower;
+        Noun = noun;
+        Infinitive = infinitive;
+    }
 
-    public static readonly RunVerb Backup = new RunVerb("Backed up", "Backup");
-    public static readonly RunVerb Restore = new RunVerb("Restored", "Restore");
+    public static readonly RunVerb Backup =
+        new RunVerb("Backed up", "backed up", "Backup", "back up");
+
+    public static readonly RunVerb Restore =
+        new RunVerb("Restored", "restored", "Restore", "restore");
 }
 ```
+
+**Four forms, because three separate bugs came from having too few.** Every user-facing sentence in
+this class runs for BOTH directions, and each one needs the verb in a different grammatical position.
+Hardcoding any of them produces a restore that says "Nothing was backed up." The first draft carried
+two forms and three sentences still had a backup verb baked in; if a fifth sentence is added, give it
+a form here rather than a literal.
 
 Four states replace the two the app has. **Skipped counts are never summed into the failure count.**
 
@@ -2923,6 +2940,33 @@ namespace Appcopier.Tests
             Assert.StartsWith("Restored", s.Headline);
         }
 
+        // Every user-facing sentence runs for BOTH directions. Three separate bugs came from
+        // hardcoding a backup verb into one of them, so each is pinned against the restore verb.
+
+        [Fact]
+        public void AllSkipped_Restore_DoesNotSayBackedUp()
+        {
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, RunVerb.Restore);
+
+            Assert.DoesNotContain("backed up", s.Headline, System.StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("back up", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("restored", s.Headline, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void SucceededPlusSkipped_Restore_FootnoteDoesNotSayBackUp()
+        {
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, RunVerb.Restore);
+
+            Assert.DoesNotContain("back up", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("restore", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void DidNotRun_IsAWarningNotInformation()
+            => Assert.Equal(MessageBoxIcon.Warning,
+                   RunSummary.For(new List<ModuleResult>(), false, RunVerb.Restore).Icon);
+
         [Fact]
         public void Problems_DetailNamesEveryFailedModule()
         {
@@ -2972,8 +3016,13 @@ namespace Appcopier
         public string Headline { get; private set; }
         public string Detail { get; private set; }
 
+        // DidNotRun is a warning, not information: the user picked a backup folder and it was not
+        // there, so they asked for something and did not get it. Only Done and NothingDone are
+        // genuinely informational.
         public MessageBoxIcon Icon
-            => State == RunState.Problems ? MessageBoxIcon.Warning : MessageBoxIcon.Information;
+            => State == RunState.Problems || State == RunState.DidNotRun
+                ? MessageBoxIcon.Warning
+                : MessageBoxIcon.Information;
 
         internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)
         {
@@ -3008,8 +3057,8 @@ namespace Appcopier
                 return new RunSummary
                 {
                     State = RunState.NothingDone,
-                    Headline = "Nothing was backed up.",
-                    Detail = "None of the selected items were present on this system."
+                    Headline = "Nothing was " + verb.PastLower + ".",
+                    Detail = "None of the selected items had anything to " + verb.Infinitive + "."
                 };
             }
 
@@ -3019,8 +3068,8 @@ namespace Appcopier
 
             if (skipped.Length > 0)
             {
-                detail += string.Format("\r\n\r\n{0} item(s) had nothing to back up on this system.",
-                    skipped.Length);
+                detail += string.Format("\r\n\r\n{0} item(s) had nothing to {1}.",
+                    skipped.Length, verb.Infinitive);
             }
 
             return new RunSummary
