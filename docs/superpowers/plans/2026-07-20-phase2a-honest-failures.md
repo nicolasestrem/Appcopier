@@ -516,7 +516,14 @@ git commit -m "Add LogHelper.LogMessage so reason strings with braces are not si
 
 **Interfaces:**
 - Consumes: `StepResult` (Task 1).
-- Produces: `Appcopier.RegFile` with `internal static RegFileCheck Validate(string path)` returning `RegFileCheck { Valid, Missing, Empty, BadHeader }`, and `internal const string Header = "Windows Registry Editor Version 5.00"`.
+- Produces: `Appcopier.RegFile` with `internal static RegFileCheck Validate(string path, out string error)` and a one-argument overload `Validate(string path)`, returning `RegFileCheck { Valid, Missing, Empty, BadHeader, Unreadable }`, plus `internal const string Header = "Windows Registry Editor Version 5.00"`.
+
+`Unreadable` exists because a file that is present but cannot be read — locked by another
+process, ACL denied, an I/O error — is **not** a malformed file. Collapsing the two would tell
+the user their backup is corrupt when they actually have a permissions problem, and it would
+contradict the rule this same design applies to registry keys: could-not-tell is its own answer,
+never folded into a verdict about the data. `error` carries the underlying message so the reason
+string can name the real cause; it is `null` for every state except `Unreadable`.
 
 Measured 2026-07-20: a real `regedit /e` export is **UTF-16LE with a BOM** (`FF FE 57 00 ...`), and `File.ReadAllText` strips the BOM so `StartsWith(Header)` is true. A byte-wise ASCII compare would *not* match. The implementation is pinned to `File.ReadAllText`.
 
@@ -630,6 +637,45 @@ namespace Appcopier.Tests
 
             Assert.Equal(RegFileCheck.BadHeader, RegFile.Validate(p));
         }
+
+        // A present-but-unreadable file says NOTHING about its contents. Reporting it as
+        // BadHeader would tell the user their backup is corrupt when it may be perfectly good
+        // and merely locked.
+        [Fact]
+        public void Validate_LockedFile_IsUnreadableNotBadHeader()
+        {
+            string p = Write("locked.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            using (new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Assert.Equal(RegFileCheck.Unreadable, RegFile.Validate(p));
+            }
+        }
+
+        [Fact]
+        public void Validate_LockedFile_ReportsWhyItCouldNotBeRead()
+        {
+            string p = Write("locked2.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            using (new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                string error;
+                RegFile.Validate(p, out error);
+
+                Assert.False(string.IsNullOrWhiteSpace(error));
+            }
+        }
+
+        [Fact]
+        public void Validate_ReadableFile_ReportsNoError()
+        {
+            string p = Write("clean.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            string error;
+            RegFile.Validate(p, out error);
+
+            Assert.Null(error);
+        }
     }
 }
 ```
@@ -654,7 +700,10 @@ namespace Appcopier
         Valid,
         Missing,
         Empty,
-        BadHeader
+        BadHeader,
+
+        /// <summary>Present, but we could not read it. Says nothing about its contents.</summary>
+        Unreadable
     }
 
     /// <summary>
@@ -671,6 +720,14 @@ namespace Appcopier
 
         internal static RegFileCheck Validate(string path)
         {
+            string ignored;
+            return Validate(path, out ignored);
+        }
+
+        internal static RegFileCheck Validate(string path, out string error)
+        {
+            error = null;
+
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 return RegFileCheck.Missing;
 
@@ -683,11 +740,14 @@ namespace Appcopier
                 // header would NOT match. Pinned to this call deliberately.
                 text = File.ReadAllText(path);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Unreadable is not the same as absent, but for the caller's purposes both mean
-                // "cannot be used", and the caller reports the path either way.
-                return RegFileCheck.BadHeader;
+                // NOT BadHeader. We did not read the contents, so we know nothing about them -
+                // saying "not a valid .reg file" here would send someone hunting for a corrupt
+                // backup when what they have is a locked file or a permissions problem. Same rule
+                // this design applies to registry keys: could-not-tell is its own answer.
+                error = ex.Message;
+                return RegFileCheck.Unreadable;
             }
 
             if (string.IsNullOrWhiteSpace(text))
@@ -1270,7 +1330,9 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
 
-            switch (RegFile.Validate(filePath))
+            string readError;
+
+            switch (RegFile.Validate(filePath, out readError))
             {
                 case RegFileCheck.Missing:
                     return StepResult.Failed(registryPath, "regedit reported success but wrote no file");
@@ -1278,6 +1340,8 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
                     return StepResult.Failed(registryPath, "regedit wrote an empty file");
                 case RegFileCheck.BadHeader:
                     return StepResult.Failed(registryPath, "the exported file is not a valid .reg file");
+                case RegFileCheck.Unreadable:
+                    return StepResult.Failed(registryPath, "could not read back the exported file: " + readError);
                 default:
                     return StepResult.Succeeded(registryPath, "exported " + registryPath);
             }
@@ -1297,9 +1361,9 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
         {
             tool = tool ?? DefaultRegistryTool;
 
-            RegFileCheck check = RegFile.Validate(filePath);
+            string readError;
 
-            switch (check)
+            switch (RegFile.Validate(filePath, out readError))
             {
                 case RegFileCheck.Missing:
                     return StepResult.Skipped(registryPath, "nothing was backed up for this item");
@@ -1307,6 +1371,11 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
                     return StepResult.Failed(registryPath, "the backed-up file is empty - not importing it");
                 case RegFileCheck.BadHeader:
                     return StepResult.Failed(registryPath, "the backed-up file is not a valid .reg file - not importing it");
+                case RegFileCheck.Unreadable:
+                    // Deliberately NOT worded as "invalid". We could not read it, so we do not know
+                    // whether it is valid - and a locked or ACL-denied file is a different problem
+                    // for the user to fix than a corrupt one.
+                    return StepResult.Failed(registryPath, "could not read the backed-up file: " + readError);
             }
 
             ProcessOutcome outcome = tool.Import(filePath);
