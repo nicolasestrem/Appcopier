@@ -39,7 +39,7 @@ Every task's requirements implicitly include this section.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Appcopier.ResultState { Succeeded, Skipped, Failed }`; `Appcopier.StepResult` with `string Target`, `ResultState State`, `string Reason` and static factories `Succeeded(string target, string reason)`, `Skipped(string target, string reason)`, `Failed(string target, string reason)`, `Applied(string target, string reason)`; `Appcopier.ModuleResult` with `ResultState State`, `string Reason`, `IReadOnlyList<StepResult> Steps` and the single static factory `Aggregate(IReadOnlyList<StepResult> steps)`.
+- Produces: `Appcopier.ResultState { Succeeded, Skipped, Failed }`; `Appcopier.StepResult` with `string Target`, `ResultState State`, `string Reason` and static factories `Succeeded(string target, string reason)`, `Skipped(string target, string reason)`, `Failed(string target, string reason)`, `Applied(string target, string what)`; `Appcopier.ModuleResult` with `ResultState State`, `string Reason`, `IReadOnlyList<StepResult> Steps` and the single static factory `Aggregate(IReadOnlyList<StepResult> steps)`.
 
 The `Results/` folder is new. The SDK project globs `**/*.cs`, so no csproj change is needed.
 
