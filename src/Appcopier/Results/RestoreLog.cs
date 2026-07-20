@@ -102,20 +102,25 @@ namespace Appcopier
             }
 
             // RequiresOverride means the gate stopped the restore and the user pushed past it: the
-            // restore happened DESPITE the snapshot, not on the strength of it. NothingCaptured
-            // proceeds without an override, but claiming a snapshot "completed" there would send a
-            // user who needs to roll back to an empty folder - its own summary says it plainly.
-            bool summaryIsTheHeadline =
-                !snapshot.RequiresOverride && snapshot.Verdict == SnapshotVerdict.NothingCaptured;
+            // restore happened DESPITE the snapshot, not on the strength of it.
+            //
+            // Everything else defers to the verdict, and ONLY Complete may say the snapshot
+            // completed. Stated as an allowlist rather than by excluding the states that must not
+            // claim it, because excluding them is what went wrong: PartiallyCaptured was added to
+            // the gate and inherited the completion line by default, so a restore that overwrote
+            // items the snapshot had nothing to save for was recorded as fully protected. A verdict
+            // added later must fall back to its own summary, not to a claim nobody checked.
+            bool claimsCompletion =
+                !snapshot.RequiresOverride && snapshot.Verdict == SnapshotVerdict.Complete;
 
             if (snapshot.RequiresOverride)
                 yield return NoSnapshotWarning;
-            else if (summaryIsTheHeadline)
-                yield return "# " + snapshot.Summary;
-            else
+            else if (claimsCompletion)
                 yield return SnapshotTakenLine;
+            else
+                yield return "# " + snapshot.Summary;
 
-            if (!summaryIsTheHeadline)
+            if (claimsCompletion || snapshot.RequiresOverride)
                 yield return "# " + snapshot.Summary;
 
             for (int i = 0; i < snapshot.Failures.Count; i++)

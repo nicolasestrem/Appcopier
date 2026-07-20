@@ -37,6 +37,14 @@ namespace Appcopier.Tests
         private static SnapshotDecision NothingCaptured()
             => SnapshotGate.Evaluate(new ModuleOutcome[0]);
 
+        // One item saved, one with nothing to save. The restore overwrites both.
+        private static SnapshotDecision PartiallyCaptured()
+            => SnapshotGate.Evaluate(new[]
+            {
+                new ModuleOutcome("Mouse", ModuleResult.Aggregate(new[] { StepResult.Succeeded("k", "exported 1 key") })),
+                new ModuleOutcome("Gaming", ModuleResult.Aggregate(new[] { StepResult.Skipped("k", "not present on this system") }))
+            });
+
         private static string Compose(SnapshotDecision snapshot, string snapshotPath = SnapshotPath)
             => RestoreLog.Compose(Modules(), Results(), "2026-07-20 - 10.02.41", Source, snapshot, snapshotPath);
 
@@ -66,6 +74,44 @@ namespace Appcopier.Tests
         [Fact]
         public void Compose_CarriesTheFidelityCaveatVerbatim()
             => Assert.Contains(RestorePlan.FidelityCaveat, Compose(Complete()));
+
+        // A partial capture must not read as a whole one. This is the line someone reads after a bad
+        // restore to find out whether anything can undo it, and PartiallyCaptured inherited the
+        // completion headline when it was added to the gate - so a restore that overwrote items with
+        // no fallback was recorded as fully protected.
+        [Fact]
+        public void Compose_PartialSnapshot_DoesNotClaimTheSnapshotCompleted()
+        {
+            SnapshotDecision partial = PartiallyCaptured();
+            string text = Compose(partial);
+
+            Assert.Equal(SnapshotVerdict.PartiallyCaptured, partial.Verdict);
+            Assert.DoesNotContain(RestoreLog.SnapshotTakenLine, text);
+            Assert.DoesNotContain(RestoreLog.NoSnapshotWarning, text);
+
+            // What it says instead: the gate's own summary, naming the item with no fallback.
+            Assert.Contains(partial.Summary, text);
+            Assert.Contains("Gaming", text);
+        }
+
+        // The allowlist, asserted as one. Only Complete may carry the completion line, so a verdict
+        // added later cannot inherit a claim about undoability that nobody checked for it.
+        [Theory]
+        [InlineData(SnapshotVerdict.Complete, true)]
+        [InlineData(SnapshotVerdict.PartiallyCaptured, false)]
+        [InlineData(SnapshotVerdict.NothingCaptured, false)]
+        [InlineData(SnapshotVerdict.ModulesFailed, false)]
+        public void Compose_OnlyACompleteSnapshotSaysItCompleted(SnapshotVerdict verdict, bool expected)
+        {
+            SnapshotDecision snapshot =
+                verdict == SnapshotVerdict.Complete ? Complete()
+                : verdict == SnapshotVerdict.PartiallyCaptured ? PartiallyCaptured()
+                : verdict == SnapshotVerdict.NothingCaptured ? NothingCaptured()
+                : Overridden();
+
+            Assert.Equal(verdict, snapshot.Verdict);
+            Assert.Equal(expected, Compose(snapshot).Contains(RestoreLog.SnapshotTakenLine));
+        }
 
         [Fact]
         public void Compose_CarriesTheCaveatOnEveryGatePath()
