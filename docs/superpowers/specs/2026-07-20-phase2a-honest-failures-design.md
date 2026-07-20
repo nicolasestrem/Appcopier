@@ -369,6 +369,18 @@ Compensating verification:
    modules must report Failed).
 4. **Golden-file review of `backup_log.txt`** against what actually landed in the folder.
 5. Run `windows-safety-reviewer` after the `Utils` and `Conf/` changes, per `CLAUDE.md`.
+6. **The three review fixes**, added after the branch review and untestable in the suite:
+   - *App-restore dialog* — tick "Remember installed apps", restore, and confirm the dialog appears
+     **in front of** the main window and takes focus. Behind it, or a main window that still accepts
+     clicks while it is open, means the STA fix did not take.
+   - *Windows Terminal wait* — run the winget-export backup and leave the terminal window sitting
+     open. The app must stay frozen only until the 10-minute bound and then report that the export
+     did not finish; it must not require Task Manager. This also settles the `wt.exe`-is-a-launcher
+     question in `ROADMAP.md`: if `WaitForExit` returns immediately with the terminal still working,
+     the module reports "wrote no file" on a backup that then succeeds — record which happens.
+   - *`netsh` output file* — back up "Network configuration" twice into the same folder with the
+     first `.txt` held open by another process. The second run must report a failed backup, and no
+     `netsh.exe` may survive it (check Task Manager).
 
 That an unelevated run now reports `Failed` for the HKLM modules instead of silently doing nothing is a
 headline improvement of this phase, and it is observable *only* by running unelevated on real hardware.
