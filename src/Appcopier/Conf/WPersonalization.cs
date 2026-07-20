@@ -61,7 +61,7 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
+                string outputFileName = Path.Combine(path, RegFileNameFor(k));
                 steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
 
@@ -74,7 +74,7 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
+                string inputFileName = Path.Combine(path, RegFileNameFor(k));
                 steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
 
@@ -89,11 +89,5 @@ namespace Conf
         // is never marked red.
         private static bool AbsenceIsNormal(string key)
             => key.EndsWith(@"\Accent", System.StringComparison.OrdinalIgnoreCase);
-
-        // Helper method to create a safe file name from registry key
-        private string GetSafeFileName(string registryKey)
-        {
-            return registryKey.Replace("\\", "_").Replace(":", "_").Replace("/", "_").Replace("*", "_").Replace("?", "_").Replace("\"", "_");
-        }
     }
 }

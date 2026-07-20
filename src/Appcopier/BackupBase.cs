@@ -41,6 +41,62 @@ namespace Appcopier
         public virtual bool HasBackupIn(string restorePath) => true;
 
         /// <summary>
+        /// The backup file this module writes for one registry key.
+        /// </summary>
+        /// <remarks>
+        /// A loop over N keys must produce N distinct filenames. Six modules each carried their own
+        /// copy of this line, and the seventh - WThemes - built the name from the Title alone inside
+        /// a foreach over its keys, so every key resolved to one file. That was harmless only while
+        /// it had a single key, and the fix for its other defect was to add a second one.
+        ///
+        /// What made it worth writing once rather than fixing in place: with two keys the second
+        /// export deletes the first (Utils.TryDeleteExport) and writes over it while both steps
+        /// report Succeeded, and the restore imports that one file once per key while the
+        /// post-import probe finds every key present, because the keys exist on the live machine
+        /// regardless of what the file contained. Every row green, one key never captured.
+        /// </remarks>
+        protected virtual string RegFileNameFor(string key)
+            => $"{Title}_{GetSafeFileName(key)}.reg";
+
+        /// <summary>
+        /// The names a restore may look for, in order, for one key.
+        /// </summary>
+        /// <remarks>
+        /// Element 0 is always what <see cref="RegFileNameFor"/> writes, so the reader cannot
+        /// disagree with the writer about what this build produces. A module whose key path changed
+        /// - and whose filename therefore changed with it, because the name is derived from the key
+        /// - overrides THIS to offer the older name as a later candidate, never the writer.
+        ///
+        /// Nothing overrides it yet. It exists as a pair with RegFileNameFor because a single-string
+        /// seam cannot express a restore-side fallback at all, and discovering that later would mean
+        /// either forking the seam or bypassing it - which is how export and import drifted apart in
+        /// the first place.
+        /// </remarks>
+        protected virtual IReadOnlyList<string> RegFileNamesToTryOnRestore(string key)
+            => new[] { RegFileNameFor(key) };
+
+        /// <summary>
+        /// Turns a registry key path or folder name into something usable as a filename.
+        /// </summary>
+        /// <remarks>
+        /// Hoisted from six identical private copies. They differed only in the order of the
+        /// Replace calls, which cannot matter here: every replacement maps to the same character,
+        /// and no replacement produces a character another one searches for.
+        /// </remarks>
+        protected static string GetSafeFileName(string value)
+        {
+            if (value == null)
+                return string.Empty;
+
+            return value.Replace("\\", "_")
+                        .Replace(":", "_")
+                        .Replace("/", "_")
+                        .Replace("*", "_")
+                        .Replace("?", "_")
+                        .Replace("\"", "_");
+        }
+
+        /// <summary>
         /// Whether this module may ask the user a question while backing up.
         /// </summary>
         /// <remarks>

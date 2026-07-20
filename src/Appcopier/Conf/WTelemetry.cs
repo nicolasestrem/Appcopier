@@ -58,7 +58,7 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
+                string outputFileName = Path.Combine(path, RegFileNameFor(k));
                 steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
 
@@ -71,7 +71,7 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
+                string inputFileName = Path.Combine(path, RegFileNameFor(k));
                 steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
 
@@ -84,11 +84,5 @@ namespace Conf
         // probed on the development machine and found PRESENT, so this is not a claim that they are
         // typically missing - only that their absence is a legitimate state and not a failure.
         private static bool AbsenceIsNormal(string key) => true;
-
-        // Helper method to create a safe file name from registry key
-        private string GetSafeFileName(string registryKey)
-        {
-            return registryKey.Replace("\\", "_").Replace(":", "_").Replace("/", "_").Replace("*", "_").Replace("?", "_").Replace("\"", "_");
-        }
     }
 }

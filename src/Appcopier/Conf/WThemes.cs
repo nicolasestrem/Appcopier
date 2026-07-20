@@ -27,7 +27,7 @@ namespace Conf
             Folders.Add(Data.WindowsFolder + "\\Web\\Wallpaper");
             Folders.Add(Data.RoamingAppData + "\\Microsoft\\Windows\\Themes");
 
-            Keys.Add(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes");
+            Keys.Add(LegacyNamedKey);
         }
 
         public override bool IsInstalled()
@@ -99,7 +99,7 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                steps.Add(Utils.ExportRegistryKey(Path.Combine(path, Title + ".reg"), k, false));
+                steps.Add(Utils.ExportRegistryKey(Path.Combine(path, RegFileNameFor(k)), k, AbsenceIsNormal(k)));
             }
 
             return ModuleResult.Aggregate(steps);
@@ -123,16 +123,28 @@ namespace Conf
 
             foreach (string k in Keys)
             {
-                steps.Add(Utils.ImportRegistryKey(Path.Combine(path, Title + ".reg"), k));
+                steps.Add(Utils.ImportRegistryKey(Path.Combine(path, RegFileNameFor(k)), k));
             }
 
             return ModuleResult.Aggregate(steps);
         }
 
-        // Helper method to create a safe folder name from folder path
-        private string GetSafeFileName(string folderPath)
-        {
-            return folderPath.Replace(":", "_").Replace("\\", "_").Replace("/", "_").Replace("*", "_").Replace("?", "_").Replace("\"", "_");
-        }
+        // False for every key: the Themes key is written at first logon and Control Panel\Desktop
+        // exists in every user profile, so an absent one is a real fault rather than a machine that
+        // simply never had it. Same judgement the folder copies above make, stated per key so a key
+        // added later has to answer the question rather than inherit an answer.
+        private static bool AbsenceIsNormal(string key) => false;
+
+        /// <remarks>
+        /// The theme key keeps the name it has always been written under. Nothing about that key
+        /// changed, so deriving a new name from it would orphan the file in every backup already on
+        /// disk for no gain. Keys added since take the key-derived default, which is what makes them
+        /// distinguishable from this one and from each other.
+        /// </remarks>
+        protected override string RegFileNameFor(string key)
+            => key == LegacyNamedKey ? Title + ".reg" : base.RegFileNameFor(key);
+
+        private const string LegacyNamedKey =
+            @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes";
     }
 }
