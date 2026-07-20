@@ -22,24 +22,48 @@ namespace Conf
 
             try
             {
-                // Execute netsh command to export Wi-Fi profiles to a file
+                // ConfPageView passes the shared backup root, and other modules write their own
+                // files into the same folder, so a bare "how many .xml files are there now" count
+                // is meaningless. Snapshot before and after the export and count only what netsh
+                // itself wrote this run.
+                //
+                // Snapshotting by last-write-time, not just presence: CurrentBackupPath is the same
+                // folder for every Backup click within one app session (ConfPageView.cs builds it
+                // from Data.NowShort, a static field stamped once at process start), so a second
+                // Backup click re-exports into files that already exist from the first. A pure
+                // "did this filename exist before" check would then see zero new files and report a
+                // real, successful re-export as Failed.
+                Dictionary<string, DateTime> before = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+                foreach (string file in Directory.GetFiles(path, "*.xml"))
+                    before[file] = File.GetLastWriteTimeUtc(file);
+
                 int exitCode = ExecuteNetshCommand($"wlan export profile key=clear folder=\"{path.TrimEnd('\\')}\""); // remove trailing backslash from path
+
+                string[] after = Directory.GetFiles(path, "*.xml");
+                int added = 0;
+                foreach (string file in after)
+                {
+                    DateTime previousWrite;
+                    bool existedBefore = before.TryGetValue(file, out previousWrite);
+
+                    if (!existedBefore || File.GetLastWriteTimeUtc(file) > previousWrite)
+                        added++;
+                }
 
                 if (exitCode != 0)
                 {
                     steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
                 }
+                else if (added == 0)
+                {
+                    // netsh has been measured printing "saved successfully" with exit code 0 while
+                    // writing nothing (the export path was too long for it). A zero exit code alone
+                    // is not evidence of success.
+                    steps.Add(StepResult.Failed(Title, "netsh reported success but wrote no Wi-Fi profile files"));
+                }
                 else
                 {
-                    // netsh writes one XML per profile, so counting them is the only evidence that
-                    // anything was exported. The previous check was Directory.Exists(path) on the
-                    // backup folder this app had just created, which was true no matter what netsh
-                    // did - it could not have reported a failure.
-                    string[] profiles = Directory.GetFiles(path, "*.xml");
-
-                    steps.Add(profiles.Length > 0
-                        ? StepResult.Succeeded(Title, $"exported {profiles.Length} Wi-Fi profile(s)")
-                        : StepResult.Skipped(Title, "there are no saved Wi-Fi profiles on this system"));
+                    steps.Add(StepResult.Succeeded(Title, $"exported {added} Wi-Fi profile(s)"));
                 }
             }
             catch (Exception ex)
@@ -56,26 +80,30 @@ namespace Conf
 
             try
             {
-                // Search for a file in the specified folder that starts with "wlan" and has an XML extension
-                //
-                // KNOWN DEFECT, left in place deliberately: netsh names these files after the
-                // profile ("Wi-Fi-MyNetwork.xml"), so this filter matches almost nothing, and even
-                // when it does only the first profile is restored. Fixing the selection is a later
-                // task; this change makes the module report what it did rather than claim success.
-                string[] xmlFiles = Directory.GetFiles(path, "WLAN*.xml");
+                // Selection is by content, not filename: netsh names exports
+                // "<interface name>-<SSID>.xml", and the interface name is machine-specific and
+                // localised, so no filename pattern can be relied on. WlanProfile.FindIn parses
+                // each *.xml and keeps only the ones whose root element is WLANProfile.
+                string[] xmlFiles = WlanProfile.FindIn(path);
 
-                if (xmlFiles.Length > 0)
+                if (xmlFiles.Length == 0)
                 {
-                    // Import first found XML file
-                    int exitCode = ExecuteNetshCommand($"wlan add profile filename=\"{xmlFiles[0]}\"");
-
-                    steps.Add(exitCode == 0
-                        ? StepResult.Applied(Title, Path.GetFileName(xmlFiles[0]))
-                        : StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
+                    // The user selected this module for restore; there being nothing usable in the
+                    // backup is a failure to deliver what they asked for, not something to skip.
+                    steps.Add(StepResult.Failed(Title, "no Wi-Fi profile files were found in this backup"));
                 }
                 else
                 {
-                    steps.Add(StepResult.Skipped(Title, "no matching Wi-Fi profile file was found in this backup"));
+                    // Import every matching profile, not just the first - a backup folder holds one
+                    // XML per network, and stopping at the first entry discarded all the others.
+                    foreach (string xmlFile in xmlFiles)
+                    {
+                        int exitCode = ExecuteNetshCommand($"wlan add profile filename=\"{xmlFile}\"");
+
+                        steps.Add(exitCode == 0
+                            ? StepResult.Applied(Title, Path.GetFileName(xmlFile))
+                            : StepResult.Failed(Path.GetFileName(xmlFile), $"netsh exited with code {exitCode}"));
+                    }
                 }
             }
             catch (Exception ex)
