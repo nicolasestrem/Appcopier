@@ -2153,7 +2153,7 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
                 catch (System.ComponentModel.Win32Exception ex)
                 {
                     logger.LogMessage("Could not close " + processName + ": " + ex.Message);
-                    worst = CloseResult.AccessDenied;
+                    worst = Worse(worst, CloseResult.AccessDenied);
                 }
                 catch (InvalidOperationException)
                 {
@@ -2162,7 +2162,7 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
                 catch (Exception ex)
                 {
                     logger.LogMessage("Could not close " + processName + ": " + ex.Message);
-                    worst = CloseResult.StillRunning;
+                    worst = Worse(worst, CloseResult.StillRunning);
                 }
                 finally
                 {
@@ -2171,6 +2171,30 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
             }
 
             return worst;
+        }
+
+        /// <summary>
+        /// Keeps the more severe of two close outcomes.
+        /// </summary>
+        /// <remarks>
+        /// Plain assignment would be last-write-wins, which quietly downgrades. A browser is a tree
+        /// of child processes and mixed outcomes across them are ordinary: if one child is
+        /// access-denied and a later one merely fails to die, straight assignment reports the
+        /// milder result and the caller decides it may safely copy files that are still locked.
+        /// </remarks>
+        private static CloseResult Worse(CloseResult a, CloseResult b)
+            => Severity(a) >= Severity(b) ? a : b;
+
+        private static int Severity(CloseResult r)
+        {
+            switch (r)
+            {
+                case CloseResult.NotRunning: return 0;
+                case CloseResult.Exited: return 1;
+                case CloseResult.StillRunning: return 2;
+                case CloseResult.AccessDenied: return 3;
+                default: return 3;
+            }
         }
 
         /// <summary>
