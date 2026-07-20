@@ -125,6 +125,41 @@ the persistent-logging workstream and is still open.
   target has no created handle, so in that state it touches the `RichTextBox` from whatever thread
   called it. The catch-all hides it. This is part of the persistent-logging work above.
 
+### Follow-ups left by Phase 2b
+
+Raised by the safety review of the 2b branch and deliberately not fixed there. None is reachable in
+ordinary use today; each is recorded because the reason it is unreachable is a coincidence rather
+than a guarantee.
+
+- **The Explorer auto-restart probe is taken with no settle delay.** `RestartExplorer` asks
+  `IsProcessRunning("explorer")` on the line after `CloseProcess` returns, but Windows relaunches the
+  shell through winlogon some hundreds of milliseconds later — so the probe reads absent, Appcopier
+  starts a shell, and Windows starts a second one. The guard bounds the damage to one stray window
+  (versus N before 2b) and the risk is disclosed, but as written the `RestartedByWindows` branch may
+  be close to dead code. **Measure N2 on the smoke matrix before changing anything** — if the
+  relaunch is faster than assumed, the code is already right and a speculative delay would only slow
+  the button down.
+- **`AllowPrompts` is shared mutable state.** It is set on the module instance before each backup and
+  restored in a `finally`, which is correct but depends on one caller remembering. `BackupAsync(path,
+  allowPrompts)` — or a scoped guard — removes the class rather than the instance, and would make it
+  testable at the module level instead of only through a `UserControl` the suite cannot instantiate.
+  Deferred because it is a 23-signature change that 2b explicitly chose not to make.
+- **`results` is index-aligned against `selectedConfigs` but produced by iterating `scope`.** The two
+  are parallel only because both null-filters happen to be no-ops today. If they ever diverge,
+  `restore_log.txt` attributes every outcome to the wrong module. Cheap to make structural by
+  projecting from `scope`.
+- **`RestorePlan` composition sits outside any catch** on an `async void` chain, and `Render`
+  dereferences each `RestoreTarget` unguarded. Unreachable today because every factory validates, but
+  a future module returning a list containing null would reach WinForms' unhandled-exception dialog
+  mid-restore.
+- **`SnapshotGate.Evaluate` counts an all-null outcome list as `considered == 0`**, which with no
+  blocked modules produces "none of the selected items change anything when restored" — the same
+  false sentence the blocked-count fix removed, through a different door. `ModuleOutcome.Pair` never
+  emits nulls today.
+- **A null entry in `ProcessesToCloseBeforeRestore` is handled inconsistently**: `RestoreScope` skips
+  it, `ConfPageView` dereferences it and reports the module as an unhandled error. The asymmetry
+  fails closed, which is the right direction, but the message is not one a user can act on.
+
 ### Phase 2c — known module bugs
 
 Each of these becomes *visible* once 2a lands, which is why they follow rather than lead.
