@@ -2182,10 +2182,16 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
         /// access-denied and a later one merely fails to die, straight assignment reports the
         /// milder result and the caller decides it may safely copy files that are still locked.
         /// </remarks>
-        private static CloseResult Worse(CloseResult a, CloseResult b)
+        /// <remarks>
+        /// Internal rather than private so tests can call THIS function. A test that reimplements
+        /// the comparison locally and asserts on its own copy passes even when the production code
+        /// reverts to plain assignment - it verifies the reimplementation, not the shipped
+        /// behaviour, which is precisely the bug this method exists to prevent.
+        /// </remarks>
+        internal static CloseResult Worse(CloseResult a, CloseResult b)
             => Severity(a) >= Severity(b) ? a : b;
 
-        private static int Severity(CloseResult r)
+        internal static int Severity(CloseResult r)
         {
             switch (r)
             {
