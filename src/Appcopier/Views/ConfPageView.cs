@@ -240,6 +240,15 @@ namespace Views
                         StepResult.Failed(module.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
                     });
                 }
+                finally
+                {
+                    // Always back to asking. These module instances live in the tree for the life of
+                    // the window, so a suppression left set by a snapshot would still be set the next
+                    // time the user pressed Backup - and that module would then close their browser
+                    // without asking. Restoring the permissive value is the safe direction to fail
+                    // in: the worst it costs is a prompt the caller meant to suppress.
+                    module.AllowPrompts = true;
+                }
 
                 results.Add(outcome);
 
