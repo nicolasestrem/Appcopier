@@ -842,6 +842,26 @@ namespace Appcopier.Tests
         [Fact]
         public void KeyExists_MalformedKey_ReturnsFalseInsteadOfThrowing()
             => Assert.False(Utils.KeyExists(@"NOT_A_HIVE\whatever"));
+
+        // --- Indeterminate: the state this task exists to create ---
+        //
+        // HKLM\SECURITY is ACL-restricted to SYSTEM, so OpenSubKey throws SecurityException for
+        // standard users AND for administrators. Verified on this machine, 2026-07-20, unelevated.
+        // Without this test the catch blocks - the only genuinely new logic here - have no coverage
+        // at all, and the Absent-vs-Indeterminate distinction rests entirely on a code comment.
+        //
+        // NOTE for anyone seeing this fail: that means the key became readable, not that ProbeKey
+        // regressed. Check the hive's ACL before changing the assertion.
+
+        [Fact]
+        public void ProbeKey_AccessDeniedKey_IsIndeterminateNotAbsent()
+            => Assert.Equal(KeyProbe.Indeterminate, Utils.ProbeKey(@"HKEY_LOCAL_MACHINE\SECURITY"));
+
+        // The deliberate asymmetry: the backup path treats Indeterminate as a failure, but the
+        // tree-build shim must map it to false, so an unprobeable module is never auto-selected.
+        [Fact]
+        public void KeyExists_AccessDeniedKey_IsFalse()
+            => Assert.False(Utils.KeyExists(@"HKEY_LOCAL_MACHINE\SECURITY"));
     }
 }
 ```
@@ -911,19 +931,34 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace the whole block from `// Re
                     return opened != null ? KeyProbe.Present : KeyProbe.Absent;
                 }
             }
-            catch (System.Security.SecurityException)
+            catch (System.Security.SecurityException ex)
             {
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException ex)
             {
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // A malformed path or an unexpected provider error. Not knowing is the honest answer.
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
+        }
+
+        /// <summary>
+        /// Records why a key could not be probed, then reports that we could not tell.
+        /// </summary>
+        /// <remarks>
+        /// The logging is the point of the helper. Returning Indeterminate without recording the
+        /// cause would leave the user with "could not read this key" and no way to learn whether
+        /// that was a permission problem, a malformed path, or a provider fault - which is the same
+        /// silent discard this whole phase exists to remove.
+        /// </remarks>
+        private static KeyProbe Undetermined(string key, Exception ex)
+        {
+            logger.LogMessage("Could not probe " + key + ": " + ex.Message);
+            return KeyProbe.Indeterminate;
         }
 ```
 
