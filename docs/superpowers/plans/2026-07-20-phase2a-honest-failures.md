@@ -1918,55 +1918,54 @@ namespace Appcopier
 }
 ```
 
-- [ ] **Step 2: Migrate the 10 shape-S1 modules**
+- [ ] **Step 2a: Extract the `RegistryModule` base**
 
-Every S1 module has exactly one registry key and writes `{Title}.reg`. Here is `WAccessibility` in full — the reference implementation:
+The 10 S1 modules differ only in a key, a title, an info string and one boolean. Writing that logic
+ten times would duplicate it ten times and then delete it in Phase 3, so it is extracted now.
+
+Create `src/Appcopier/Conf/RegistryModule.cs`:
 
 ```csharp
 using Appcopier;
-using System.Collections.Generic;
 using System.IO;
 
 namespace Conf
 {
-    public class WAccessibility : BackupBase
+    /// <summary>
+    /// A module that backs up exactly one registry key to <c>{Title}.reg</c>.
+    /// </summary>
+    /// <remarks>
+    /// Ten modules share this shape. The subclass supplies data - a key, whether that key can
+    /// legitimately be absent - and inherits the decision logic, so the Skipped-vs-Failed rule is
+    /// written once and cannot drift between modules that are supposed to behave identically.
+    /// </remarks>
+    public abstract class RegistryModule : BackupBase
     {
-        public string Key = @"HKEY_CURRENT_USER\Control Panel\Accessibility";
+        /// <summary>The single registry key this module captures.</summary>
+        protected abstract string Key { get; }
 
-        // Whether this key can legitimately be missing on a healthy Windows 11 install. Core
-        // per-profile Control Panel key, so its absence means something is wrong.
-        private const bool AbsenceIsNormal = false;
+        /// <summary>
+        /// Whether this key can legitimately be missing on a healthy Windows 11 install.
+        /// </summary>
+        /// <remarks>
+        /// Getting this wrong is the cry-wolf failure in either direction: false on a key that is
+        /// often absent marks healthy machines red, true on a core key hides a real problem.
+        /// </remarks>
+        protected abstract bool AbsenceIsNormal { get; }
 
-        public WAccessibility()
-        {
-            Title = "Accessibility";
-            Info = "This will back up Windows Accessibility settings.";
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
+        public override bool IsInstalled() => Utils.KeyExists(Key);
 
         public override ModuleResult Backup(string path)
-        {
-            List<StepResult> steps = new List<StepResult>
+            => ModuleResult.Aggregate(new[]
             {
                 Utils.ExportRegistryKey(FileFor(path), Key, AbsenceIsNormal)
-            };
-
-            return ModuleResult.Aggregate(steps);
-        }
+            });
 
         public override ModuleResult Restore(string path)
-        {
-            List<StepResult> steps = new List<StepResult>
+            => ModuleResult.Aggregate(new[]
             {
                 Utils.ImportRegistryKey(FileFor(path), Key)
-            };
-
-            return ModuleResult.Aggregate(steps);
-        }
+            });
 
         // Path.Combine rather than concatenation. Produces byte-identical paths today because
         // Data.DataRootDir and RestPageView both hand us a trailing separator, but that is a field
@@ -1976,9 +1975,35 @@ namespace Conf
 }
 ```
 
-Apply that exact structure to the other nine, changing only the class name and the `AbsenceIsNormal`
-value. **Keep each module's existing `Key` value, `Title` and `Info` verbatim** — read them from the
-file, do not retype them.
+- [ ] **Step 2b: Migrate the 10 shape-S1 modules onto it**
+
+Each becomes data only. `WAccessibility` in full — the reference implementation:
+
+```csharp
+using Appcopier;
+
+namespace Conf
+{
+    public class WAccessibility : RegistryModule
+    {
+        protected override string Key => @"HKEY_CURRENT_USER\Control Panel\Accessibility";
+
+        // Core per-profile Control Panel key, so its absence means something is wrong.
+        protected override bool AbsenceIsNormal => false;
+
+        public WAccessibility()
+        {
+            Title = "Accessibility";
+            Info = "This will back up Windows Accessibility settings.";
+        }
+    }
+}
+```
+
+**Keep each module's existing key value, `Title` and `Info` verbatim** — read them from the file, do
+not retype them. The old `public string Key = @"..."` field becomes a `protected override string Key`
+property; before changing it, grep for external readers (`grep -rn "\.Key" src/`) and report any found
+rather than silently breaking them.
 
 | Module | `AbsenceIsNormal` | Why |
 | --- | --- | --- |
@@ -2282,7 +2307,22 @@ close prompt, which was previously a bare return reported as success."
 
 **Interfaces:**
 - Consumes: `ModuleResult` (Task 1).
-- Produces: `internal enum RunState { Problems, Done, NothingDone, DidNotRun }`; `internal sealed class RunSummary` with `RunState State`, `string Headline`, `string Detail`, `MessageBoxIcon Icon`, and `internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, string verb)`.
+- Produces: `internal enum RunState { Problems, Done, NothingDone, DidNotRun }`; `internal sealed class RunSummary` with `RunState State`, `string Headline`, `string Detail`, `MessageBoxIcon Icon`, and `internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)`.
+
+`RunVerb` carries **two** words because one cannot serve both sentences: the success headline needs a past-tense verb ("Backed up 3 items") while the did-not-run message needs a noun ("Restore did not run"). A single string produces "Restored did not run."
+
+```csharp
+internal sealed class RunVerb
+{
+    public string Past { get; }   // "Backed up" / "Restored"
+    public string Noun { get; }   // "Backup"    / "Restore"
+
+    private RunVerb(string past, string noun) { Past = past; Noun = noun; }
+
+    public static readonly RunVerb Backup = new RunVerb("Backed up", "Backup");
+    public static readonly RunVerb Restore = new RunVerb("Restored", "Restore");
+}
+```
 
 Four states replace the two the app has. **Skipped counts are never summed into the failure count.**
 
@@ -2306,23 +2346,23 @@ namespace Appcopier.Tests
         [Fact]
         public void AnyFailure_IsProblems()
             => Assert.Equal(RunState.Problems,
-                   RunSummary.For(new List<ModuleResult> { Ok(), Bad() }, true, "Back up").State);
+                   RunSummary.For(new List<ModuleResult> { Ok(), Bad() }, true, RunVerb.Backup).State);
 
         [Fact]
         public void AllSucceeded_IsDone()
             => Assert.Equal(RunState.Done,
-                   RunSummary.For(new List<ModuleResult> { Ok(), Ok() }, true, "Back up").State);
+                   RunSummary.For(new List<ModuleResult> { Ok(), Ok() }, true, RunVerb.Backup).State);
 
         [Fact]
         public void SucceededPlusSkipped_IsDoneNotProblems()
             => Assert.Equal(RunState.Done,
-                   RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, "Back up").State);
+                   RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, RunVerb.Backup).State);
 
         // The whole point: absences must never be counted as failures.
         [Fact]
         public void SucceededPlusSkipped_HeadlineDoesNotClaimAProblem()
         {
-            RunSummary s = RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, "Back up");
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Ok(), Skip() }, true, RunVerb.Backup);
 
             Assert.DoesNotContain("problem", s.Headline, System.StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("fail", s.Headline, System.StringComparison.OrdinalIgnoreCase);
@@ -2331,33 +2371,49 @@ namespace Appcopier.Tests
         [Fact]
         public void AllSkipped_IsNothingDone()
             => Assert.Equal(RunState.NothingDone,
-                   RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, "Back up").State);
+                   RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, RunVerb.Backup).State);
 
         // The old code said "Back up done." here. It must not.
         [Fact]
         public void AllSkipped_NeverSaysDone()
         {
-            RunSummary s = RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, "Back up");
-            Assert.DoesNotContain("Back up done", s.Headline);
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Skip(), Skip() }, true, RunVerb.Backup);
+            Assert.DoesNotContain("done", s.Headline, System.StringComparison.OrdinalIgnoreCase);
         }
 
         // The silent no-op at ConfPageView.cs:185.
         [Fact]
         public void NotRun_IsDidNotRun()
             => Assert.Equal(RunState.DidNotRun,
-                   RunSummary.For(new List<ModuleResult>(), false, "Restore").State);
+                   RunSummary.For(new List<ModuleResult>(), false, RunVerb.Restore).State);
 
         [Fact]
         public void NotRun_SaysItDidNotRun()
         {
-            RunSummary s = RunSummary.For(new List<ModuleResult>(), false, "Restore");
+            RunSummary s = RunSummary.For(new List<ModuleResult>(), false, RunVerb.Restore);
             Assert.Contains("did not run", s.Detail, System.StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The verb must read correctly in BOTH sentences. A single string cannot do it:
+        // the past tense that makes "Backed up 3 items" work yields "Restored did not run."
+        [Fact]
+        public void NotRun_HeadlineReadsAsASentence()
+        {
+            Assert.Equal("Restore did not run.",
+                RunSummary.For(new List<ModuleResult>(), false, RunVerb.Restore).Headline);
+        }
+
+        [Fact]
+        public void Done_HeadlineUsesThePastTense()
+        {
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Ok() }, true, RunVerb.Restore);
+            Assert.StartsWith("Restored", s.Headline);
         }
 
         [Fact]
         public void Problems_DetailNamesEveryFailedModule()
         {
-            RunSummary s = RunSummary.For(new List<ModuleResult> { Bad(), Bad(), Ok() }, true, "Back up");
+            RunSummary s = RunSummary.For(new List<ModuleResult> { Bad(), Bad(), Ok() }, true, RunVerb.Backup);
             Assert.Contains("access denied", s.Detail);
             Assert.Contains("2", s.Headline);
         }
@@ -2406,15 +2462,15 @@ namespace Appcopier
         public MessageBoxIcon Icon
             => State == RunState.Problems ? MessageBoxIcon.Warning : MessageBoxIcon.Information;
 
-        internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, string verb)
+        internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)
         {
             if (!ran)
             {
                 return new RunSummary
                 {
                     State = RunState.DidNotRun,
-                    Headline = verb + " did not run.",
-                    Detail = verb + " did not run because the backup folder could not be found."
+                    Headline = verb.Noun + " did not run.",
+                    Detail = verb.Noun + " did not run because the backup folder could not be found."
                 };
             }
 
@@ -2457,7 +2513,7 @@ namespace Appcopier
             return new RunSummary
             {
                 State = RunState.Done,
-                Headline = string.Format("{0} {1} item(s).", verb, ok.Length),
+                Headline = string.Format("{0} {1} item(s).", verb.Past, ok.Length),
                 Detail = detail
             };
         }
@@ -2470,7 +2526,7 @@ namespace Appcopier
 Replace the unconditional block at `ConfPageView.cs:148-149`:
 
 ```csharp
-                RunSummary summary = RunSummary.For(results, true, "Backed up");
+                RunSummary summary = RunSummary.For(results, true, RunVerb.Backup);
 
                 logger.LogMessage(summary.Headline);
                 logger.LogMessage(summary.Detail);
@@ -2480,8 +2536,8 @@ Replace the unconditional block at `ConfPageView.cs:148-149`:
 ```
 
 And replace `HandleRestorationAfterSelection`'s unconditional "Restore done." at `:205-206` the same
-way, passing `ran: CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath)` and the verb
-`"Restored"`.
+way, passing `ran: CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath)` and
+`RunVerb.Restore`.
 
 Gate the restart banner on a `Succeeded` restore of a module that declares `RequiresExplorerRestart`,
 rather than on the declaration alone.
