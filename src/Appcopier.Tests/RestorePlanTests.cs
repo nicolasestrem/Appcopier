@@ -1,0 +1,284 @@
+using Appcopier;
+using Conf;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Xunit;
+
+namespace Appcopier.Tests
+{
+    // Decision 4: the confirmation dialog is thin, so everything it says is composed here and is
+    // asserted here. A sentence that only exists inside the Form is a sentence no test can read.
+    public class RestorePlanTests
+    {
+        private const string Source = @"C:\Appcopier\app\2026-07-19 - 11.02";
+        private const string Snapshot = @"C:\Appcopier\app\2026-07-20 - 09.31.14 (pre-restore)";
+
+        private sealed class FakeModule : BackupBase
+        {
+            private readonly IReadOnlyList<RestoreTarget> targets;
+            private readonly IReadOnlyList<RestoreCloseRequirement> closes;
+
+            public FakeModule(string title,
+                              IReadOnlyList<RestoreTarget> targets = null,
+                              IReadOnlyList<RestoreCloseRequirement> closes = null,
+                              string warning = "")
+            {
+                Title = title;
+                this.targets = targets;
+                this.closes = closes;
+                WarningMessage = warning;
+            }
+
+            public override IReadOnlyList<RestoreTarget> RestoreTargets
+                => targets ?? base.RestoreTargets;
+
+            public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+                => closes ?? base.ProcessesToCloseBeforeRestore;
+        }
+
+        private static RestorePlan PlanFor(params BackupBase[] modules)
+            => new RestorePlan(modules, Source, Snapshot);
+
+        // --- What is overwritten ---
+
+        [Fact]
+        public void ConfirmationText_NamesEverySelectedModule()
+        {
+            RestorePlan plan = PlanFor(
+                new FakeModule("Mouse", new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }),
+                new FakeModule("Touchpad", new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Software\Touchpad") }));
+
+            Assert.Contains("Mouse", plan.ConfirmationText);
+            Assert.Contains("Touchpad", plan.ConfirmationText);
+        }
+
+        [Fact]
+        public void ConfirmationText_ShowsEveryDeclaredTargetOfEveryKind()
+        {
+            RestorePlan plan = PlanFor(
+                new FakeModule("Themes", new[]
+                {
+                    RestoreTarget.Folder(@"C:\Users\me\AppData\Local\Microsoft\Windows\Themes"),
+                    RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Desktop")
+                }),
+                new FakeModule("Wi-Fi", new[]
+                {
+                    RestoreTarget.Command("runs netsh wlan add profile for every saved network")
+                }));
+
+            Assert.Contains(@"C:\Users\me\AppData\Local\Microsoft\Windows\Themes", plan.ConfirmationText);
+            Assert.Contains(@"HKEY_CURRENT_USER\Control Panel\Desktop", plan.ConfirmationText);
+            Assert.Contains("runs netsh wlan add profile for every saved network", plan.ConfirmationText);
+        }
+
+        // A module declaring several keys must show all of them: rendering only the first would
+        // understate the scope of exactly the modules whose scope is widest.
+        [Fact]
+        public void ConfirmationText_ShowsEveryKeyOfAMultiKeyModule()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Updates", new[]
+            {
+                RestoreTarget.RegistryKey(@"HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"),
+                RestoreTarget.RegistryKey(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\WindowsUpdate\UX")
+            }));
+
+            Assert.Contains(@"Policies\Microsoft\Windows\WindowsUpdate", plan.ConfirmationText);
+            Assert.Contains(@"Microsoft\WindowsUpdate\UX", plan.ConfirmationText);
+        }
+
+        // --- Warnings, shown at the moment they apply ---
+
+        [Fact]
+        public void ConfirmationText_FoldsAModulesWarningIntoItsOwnBlock()
+        {
+            RestorePlan plan = PlanFor(
+                new FakeModule("Printers",
+                    new[] { RestoreTarget.RegistryKey(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Print") },
+                    warning: "This could affect your printer configurations."),
+                new FakeModule("Mouse",
+                    new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }));
+
+            string[] lines = plan.ConfirmationText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+
+            int printers = Array.IndexOf(lines, "Printers");
+            int mouse = Array.IndexOf(lines, "Mouse");
+            int warning = Array.FindIndex(lines, l => l.Contains("This could affect your printer configurations."));
+
+            Assert.True(printers >= 0 && mouse > printers, plan.ConfirmationText);
+            Assert.InRange(warning, printers, mouse);
+        }
+
+        [Fact]
+        public void ConfirmationText_ModuleWithoutAWarning_GetsNoNoteLine()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Mouse",
+                new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }));
+
+            Assert.DoesNotContain("Note:", plan.ConfirmationText);
+        }
+
+        // --- Where things come from and go ---
+
+        [Fact]
+        public void ConfirmationText_NamesTheSourceAndTheSnapshotDestination()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Mouse",
+                new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }));
+
+            Assert.Contains(Source, plan.ConfirmationText);
+            Assert.Contains(Snapshot, plan.ConfirmationText);
+            Assert.Equal(Snapshot, plan.SnapshotDestination);
+            Assert.Equal(Source, plan.RestoreSourcePath);
+        }
+
+        // --- The caveat ---
+
+        // Verbatim, because this is the sentence that keeps "rollback" from being a stronger claim
+        // than the app can hold. A reworded copy elsewhere would be a second, weaker guarantee.
+        [Fact]
+        public void FidelityCaveat_IsWordedExactly()
+        {
+            Assert.Equal(
+                "The snapshot can put back settings this restore overwrites. It cannot remove " +
+                "registry values or files that this restore adds \u2014 restoring the snapshot " +
+                "merges it over the current state rather than resetting to it.",
+                RestorePlan.FidelityCaveat);
+        }
+
+        // The dialog shows the caveat from the constant, prominently and on its own. Composing it
+        // into the scrolling module text as well would let one copy drift from the other.
+        [Fact]
+        public void FidelityCaveat_IsNotRestatedInsideTheConfirmationText()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Mouse",
+                new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }));
+
+            Assert.DoesNotContain("merges it over the current state", plan.ConfirmationText);
+        }
+
+        // --- Consent ---
+
+        [Fact]
+        public void ConsentEntries_AreProducedForProcessesThatNeedConsent()
+        {
+            RestorePlan plan = PlanFor(
+                new FakeModule("Chrome", closes: new[] { new RestoreCloseRequirement("chrome", "Google Chrome", true) }),
+                new FakeModule("Firefox", closes: new[] { new RestoreCloseRequirement("firefox", "Mozilla Firefox", true) }));
+
+            Assert.Equal(new[] { "chrome", "firefox" }, plan.ConsentEntries.Select(e => e.ProcessName).ToArray());
+            Assert.All(plan.ConsentEntries, e => Assert.Contains(e.DisplayName, e.Label));
+        }
+
+        // Two modules naming one process is one question. Asking it twice is how a dialog teaches
+        // people to tick boxes without reading them.
+        [Fact]
+        public void ConsentEntries_AreDeduplicatedAcrossModules()
+        {
+            RestorePlan plan = PlanFor(
+                new FakeModule("Chrome profile", closes: new[] { new RestoreCloseRequirement("chrome", "Google Chrome", true) }),
+                new FakeModule("Chrome extensions", closes: new[] { new RestoreCloseRequirement("chrome", "Google Chrome", true) }));
+
+            RestoreConsentEntry only = Assert.Single(plan.ConsentEntries);
+            Assert.Equal("chrome", only.ProcessName);
+        }
+
+        [Fact]
+        public void InformationalCloses_AreTextAndNeverConsentEntries()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Pinned apps",
+                closes: new[] { new RestoreCloseRequirement("StartMenuExperienceHost", "the Start menu", false) }));
+
+            Assert.Empty(plan.ConsentEntries);
+
+            string line = Assert.Single(plan.InformationalCloseLines);
+            Assert.Contains("the Start menu", line);
+            Assert.Contains("restart itself", line);
+        }
+
+        [Fact]
+        public void InformationalCloses_AreDeduplicatedToo()
+        {
+            RestoreCloseRequirement startMenu =
+                new RestoreCloseRequirement("StartMenuExperienceHost", "the Start menu", false);
+
+            RestorePlan plan = PlanFor(
+                new FakeModule("Pinned apps", closes: new[] { startMenu }),
+                new FakeModule("Taskbar", closes: new[] { startMenu }));
+
+            Assert.Single(plan.InformationalCloseLines);
+        }
+
+        [Fact]
+        public void ModulesThatCloseNothing_ProduceNoConsentAndNoInformationalLines()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Mouse",
+                new[] { RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Mouse") }));
+
+            Assert.Empty(plan.ConsentEntries);
+            Assert.Empty(plan.InformationalCloseLines);
+        }
+
+        // --- The forgetful author ---
+
+        [Fact]
+        public void UndeclaredModule_RendersTheMarkerInTheText()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Something new"));
+
+            Assert.Contains("Something new", plan.ConfirmationText);
+            Assert.Contains(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
+        }
+
+        // An empty declaration is the same defect as a missing one, and reads worse: a module that
+        // contributes no lines looks exactly like a module that touches nothing.
+        [Fact]
+        public void ModuleDeclaringAnEmptyList_StillRendersTheMarker()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Empty declarer", new RestoreTarget[0]));
+
+            Assert.Contains(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
+        }
+
+        // --- Against the shipped modules ---
+
+        [Fact]
+        public void RealModules_ContributeTheirOwnDeclarationsWarningsAndConsent()
+        {
+            CWiFiConf wifi = new CWiFiConf();
+            BGoogleChrome chrome = new BGoogleChrome();
+
+            RestorePlan plan = PlanFor(wifi, chrome);
+
+            Assert.Contains(wifi.Title, plan.ConfirmationText);
+            Assert.Contains(wifi.WarningMessage, plan.ConfirmationText);
+            Assert.Contains(wifi.RestoreTargets.Single().Path, plan.ConfirmationText);
+            Assert.Contains(chrome.RestoreTargets.Single().Path, plan.ConfirmationText);
+            Assert.DoesNotContain(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
+
+            Assert.Equal("chrome", Assert.Single(plan.ConsentEntries).ProcessName);
+        }
+
+        // --- Construction ---
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void Plan_WithoutASourceOrASnapshotDestination_Throws(string missing)
+        {
+            Assert.Throws<ArgumentException>(() => new RestorePlan(new BackupBase[0], missing, Snapshot));
+            Assert.Throws<ArgumentException>(() => new RestorePlan(new BackupBase[0], Source, missing));
+        }
+
+        [Fact]
+        public void Plan_WithNoModules_StillStatesWhereItRestoresFromAndSnapshotsTo()
+        {
+            RestorePlan plan = new RestorePlan(null, Source, Snapshot);
+
+            Assert.Empty(plan.Modules);
+            Assert.Contains(Source, plan.ConfirmationText);
+            Assert.Contains(Snapshot, plan.ConfirmationText);
+        }
+    }
+}
