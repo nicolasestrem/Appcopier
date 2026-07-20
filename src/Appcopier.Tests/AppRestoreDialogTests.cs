@@ -230,6 +230,28 @@ namespace Appcopier.Tests
                 // A directory where a file was expected.
                 Assert.NotNull(RestAppsForm.AppExport.Read(dir));
 
+                // ...and it is Unreadable, not Absent. This is the case that pins the rule: to
+                // File.Exists a directory is indistinguishable from nothing at all, and the old
+                // Read believed it - answering "this backup contains no app export" about a path it
+                // had not been able to look inside. Absent is a claim about the folder's contents
+                // and is only earned by a read that came back saying the file is not there.
+                Assert.Equal(RestAppsForm.AppExportState.Unreadable,
+                             RestAppsForm.AppExport.Read(dir).State);
+
+                // A path whose CONTAINING FOLDER is not there is Unreadable too, and this is the
+                // narrower half of the same rule. Only a read that opened the folder and did not
+                // find the file has seen enough to call it an absence. The folder vanishing between
+                // LoadBackups enumerating it and this read means a pulled drive or a dropped network
+                // path - the world changing, not a backup that contains no apps.
+                Assert.Equal(
+                    RestAppsForm.AppExportState.Unreadable,
+                    RestAppsForm.AppExport.Read(Path.Combine(dir, "gone", "apps.json")).State);
+
+                // And the one case that IS an absence: the folder is right there, the file is not.
+                Assert.Equal(
+                    RestAppsForm.AppExportState.Absent,
+                    RestAppsForm.AppExport.Read(Path.Combine(dir, "apps.json")).State);
+
                 // A file locked by another handle.
                 string locked = Path.Combine(dir, "locked.json");
 
@@ -384,6 +406,27 @@ namespace Appcopier.Tests
         {
             foreach (CloseReason reason in Enum.GetValues<CloseReason>())
                 Assert.False(RestAppsForm.ShouldDeferClose(installing: false, reason));
+        }
+
+        /// <summary>
+        /// A closed-but-not-disposed form cannot own the install summary.
+        /// </summary>
+        /// <remarks>
+        /// This is the state both callers actually leave the form in. They open it with ShowDialog
+        /// and neither disposes it, and ShowDialog does not dispose on its own - Close on a modal
+        /// form hides it - so after any close ShouldDeferClose does not hold back, the window is
+        /// invisible while IsDisposed and Disposing are both still false. A guard testing only
+        /// disposal would pass here and raise a modal owned by an invisible window, which is the
+        /// hidden-dialog defect rather than the crash, and just as silent.
+        /// </remarks>
+        [Fact]
+        public void CanOwnADialog_AHiddenFormCannot_EvenWhenItIsNotDisposed()
+        {
+            Assert.True(RestAppsForm.CanOwnADialog(isDisposed: false, disposing: false, visible: true));
+
+            Assert.False(RestAppsForm.CanOwnADialog(isDisposed: false, disposing: false, visible: false));
+            Assert.False(RestAppsForm.CanOwnADialog(isDisposed: true, disposing: false, visible: true));
+            Assert.False(RestAppsForm.CanOwnADialog(isDisposed: false, disposing: true, visible: true));
         }
 
         // stopRequested is only read BETWEEN packages, so a wedged winget holds this dialog until

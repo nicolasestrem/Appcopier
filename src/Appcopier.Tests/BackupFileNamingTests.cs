@@ -167,6 +167,42 @@ namespace Appcopier.Tests
             Assert.Equal(
                 @"Themes_HKEY_CURRENT_USER_Control Panel_Desktop.reg",
                 FileNameFor(m, @"HKEY_CURRENT_USER\Control Panel\Desktop"));
+
+            // Registry key paths are case-insensitive, so the legacy name has to survive a differently
+            // cased spelling of the same key. Matching it case-sensitively would send that spelling to
+            // a second file while both kept exporting the one live key.
+            Assert.Equal(
+                "Themes.reg",
+                FileNameFor(m, @"hkey_current_user\software\microsoft\windows\currentversion\themes"));
+        }
+
+        /// <summary>
+        /// Every character Windows rejects in a filename is replaced, and nothing else is.
+        /// </summary>
+        /// <remarks>
+        /// The transform used to carry a hand-written list of characters, hoisted from six private
+        /// copies that had all independently missed the same ones - &lt; &gt; and | among them. It now
+        /// asks the framework, and this is what holds both halves of that: nothing invalid survives,
+        /// and no character that was previously kept has started being rewritten. The second half is
+        /// the one that matters most, because a filename that changes by one character orphans every
+        /// backup already on disk.
+        /// </remarks>
+        [Fact]
+        public void TheFileNameTransform_ReplacesEveryInvalidCharacterAndNoOthers()
+        {
+            MethodInfo safe = typeof(BackupBase).GetMethod(
+                "GetSafeFileName", BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.NotNull(safe);
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                Assert.Equal("a_b", (string)safe.Invoke(null, new object[] { "a" + c + "b" }));
+
+            // Characters a registry key really contains, none of which are invalid, all kept as-is.
+            const string keepable = @"HKEY_CURRENT_USER Control Panel-Desktop.Themes(1)[2]{3}";
+            Assert.Equal(keepable, (string)safe.Invoke(null, new object[] { keepable }));
+
+            Assert.Equal(string.Empty, (string)safe.Invoke(null, new object[] { null }));
         }
 
         // A RegFileNamesToTryOnRestore_StartsWithTheNameTheWriterProduces test lived here and has

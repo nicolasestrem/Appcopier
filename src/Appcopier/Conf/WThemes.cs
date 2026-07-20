@@ -1,5 +1,6 @@
 using Appcopier;
 using DataHelper;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -175,9 +176,15 @@ namespace Conf
         /// changed, so deriving a new name from it would orphan the file in every backup already on
         /// disk for no gain. Keys added since take the key-derived default, which is what makes them
         /// distinguishable from this one and from each other.
+        ///
+        /// Matched case-insensitively because registry key paths are: a key spelled with different
+        /// casing is the SAME key to regedit, and matching it case-sensitively would silently write
+        /// it to a second file while both spellings kept exporting the one live key.
         /// </remarks>
         protected override string RegFileNameFor(string key)
-            => key == LegacyNamedKey ? Title + ".reg" : base.RegFileNameFor(key);
+            => string.Equals(key, LegacyNamedKey, StringComparison.OrdinalIgnoreCase)
+                ? Title + ".reg"
+                : base.RegFileNameFor(key);
 
         private const string LegacyNamedKey =
             @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes";

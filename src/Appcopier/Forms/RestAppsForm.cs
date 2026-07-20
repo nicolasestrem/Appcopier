@@ -166,32 +166,64 @@ namespace Views
             /// SelectedIndex, which fires the handler that calls this - so it executes before any
             /// window exists, on a path where .NET 8 turns an escaping exception into process
             /// termination with no window ever having been shown. Everything that touches the disk
-            /// or the parser is therefore inside the catch: File.Exists throws on malformed paths,
-            /// ReadAllText throws on a locked file, a directory, or a permissions failure, and
-            /// JObject.Parse throws on anything that is not JSON.
+            /// or the parser is therefore inside a catch: ReadAllText throws on a locked file, a
+            /// directory, a malformed path or a permissions failure, and JObject.Parse throws on
+            /// anything that is not JSON.
+            ///
+            /// Absence is decided by the exception the READ raises, not by File.Exists. File.Exists
+            /// answers false for a file it was not allowed to look at, so it folds "there is nothing
+            /// here" together with "I was not allowed to find out" - and only the first of those is
+            /// normal. Believing the second one listed no apps while telling the user, in the one
+            /// line they would read, that this backup CONTAINS no app export: a claim about what is
+            /// in the folder, made without having been able to see it. Same rule the modules follow,
+            /// where a target that could not be probed is never reported as an absence.
             /// </remarks>
             internal static AppExport Read(string path)
             {
                 if (string.IsNullOrWhiteSpace(path))
                     return Absent("No app export path could be worked out, so no apps are listed.");
 
+                string json;
+
                 try
                 {
-                    if (!File.Exists(path))
-                    {
-                        // Not a problem, and not a dialog. The path is named so the log says which
-                        // folder was looked in.
-                        return Absent("This backup contains no app export (" + path +
-                                      "), so there are no apps to list for it.");
-                    }
-
-                    return Parse(File.ReadAllText(path), path);
+                    json = File.ReadAllText(path);
+                }
+                catch (FileNotFoundException)
+                {
+                    // The one exception that is genuinely an absence: the folder opened, and the
+                    // export is not in it. Not a problem, and not a dialog. The path is named so the
+                    // log says which folder was looked in.
+                    return Absent("This backup contains no app export (" + path +
+                                  "), so there are no apps to list for it.");
                 }
                 catch (Exception ex)
                 {
-                    // Something was there and could not be read, so nothing is known about its
-                    // contents - deliberately not reported as an invalid file.
+                    // Something is there, or something stopped us finding out - either way nothing
+                    // is known about its contents, which is deliberately not the same as reporting
+                    // it as an invalid file.
+                    //
+                    // DirectoryNotFoundException lands HERE rather than in the absence above, and
+                    // the distinction is the whole point. LoadBackups enumerated this folder off
+                    // disk moments ago, so the folder existing is not in question - it going missing
+                    // between then and now means the drive was pulled, the network path dropped or
+                    // the letter stopped resolving. That is the world changing underneath us, not a
+                    // backup that happens to contain no apps, and reporting it as the latter would
+                    // be the same confident claim about unseen contents that removing File.Exists
+                    // was meant to end.
                     return Unreadable("Could not read the app export at " + path + ": " + ex.Message);
+                }
+
+                try
+                {
+                    return Parse(json, path);
+                }
+                catch (Exception ex)
+                {
+                    // Parse states its own problems, so reaching here means one it did not
+                    // anticipate - a JSON shape that makes a token accessor throw. Still no escape
+                    // route: this whole method runs before any window exists.
+                    return Unreadable("Could not make sense of the app export at " + path + ": " + ex.Message);
                 }
             }
 
@@ -542,7 +574,57 @@ namespace Views
 
             OutcomeMessage summary = ComposeOutcome(requested, attempted, failures);
 
-            MessageBox.Show(this, summary.Text, summary.Caption, MessageBoxButtons.OK, summary.Icon);
+            Report(summary.Text, summary.Caption, summary.Icon);
+        }
+
+        /// <summary>
+        /// Whether this form is still in a state where it can own a modal dialog.
+        /// </summary>
+        /// <remarks>
+        /// Pure, so the rule can be tested without a message loop - the same reason ShouldDeferClose
+        /// is pure.
+        ///
+        /// Visible is in here, and it is the condition that actually fires. Both callers open this
+        /// form with ShowDialog and neither disposes it, and ShowDialog does not dispose on its own:
+        /// Close on a modal form HIDES it. So after a close this dialog gets no vote on -
+        /// Application.Exit, the owning form tearing down, Windows shutting down - IsDisposed and
+        /// Disposing are both still false while the window is closed and invisible. A guard that
+        /// tested only those would fall straight through and raise a modal owned by an invisible
+        /// window, which Windows Forms serves by recreating a handle for it. That is the ownerless
+        /// dialog that can paint behind a disabled main window, leaving an app that looks hung with
+        /// no visible cause - the exact defect the OnShown deferral above exists to prevent,
+        /// reintroduced on the summary path.
+        /// </remarks>
+        internal static bool CanOwnADialog(bool isDisposed, bool disposing, bool visible)
+            => !isDisposed && !disposing && visible;
+
+        /// <summary>
+        /// Says something to the user, in a window while there still is one and in the log otherwise.
+        /// </summary>
+        /// <remarks>
+        /// The window can be gone by the time the install loop finishes; see CanOwnADialog for how.
+        /// Showing a MessageBox anyway is either a crash (disposed owner, from an async void handler,
+        /// which ends the process) or a hidden modal, so neither is available and the text has to go
+        /// somewhere else.
+        ///
+        /// KNOWN LIMIT, not a guarantee: the log is a RichTextBox on the main window and nothing else.
+        /// When the form went away because the APP is going away, that control is being torn down too,
+        /// so LogHelper's own guard catches the disposed target and routes the line to Console.Write -
+        /// invisible in a Windows Forms app with no console. On that path the summary naming which
+        /// packages failed is lost, and this fallback does not save it. It is still worth having,
+        /// because the form can also be closed while the app lives on, and it is written down rather
+        /// than assumed away: making it hold in every case needs a persistent log file, which is a
+        /// filed item and not something to half-build here.
+        /// </remarks>
+        private void Report(string text, string caption, MessageBoxIcon icon)
+        {
+            if (!CanOwnADialog(IsDisposed, Disposing, Visible))
+            {
+                logger.LogMessage(caption + ": " + text);
+                return;
+            }
+
+            MessageBox.Show(this, text, caption, MessageBoxButtons.OK, icon);
         }
 
         private async void btnRestore_Click(object sender, EventArgs e)
@@ -576,7 +658,7 @@ namespace Views
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, $"Restoration failed. Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Report("Restoration failed. Error: " + ex.Message, "Error", MessageBoxIcon.Error);
             }
             finally
             {
@@ -585,10 +667,24 @@ namespace Views
                 // control is the close box.
                 installing = false;
                 stopRequested = false;
-                SetInstallingUi(false);
 
-                if (closeWhenIdle)
-                    Close();
+                // Unless there is no window left to leave in any state. Touching the controls of a
+                // disposed form throws, and this finally runs on an async void path where that ends
+                // the process rather than surfacing anywhere. See CanOwnADialog for how the form can
+                // be gone while the loop is still running.
+                //
+                // Disposal only, deliberately - not the Visible test Report uses. Re-enabling the
+                // controls of a form that is merely hidden is harmless and leaves it correct if it
+                // is ever shown again, and Close on an already-closed form is a no-op. It is owning
+                // a MODAL that a hidden window cannot do, which is why only that call site is
+                // stricter.
+                if (!IsDisposed && !Disposing)
+                {
+                    SetInstallingUi(false);
+
+                    if (closeWhenIdle)
+                        Close();
+                }
             }
         }
 

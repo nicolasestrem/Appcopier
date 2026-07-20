@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace Appcopier
@@ -80,18 +82,26 @@ namespace Appcopier
         /// Hoisted from six identical private copies. They differed only in the order of the
         /// Replace calls, which cannot matter here: every replacement maps to the same character,
         /// and no replacement produces a character another one searches for.
+        ///
+        /// The six copies each listed the characters their author happened to think of, and all six
+        /// missed the same ones - notably &lt; &gt; and | which Windows also rejects in a filename,
+        /// and the control characters. Asking the framework which characters are invalid removes the
+        /// list from this file entirely, so it cannot be short again. Registry key paths contain
+        /// none of the newly covered characters, so every filename this already produced is
+        /// unchanged; the pinned literals in BackupFileNamingTests are what holds that.
         /// </remarks>
         protected static string GetSafeFileName(string value)
         {
             if (value == null)
                 return string.Empty;
 
-            return value.Replace("\\", "_")
-                        .Replace(":", "_")
-                        .Replace("/", "_")
-                        .Replace("*", "_")
-                        .Replace("?", "_")
-                        .Replace("\"", "_");
+            char[] invalid = Path.GetInvalidFileNameChars();
+            StringBuilder safe = new StringBuilder(value.Length);
+
+            foreach (char c in value)
+                safe.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+
+            return safe.ToString();
         }
 
         /// <summary>
