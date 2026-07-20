@@ -315,6 +315,16 @@ namespace Views
 
                 foreach (RestoreCloseRequirement requirement in requirements)
                 {
+                    // Skipped exactly as RestoreScope.Evaluate and RestorePlan.CollectCloses skip it.
+                    // Those two treat a null entry as a supported degenerate declaration; this loop
+                    // was the only one of the three reading the list without the guard, so a module
+                    // they both passed over as harmless reached here and dereferenced it. The catch
+                    // below would have caught the NullReferenceException, so the cost was not a crash
+                    // but a worse lie than one: the module was scoped as unblocked, was snapshotted,
+                    // had its process closed - and was then reported as an unhandled error.
+                    if (requirement == null)
+                        continue;
+
                     bool consentGiven = requirement.NeedsConsent
                         && RestoreScope.IsConsented(consented, requirement.ProcessName);
                     bool isRunning = false;
@@ -664,21 +674,28 @@ namespace Views
             // Stage 6.
             List<ModuleResult> results = await PerformRestoration(scope, consented);
 
-            // Stage 7.
-            LogRestoredElements(selectedConfigs, results, snapshot, snapshotFolderPath);
+            // Stage 7. Reported against the modules the restore actually walked, not against the
+            // list it was asked to walk. `results` is built one-per-scope-entry, and RestoreScope.For
+            // drops nulls - so pairing them with selectedConfigs pairs two lists that are only equal
+            // in length by coincidence of upstream filtering. Whenever they were not, every outcome
+            // after the dropped module would be attributed to the wrong one, in the summary and in
+            // restore_log.txt both. Projecting from scope makes the alignment structural.
+            List<BackupBase> restoredModules = scope.Select(entry => entry.Module).ToList();
+
+            LogRestoredElements(restoredModules, results, snapshot, snapshotFolderPath);
 
             // Stage 8. Gated on a successful restore of a module that declares
             // RequiresExplorerRestart, not merely on the declaration: a module that failed or was
             // skipped never touched Explorer state, so offering to restart it would be a no-op
             // dressed up as a fix.
-            bool requiresRestart = selectedConfigs
+            bool requiresRestart = restoredModules
                 .Zip(results, (config, result) => new { config, result })
                 .Any(x => x.config.RequiresExplorerRestart && x.result.State == ResultState.Succeeded);
 
             btnRestartExplorer.Visible = requiresRestart;
 
             ShowSummary(
-                RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Restore),
+                RunSummary.For(ModuleOutcome.Pair(restoredModules, results), true, RunVerb.Restore),
                 "Restore");
         }
 
