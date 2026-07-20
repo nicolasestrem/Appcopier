@@ -122,9 +122,10 @@ namespace Views
 
                 foreach (string packageIdentifier in selectedPackages)
                 {
-                    // Use Utils.RunWT to run winget command for each selected packageIdentifier
+                    // Use Utils.RunWTAsync to run winget command for each selected packageIdentifier.
+                    // RunWTAsync already runs on a background thread, so no outer Task.Run is needed.
                     string wingetCommand = $"winget install --id {packageIdentifier} --accept-source-agreements --accept-package-agreements";
-                    await Task.Run(() => Utils.RunWT(wingetCommand));
+                    await Utils.RunWTAsync(wingetCommand);
                 }
             }
             catch (Exception ex)

@@ -390,18 +390,86 @@ namespace Appcopier
         // Check for running processes in Confs
         public static bool IsProcessRunning(string processName)
         {
-            Process[] processes = Process.GetProcessesByName(processName);
-            return processes.Length > 0;
+            try
+            {
+                Process[] processes = Process.GetProcessesByName(processName);
+
+                try
+                {
+                    return processes.Length > 0;
+                }
+                finally
+                {
+                    foreach (Process p in processes)
+                        p.Dispose();
+                }
+            }
+            catch (Exception)
+            {
+                // A false negative here only means the user is not prompted to close the app.
+                return false;
+            }
         }
 
-        // Close running processes in Confs
-        public static void CloseProcess(string processName)
+        /// <summary>
+        /// Asks every instance of a process to terminate.
+        /// </summary>
+        /// <remarks>
+        /// The guard is the point. Kill() throws InvalidOperationException when the process exited
+        /// between enumeration and the call - likely, not exotic, because Chrome is a whole tree of
+        /// child processes that come and go - and Win32Exception when access is denied. The browser
+        /// modules reach this from an async void click handler, so an escape here took down the
+        /// entire run and every result collected with it.
+        ///
+        /// Deliberately does NOT wait for exit. Adding a bounded wait would change what gets copied
+        /// (a still-flushing browser holds its SQLite files), which is a reliability fix rather than
+        /// a reporting one, and it belongs with the browser-module work.
+        /// </remarks>
+        public static CloseResult CloseProcess(string processName)
         {
-            Process[] processes = Process.GetProcessesByName(processName);
+            Process[] processes;
+
+            try
+            {
+                processes = Process.GetProcessesByName(processName);
+            }
+            catch (Exception)
+            {
+                return CloseResult.AccessDenied;
+            }
+
+            if (processes.Length == 0)
+                return CloseResult.NotRunning;
+
+            CloseResult worst = CloseResult.Exited;
+
             foreach (Process process in processes)
             {
-                process.Kill(); // Kill method to forcefully terminate process
+                try
+                {
+                    process.Kill();
+                }
+                catch (System.ComponentModel.Win32Exception ex)
+                {
+                    logger.LogMessage("Could not close " + processName + ": " + ex.Message);
+                    worst = CloseResult.AccessDenied;
+                }
+                catch (InvalidOperationException)
+                {
+                    // Already gone between enumeration and Kill. Nothing to report.
+                }
+                catch (Exception ex)
+                {
+                    logger.LogMessage("Could not close " + processName + ": " + ex.Message);
+                    worst = CloseResult.StillRunning;
+                }
+                finally
+                {
+                    process.Dispose();
+                }
             }
+
+            return worst;
         }
 
         /// <summary>
@@ -495,22 +563,56 @@ namespace Appcopier
             }
         }
 
-        // Run Windows Terminal in Confs
-        public static async void RunWT(string args)
+        /// <summary>
+        /// Runs Windows Terminal and waits for it, reporting how it went.
+        /// </summary>
+        /// <remarks>
+        /// Replaces an "async void" version that returned to its caller at the first await, so
+        /// AStoreApps logged "Backup successful" before winget had started. async void cannot feed a
+        /// result into anything - that is not a style preference here, it is the reason the module
+        /// could not report the truth.
+        /// </remarks>
+        internal static async Task<ProcessOutcome> RunWTAsync(string args)
         {
-            var startInfo = new ProcessStartInfo()
-            {
-                FileName = DataHelper.Data.ShellWT,
-                Arguments = args,
-                WorkingDirectory = DataHelper.Data.DataRootDir,
-                UseShellExecute = false,
-                CreateNoWindow = false
-            };
+            if (!File.Exists(DataHelper.Data.ShellWT))
+                return ProcessOutcome.NeverStarted("Windows Terminal is not installed");
 
-            await Task.Run(() =>
+            return await Task.Run(() =>
             {
-                Process.Start(startInfo).WaitForExit();
-            });
+                // Tracks whether Process.Start succeeded, mirroring RegeditTool.Run in
+                // IRegistryTool.cs: once Start() has returned, Windows Terminal may already be
+                // running, so an exception from WaitForExit must not be reported as "never started".
+                bool started = false;
+
+                try
+                {
+                    ProcessStartInfo startInfo = new ProcessStartInfo
+                    {
+                        FileName = DataHelper.Data.ShellWT,
+                        Arguments = args,
+                        // The old WorkingDirectory was Data.DataRootDir, which may not exist yet -
+                        // Process.Start then threw Win32Exception onto the sync context.
+                        UseShellExecute = false,
+                        CreateNoWindow = false
+                    };
+
+                    using (Process proc = Process.Start(startInfo))
+                    {
+                        if (proc == null)
+                            return ProcessOutcome.NeverStarted("Windows Terminal did not start");
+
+                        started = true;
+                        proc.WaitForExit();
+                        return ProcessOutcome.Ran(proc.ExitCode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return started
+                        ? ProcessOutcome.OutcomeUnknown(ex.Message)
+                        : ProcessOutcome.NeverStarted(ex.Message);
+                }
+            }).ConfigureAwait(false);
         }
     }
 }
