@@ -1219,6 +1219,98 @@ namespace Appcopier.Tests
 
             Assert.Equal(ResultState.Failed, s.State);
         }
+
+        // --- Branches that had no coverage, and cannot be reached until Task 8 without these ---
+
+        [Fact]
+        public void Export_NeverStarted_IsFailed()
+        {
+            StepResult s = Utils.ExportRegistryKey(Path.Combine(_dir, "x.reg"), PresentKey, false,
+                new FakeTool(ProcessOutcome.NeverStarted("boom")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // If regedit STARTED, it may already have written to the registry. Reporting that as
+        // "could not start" would be a false claim about whether the machine was modified.
+        [Fact]
+        public void Import_StartedButOutcomeUnknown_DoesNotClaimRegeditNeverRan()
+        {
+            StepResult s = Utils.ImportRegistryKey(Valid("unknown.reg"), "HKEY_CURRENT_USER\\X",
+                new FakeTool(ProcessOutcome.OutcomeUnknown("handle closed")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.DoesNotContain("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("may have been partly changed", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_StartedButOutcomeUnknown_DoesNotClaimRegeditNeverRan()
+        {
+            StepResult s = Utils.ExportRegistryKey(Path.Combine(_dir, "u.reg"), PresentKey, false,
+                new FakeTool(ProcessOutcome.OutcomeUnknown("handle closed")));
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.DoesNotContain("could not start", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_ExitZeroButEmptyFile_IsFailed()
+        {
+            string path = Path.Combine(_dir, "empty-out.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0), p => File.WriteAllBytes(p, new byte[0]));
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("empty", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Export_ExitZeroButWrongHeader_IsFailed()
+        {
+            string path = Path.Combine(_dir, "bad-out.reg");
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0),
+                p => File.WriteAllText(p, "REGEDIT4\r\n", new UnicodeEncoding(false, true)));
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+        }
+
+        // Provenance: a valid .reg already sitting at the target path must NOT be able to satisfy
+        // verification for an export that wrote nothing. Without the pre-delete, regedit's measured
+        // exit-0-writes-nothing behaviour would be reported as success off a stale artifact.
+        [Fact]
+        public void Export_StaleFileAtTarget_DoesNotCountAsThisRunsOutput()
+        {
+            string path = Valid("stale.reg");          // a valid .reg already present
+            FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));   // writes nothing
+
+            StepResult s = Utils.ExportRegistryKey(path, PresentKey, false, tool);
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("no file", s.Reason, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Import_UnreadableFile_IsFailedWithoutCallingItInvalid()
+        {
+            string path = Valid("locked-in.reg");
+
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                FakeTool tool = new FakeTool(ProcessOutcome.Ran(0));
+                StepResult s = Utils.ImportRegistryKey(path, "HKEY_CURRENT_USER\\X", tool);
+
+                Assert.Equal(ResultState.Failed, s.State);
+                Assert.False(tool.ImportCalled);
+                Assert.Contains("could not read", s.Reason, StringComparison.OrdinalIgnoreCase);
+                // We never read it, so we must not assert anything about its contents.
+                Assert.DoesNotContain("not a valid", s.Reason, StringComparison.OrdinalIgnoreCase);
+            }
+        }
     }
 }
 ```
@@ -1248,14 +1340,33 @@ namespace Appcopier
         public int ExitCode { get; private set; }
         public string Error { get; private set; }
 
+        // Private so there is no way to obtain a default-constructed instance. A `new
+        // ProcessOutcome()` would read as Started=false with a null Error, which a caller
+        // renders as "could not start regedit: " with nothing after the colon.
+        private ProcessOutcome() { }
+
         public static ProcessOutcome Ran(int exitCode)
             => new ProcessOutcome { Started = true, ExitCode = exitCode };
 
         public static ProcessOutcome Timeout()
             => new ProcessOutcome { Started = true, TimedOut = true };
 
-        public static ProcessOutcome Failed(string error)
+        /// <summary>The process never started. Nothing was done.</summary>
+        public static ProcessOutcome NeverStarted(string error)
             => new ProcessOutcome { Started = false, Error = error };
+
+        /// <summary>
+        /// The process started, but we lost track of how it ended.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="NeverStarted"/> and the distinction matters more here than
+        /// almost anywhere else in this phase. If regedit started, it may already have written to
+        /// the registry. Reporting that as "could not start regedit" would tell the user nothing
+        /// happened when something might have - a false claim about whether their machine was
+        /// modified, which is the exact failure this project exists to eliminate.
+        /// </remarks>
+        public static ProcessOutcome OutcomeUnknown(string error)
+            => new ProcessOutcome { Started = true, Error = error };
     }
 
     /// <summary>
@@ -1281,32 +1392,54 @@ namespace Appcopier
         private const int TimeoutMs = 60000;
 
         public ProcessOutcome Export(string filePath, string registryPath)
-            => Run(string.Format("/e \"{0}\" \"{1}\"", filePath, registryPath));
+            => Run("/e", filePath, registryPath);
 
         // Note: no registry path argument. The old code appended one to /s, which documented regedit
         // syntax does not define.
         public ProcessOutcome Import(string filePath)
-            => Run(string.Format("/s \"{0}\"", filePath));
+            => Run("/s", filePath, null);
 
-        private static ProcessOutcome Run(string arguments)
+        private static ProcessOutcome Run(string switchArg, string filePath, string registryPath)
         {
+            bool started = false;
+
             try
             {
                 using (Process proc = new Process())
                 {
                     proc.StartInfo.FileName = "regedit.exe";
-                    proc.StartInfo.Arguments = arguments;
                     proc.StartInfo.UseShellExecute = false;
+
+                    // ArgumentList quotes each value properly rather than pasting it into one
+                    // command line. Utils.OpenUrl in this same file already uses it for exactly
+                    // this reason; a path ending in a backslash breaks manual quoting.
+                    proc.StartInfo.ArgumentList.Add(switchArg);
+                    proc.StartInfo.ArgumentList.Add(filePath);
+
+                    if (registryPath != null)
+                        proc.StartInfo.ArgumentList.Add(registryPath);
 
                     // Deliberately no StartInfo.Verb = "runas": Verb is ignored while
                     // UseShellExecute is false, so the old line granted nothing and merely implied
                     // an elevation request that was not happening. Elevation comes from app.manifest.
 
                     proc.Start();
+                    started = true;
 
                     if (!proc.WaitForExit(TimeoutMs))
                     {
-                        try { proc.Kill(); } catch (Exception) { }
+                        try
+                        {
+                            proc.Kill(entireProcessTree: true);
+                            // Kill is asynchronous. Without this the using block disposes while the
+                            // process may still be terminating.
+                            proc.WaitForExit(5000);
+                        }
+                        catch (Exception)
+                        {
+                            // A leaked process is the better trade than losing the timeout signal.
+                        }
+
                         return ProcessOutcome.Timeout();
                     }
 
@@ -1315,7 +1448,12 @@ namespace Appcopier
             }
             catch (Exception ex)
             {
-                return ProcessOutcome.Failed(ex.Message);
+                // Which of these two we return is the whole point. Once Start() has returned,
+                // regedit may already have modified the registry, so claiming it never started
+                // would be a false statement about whether the machine was changed.
+                return started
+                    ? ProcessOutcome.OutcomeUnknown(ex.Message)
+                    : ProcessOutcome.NeverStarted(ex.Message);
             }
         }
     }
@@ -1354,13 +1492,34 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
                     : StepResult.Failed(registryPath, "expected " + registryPath + " is missing");
             }
 
+            // Clear any file already at the target path FIRST. Otherwise the verification below
+            // can be satisfied by a file this run did not write, and the method's promise to
+            // verify what it produced would be false. Not reachable in today's modules - WThemes
+            // is the only one looping several keys into a single filename and it holds exactly one
+            // key - but it becomes live the moment a second key is added, silently.
+            try
+            {
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+            }
+            catch (Exception ex)
+            {
+                return StepResult.Failed(registryPath, "could not clear the previous export at " + filePath + ": " + ex.Message);
+            }
+
             ProcessOutcome outcome = tool.Export(filePath, registryPath);
+
+            if (outcome == null)
+                return StepResult.Failed(registryPath, "the registry tool returned no outcome");
 
             if (!outcome.Started)
                 return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
 
             if (outcome.TimedOut)
                 return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.Error != null)
+                return StepResult.Failed(registryPath, "regedit ran but its outcome could not be determined: " + outcome.Error);
 
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
@@ -1369,6 +1528,8 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
 
             switch (RegFile.Validate(filePath, out readError))
             {
+                case RegFileCheck.Valid:
+                    return StepResult.Succeeded(registryPath, "exported " + registryPath);
                 case RegFileCheck.Missing:
                     return StepResult.Failed(registryPath, "regedit reported success but wrote no file");
                 case RegFileCheck.Empty:
@@ -1378,7 +1539,8 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
                 case RegFileCheck.Unreadable:
                     return StepResult.Failed(registryPath, "could not read back the exported file: " + readError);
                 default:
-                    return StepResult.Succeeded(registryPath, "exported " + registryPath);
+                    // Fail closed. A RegFileCheck member added later must not silently pass here.
+                    return StepResult.Failed(registryPath, "the exported file could not be classified");
             }
         }
 
@@ -1400,6 +1562,8 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
 
             switch (RegFile.Validate(filePath, out readError))
             {
+                case RegFileCheck.Valid:
+                    break;   // the only case that may proceed to the registry
                 case RegFileCheck.Missing:
                     return StepResult.Skipped(registryPath, "nothing was backed up for this item");
                 case RegFileCheck.Empty:
@@ -1411,15 +1575,31 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, delete the entire `ExportImportRegi
                     // whether it is valid - and a locked or ACL-denied file is a different problem
                     // for the user to fix than a corrupt one.
                     return StepResult.Failed(registryPath, "could not read the backed-up file: " + readError);
+                default:
+                    // Fail CLOSED. Without this, a RegFileCheck member added later falls through to
+                    // regedit /s unexamined, which would invert this method's one real guarantee:
+                    // that a file we cannot vouch for never reaches the registry.
+                    return StepResult.Failed(registryPath, "the backed-up file could not be classified - not importing it");
             }
 
             ProcessOutcome outcome = tool.Import(filePath);
+
+            if (outcome == null)
+                return StepResult.Failed(registryPath, "the registry tool returned no outcome");
 
             if (!outcome.Started)
                 return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
 
             if (outcome.TimedOut)
                 return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.Error != null)
+            {
+                // regedit started, so the registry may already have been written to. Saying it
+                // could not start would be a false claim about whether the machine changed.
+                return StepResult.Failed(registryPath,
+                    "regedit ran but its outcome could not be determined, so the registry may have been partly changed: " + outcome.Error);
+            }
 
             if (outcome.ExitCode != 0)
                 return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
