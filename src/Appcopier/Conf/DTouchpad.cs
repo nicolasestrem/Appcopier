@@ -1,30 +1,18 @@
-﻿using Appcopier;
+using Appcopier;
 
 namespace Conf
 {
-    public class DTouchpad : BackupBase
+    public class DTouchpad : RegistryModule
     {
-        public string Key = @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\PrecisionTouchPad";
+        protected override string Key => @"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\PrecisionTouchPad";
+
+        // Absent by design on every desktop PC.
+        protected override bool AbsenceIsNormal => true;
 
         public DTouchpad()
         {
             Title = "Touchpad";
             Info = "This will backup the Windows Touchpad settings.";
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
-
-        public override void Backup(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, false);
-        }
-
-        public override void Restore(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, true);
         }
     }
 }

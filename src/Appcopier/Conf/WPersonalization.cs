@@ -1,4 +1,4 @@
-﻿using Appcopier;
+using Appcopier;
 using System.Collections.Generic;
 using System.IO;
 
@@ -39,23 +39,40 @@ namespace Conf
             return b1;
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(outputFileName, k, false);
+                steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(inputFileName, k, true);
+                steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
+
+        // Per-key, and it CANNOT be inferred from IsInstalled(): that returns true as soon as any
+        // one key exists, so "installed" says nothing about the others. Explorer\Accent is treated
+        // as legitimately absent because it is REMOVABLE - a key Windows writes on demand and that
+        // policy or a cleanup tool can take away. It was probed on the development machine and
+        // found PRESENT; the flag exists for the machines where it is not, so that a healthy one
+        // is never marked red.
+        private static bool AbsenceIsNormal(string key)
+            => key.EndsWith(@"\Accent", System.StringComparison.OrdinalIgnoreCase);
 
         // Helper method to create a safe file name from registry key
         private string GetSafeFileName(string registryKey)

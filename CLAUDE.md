@@ -38,12 +38,39 @@ module bugs that are *not* regressions.
 
 ### Backup module system (the core pattern)
 
-- `src/Appcopier/BackupBase.cs` — abstract base every backup module inherits: `Title`, `Info`, `WarningMessage`, `RequiresExplorerRestart`, `IsInstalled()`, `Backup(path)`, `Restore(path)`, plus `BackupAsync`/`RestoreAsync` wrappers (Task.Run around the sync methods).
-- `src/Appcopier/Conf/*.cs` — one class per backup area. Filename prefix letter encodes the category: `A` = Apps, `B` = Browser, `C` = Credentials, `D` = Devices, `G` = Gaming, `W` = Windows settings. Most modules just call `Utils.ExportImportRegistryKey()` (regedit `/e` export, `/s` import) and/or `Utils.CopyFolder()`.
+- `src/Appcopier/BackupBase.cs` — abstract base every backup module inherits: `Title`, `Info`, `WarningMessage`, `RequiresExplorerRestart`, `IsInstalled()`, `Backup(path)`, `Restore(path)`, plus `BackupAsync`/`RestoreAsync` wrappers (Task.Run around the sync methods). `Backup`/`Restore` return a `ModuleResult`, not `void` — see "Reporting outcomes" below.
+- `src/Appcopier/Conf/*.cs` — one class per backup area. Filename prefix letter encodes the category: `A` = Apps, `B` = Browser, `C` = Credentials, `D` = Devices, `G` = Gaming, `W` = Windows settings. Most modules call `Utils.ExportRegistryKey()` / `Utils.ImportRegistryKey()` (regedit `/e` and `/s`) and/or `Utils.CopyFolder()`.
+- `src/Appcopier/Conf/RegistryModule.cs` — base for the ten modules that capture exactly one registry key to `{Title}.reg`. Subclasses supply data (`Key`, `AbsenceIsNormal`) and inherit the decision logic, so the skipped-vs-failed rule is written once. **Prefer inheriting this over hand-rolling `Backup`/`Restore`** when a module is a single-key export.
 
 Adding a new module requires touching **two** places:
-1. Create the class in `Conf/` inheriting `BackupBase` (namespace `Conf`).
+1. Create the class in `Conf/` inheriting `BackupBase` — or `RegistryModule` for a single-key export (namespace `Conf`).
 2. Register it in `ConfPageView.InitializeConfigurations()` (`src/Appcopier/Views/ConfPageView.cs`) with its category node name ("Settings", "Apps", "Browser", "Devices", "Gaming", "Credentials").
+
+### Reporting outcomes (read before writing a module)
+
+This app's core failure mode was announcing success it had not verified. The rules below exist to keep
+that from coming back; each was written after the corresponding mistake was actually made.
+
+- **Build `StepResult`s and fold them with `ModuleResult.Aggregate`.** That is the only public
+  construction path — there are deliberately no `ModuleResult.Succeeded/Skipped/Failed` factories,
+  because one of them would be used to bypass the aggregation rules within a week.
+- **Every sub-operation declares whether its target may legitimately be absent.** Absent + normal is
+  `Skipped`; absent + not normal is `Failed`; a target that could not be *probed* is always `Failed`.
+  "I could not tell" is a tool failure, not an absence. Getting this flag wrong is the cry-wolf
+  failure in one direction and a hidden problem in the other.
+- **Never claim more than you verified.** Registry exports are checkable (exit code *and* the file
+  exists, is non-empty, and has a valid header). Imports are not — `regedit /s` returns 0 on files it
+  only partially applied — so restore-side reasons say **applied**, never *verified* or *restored*.
+- **An exit code is not evidence.** Measured on Windows 11: `regedit /e` on a nonexistent key exits 0
+  and writes nothing; `netsh wlan export` printed "saved successfully" with exit code 0 while writing
+  nothing. Always check the artifact the command was supposed to produce.
+- **Log data-bearing text with `LogHelper.LogMessage`, never `LogHelper.Log`.** `Log` treats its first
+  argument as a format string, so a registry path or exception message containing `{` throws inside
+  the logger and the line is routed to `Console.WriteLine` — invisible in a WinForms app. The message
+  is not lost loudly; it is lost silently.
+- **Don't identify files by a name pattern you did not write.** `CWiFiConf` matched `WLAN*.xml` while
+  `netsh` writes `<adapter name>-<SSID>.xml`, so restore found 0 of 19 profiles. Match on content when
+  another tool chose the filename.
 
 The csproj no longer needs a `<Compile Include>` entry — the SDK project globs `**/*.cs` automatically. (Older docs describing a third csproj step predate the .NET 8 migration.)
 

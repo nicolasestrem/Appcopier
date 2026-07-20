@@ -1,4 +1,4 @@
-﻿using Appcopier;
+using Appcopier;
 using System.Collections.Generic;
 using System.IO;
 
@@ -38,23 +38,38 @@ namespace Conf
             return b1;
         }
 
-        public override void Backup(string path)
+        public override ModuleResult Backup(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string outputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(outputFileName, k, false);
+                steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override void Restore(string path)
+        public override ModuleResult Restore(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             foreach (string k in Keys)
             {
                 string inputFileName = Path.Combine(path, $"{Title}_{GetSafeFileName(k)}.reg");
-                Utils.ExportImportRegistryKey(inputFileName, k, true);
+                steps.Add(Utils.ImportRegistryKey(inputFileName, k));
             }
+
+            return ModuleResult.Aggregate(steps);
         }
+
+        // True for both keys, because both are REMOVABLE without anything being wrong: the
+        // DataCollection policy key exists only where Group Policy or an edition difference put it
+        // there, and the DiagTrack service key is a routine target of debloat scripts. Both were
+        // probed on the development machine and found PRESENT, so this is not a claim that they are
+        // typically missing - only that their absence is a legitimate state and not a failure.
+        private static bool AbsenceIsNormal(string key) => true;
 
         // Helper method to create a safe file name from registry key
         private string GetSafeFileName(string registryKey)

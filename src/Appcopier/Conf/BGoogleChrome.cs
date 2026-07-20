@@ -1,5 +1,6 @@
-﻿using Appcopier;
+using Appcopier;
 using DataHelper;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -21,32 +22,46 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
-        public override async Task BackupAsync(string path)
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
+            List<StepResult> steps = new List<StepResult>();
+
             // Check if process is running
             if (Utils.IsProcessRunning("chrome"))
             {
-                DialogResult result = MessageBox.Show("The Chrome process is currently running. Do you want to close it before backup?",
-                                                      "Process Running",
-                                                      MessageBoxButtons.YesNo,
-                                                      MessageBoxIcon.Warning);
+                DialogResult answer = MessageBox.Show(
+                    "The Chrome process is currently running. Do you want to close it before backup?",
+                    "Process Running", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
 
-                if (result == DialogResult.Yes)
+                if (answer != DialogResult.Yes)
                 {
-                    Utils.CloseProcess("chrome");
+                    // Previously a bare "return", reported to the user as "Back up done." This is
+                    // the canonical Skipped case in the codebase: a deliberate user choice, not an
+                    // error, and not a success either.
+                    steps.Add(StepResult.Skipped(Title, "you chose not to close Chrome, so it was not backed up"));
+                    return ModuleResult.Aggregate(steps);
                 }
-                else
+
+                CloseResult closed = Utils.CloseProcess("chrome");
+
+                if (closed == CloseResult.AccessDenied || closed == CloseResult.StillRunning)
                 {
-                    return;
+                    steps.Add(StepResult.Failed(Title, "Chrome could not be closed, so its files are still locked"));
+                    return ModuleResult.Aggregate(steps);
                 }
             }
 
-            await Utils.CopyFolder(Folder, path + Title);
+            CopyResult copy = await Utils.CopyFolder(Folder, Path.Combine(path, Title));
+            steps.Add(copy.ToStep(Title, true));
+
+            return ModuleResult.Aggregate(steps);
         }
 
-        public override async Task RestoreAsync(string path)
+        public override async Task<ModuleResult> RestoreAsync(string path)
         {
-            await Utils.CopyFolder(path + Title, Folder);
+            CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
+
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true, NothingBackedUp) });
         }
     }
 }

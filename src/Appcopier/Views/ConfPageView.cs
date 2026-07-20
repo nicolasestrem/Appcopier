@@ -103,6 +103,23 @@ namespace Views
             btnBackup.Enabled = false;
             this.Enabled = false;
 
+            // The whole body is wrapped so the window is re-enabled in a finally. This is an async
+            // void handler that disables the form on its first two lines: anything escaping it is
+            // unhandled AND leaves the main window permanently dead, with no way back short of
+            // killing the process.
+            try
+            {
+                await RunBackup();
+            }
+            finally
+            {
+                this.Enabled = true;
+                btnBackup.Enabled = true;
+            }
+        }
+
+        private async Task RunBackup()
+        {
             selectedConfigs.Clear();
 
             bool isAtLeastOneChecked = treeConfigurations.Nodes
@@ -112,9 +129,16 @@ namespace Views
             // At least one node is checked, then proceed!
             if (isAtLeastOneChecked)
             {
-                if (!Directory.Exists(CurrentBackupPath))
+                string createError;
+
+                if (!TryCreateBackupFolder(out createError))
                 {
-                    Directory.CreateDirectory(CurrentBackupPath);
+                    // Reported as a run that DID NOT RUN, not as a crash and not as a silent
+                    // no-op: the user asked for a backup and got nothing, and they need to be
+                    // told which of those two it was.
+                    ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Backup,
+                        "the backup folder could not be created: " + createError), "Backup");
+                    return;
                 }
 
                 foreach (TreeNode parentNode in treeConfigurations.Nodes)
@@ -132,78 +156,154 @@ namespace Views
                     }
                 }
 
+                List<ModuleResult> results = new List<ModuleResult>();
+
                 foreach (BackupBase a in selectedConfigs)
                 {
                     linkSubHeader.Text = $"Backing up: {a.Title}";
 
-                    // Use asynchronous BackupAsync method and await its completion
-                    await a.BackupAsync(CurrentBackupPath);
+                    ModuleResult outcome;
+
+                    try
+                    {
+                        // Use asynchronous BackupAsync method and await its completion
+                        outcome = await a.BackupAsync(CurrentBackupPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Rule 6. Mandatory, not defensive style: this loop is driven by an
+                        // async void click handler, so an escaping exception is unhandled and
+                        // takes the process down along with every result gathered so far.
+                        outcome = ModuleResult.Aggregate(new[]
+                        {
+                            StepResult.Failed(a.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
+                        });
+                    }
+
+                    results.Add(outcome);
 
                     linkSubHeader.Text = "Choose settings";
                 }
 
                 // Log backed-up elements
-                LogBackedUpElements(CurrentBackupPath, selectedConfigs);
+                LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
 
-                logger.Log("Back up done.");
-                MessageBox.Show("Back up done.", "", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                ShowSummary(
+                    RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Backup),
+                    "Backup");
             }
             else
             {
                 MessageBox.Show("Nothing has been selected for backup. Please choose your settings to be backed up beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
-
-            this.Enabled = true;
-            btnBackup.Enabled = true;
         }
 
-        // Write a backup_log.txt
-        private void LogBackedUpElements(string backupFolderPath, List<BackupBase> configurations)
+        /// <summary>
+        /// Creates the backup folder, reporting rather than throwing if it cannot.
+        /// </summary>
+        /// <remarks>
+        /// Ordinary failures, not exotic ones: the exe under Program Files on a standard-user
+        /// account, a full disk, a path over the length limit. This used to be a bare
+        /// Directory.CreateDirectory outside any try, in an async void handler.
+        /// </remarks>
+        private bool TryCreateBackupFolder(out string error)
         {
-            List<string> backedUpElements = new List<string>();
+            error = null;
 
-            foreach (BackupBase configuration in configurations)
+            try
             {
-                backedUpElements.Add($"{configuration.Title} ({configuration.GetType().Name})");
-            }
+                if (!Directory.Exists(CurrentBackupPath))
+                    Directory.CreateDirectory(CurrentBackupPath);
 
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                logger.LogMessage("Could not create the backup folder " + CurrentBackupPath + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        private static void ShowSummary(RunSummary summary, string caption)
+        {
+            logger.LogMessage(summary.Headline);
+            logger.LogMessage(summary.Detail);
+
+            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
+                caption, MessageBoxButtons.OK, summary.Icon);
+        }
+
+        // Write a backup_log.txt that records outcomes, not just the selection.
+        private void LogBackedUpElements(string backupFolderPath, List<BackupBase> configurations, List<ModuleResult> results)
+        {
             string logFilePath = Path.Combine(backupFolderPath, "backup_log.txt");
 
             try
             {
-                File.WriteAllLines(logFilePath, backedUpElements);
+                string text = BackupLog.Compose(configurations, results, DateTime.Now.ToString());
+                File.WriteAllText(logFilePath, text);
             }
             catch (Exception ex)
             {
-                logger.Log($"Failed to create backup log file: {ex.Message}");
+                logger.LogMessage("Failed to create backup log file: " + ex.Message);
             }
         }
 
         // Restoration logic with selected configurations
-        private async Task PerformRestoration(List<BackupBase> selectedConfigs)
+        private async Task<List<ModuleResult>> PerformRestoration(List<BackupBase> selectedConfigs)
         {
+            List<ModuleResult> results = new List<ModuleResult>();
+
             if (CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath))
             {
                 foreach (BackupBase config in selectedConfigs)
                 {
-                    await config.RestoreAsync(CurrentRestorePath);
+                    ModuleResult outcome;
+
+                    try
+                    {
+                        outcome = await config.RestoreAsync(CurrentRestorePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Rule 6, and it matters more here than on the backup path: this method is
+                        // awaited by HandleRestorationAfterSelection, which is itself awaited from
+                        // an async void handler in RestPageView, and AppStoreApps.Restore opens a
+                        // dialog from a thread-pool thread with no message pump.
+                        outcome = ModuleResult.Aggregate(new[]
+                        {
+                            StepResult.Failed(config.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
+                        });
+                    }
+
+                    results.Add(outcome);
                 }
             }
+
+            return results;
         }
 
         // Asynchronous method to handle restoration after the user selects restoration path
         public async Task HandleRestorationAfterSelection()
         {
-            await PerformRestoration(selectedConfigs);
+            bool ran = CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath);
 
-            // Check if any selected configuration requires a restart
-            bool requiresRestart = selectedConfigs.Any(config => config.RequiresExplorerRestart);
+            List<ModuleResult> results = await PerformRestoration(selectedConfigs);
+
+            // Gated on a successful restore of a module that declares RequiresExplorerRestart, not
+            // merely on the declaration: a module that failed or was skipped never touched Explorer
+            // state, so offering to restart it would be a no-op dressed up as a fix.
+            bool requiresRestart = selectedConfigs
+                .Zip(results, (config, result) => new { config, result })
+                .Any(x => x.config.RequiresExplorerRestart && x.result.State == ResultState.Succeeded);
 
             // Show or hide restart button based on requirement
             btnRestartExplorer.Visible = requiresRestart;
 
-            logger.Log("Restore done.");
-            MessageBox.Show("Restore done.", "", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            ShowSummary(
+                RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), ran, RunVerb.Restore),
+                "Restore");
         }
 
         private void btnRestore_Click(object sender, EventArgs e)

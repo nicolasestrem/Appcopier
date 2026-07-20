@@ -1,30 +1,18 @@
-﻿using Appcopier;
+using Appcopier;
 
 namespace Conf
 {
-    public class DUSB : BackupBase
+    public class DUSB : RegistryModule
     {
-        public string Key = @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Shell\USB";
+        protected override string Key => @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Shell\USB";
+
+        // Narrow shell-notification key that many installs never create.
+        protected override bool AbsenceIsNormal => true;
 
         public DUSB()
         {
             Title = "USB Devices";
             Info = "This will backup the Windows USB Devices settings.";
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
-
-        public override void Backup(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, false);
-        }
-
-        public override void Restore(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, true);
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System;
 using System.Threading.Tasks;
 
 namespace Appcopier
@@ -11,6 +11,17 @@ namespace Appcopier
         // Property to display Hints
         public virtual string WarningMessage { get; protected set; } = "";
 
+        /// <summary>
+        /// What an absent source means on the RESTORE side, where the source is the backup folder.
+        /// </summary>
+        /// <remarks>
+        /// Shared so the restore side cannot drift back into backup-side wording. Saying "not
+        /// present on this system" during a restore describes the wrong machine: the thing that is
+        /// missing is the backup, and the live machine was never examined. Several modules already
+        /// spelled this sentence out by hand; this is the same sentence, in one place.
+        /// </remarks>
+        protected const string NothingBackedUp = "nothing was backed up for this item";
+
         // Property to display Info
         public string Title { get; set; }
 
@@ -20,27 +31,33 @@ namespace Appcopier
         public virtual bool IsInstalled()
         { return false; }
 
-        public virtual void Backup(string path)
-        { }
-
-        public virtual void Restore(string path)
-        { }
-
-        public virtual async Task BackupAsync(string path)
-        {
-            await Task.Run(() =>
+        /// <remarks>
+        /// The default is a FAILURE, not a Skip. It is unreachable for all 23 shipped modules -
+        /// ConfPageView only ever calls the async pair, and every module implements one side or the
+        /// other - so it fires only for a future module whose author forgot to implement backup.
+        /// That is a bug, and a bug that announces itself beats one that returns a reassuring
+        /// "nothing to do" and is never noticed.
+        /// </remarks>
+        public virtual ModuleResult Backup(string path)
+            => ModuleResult.Aggregate(new[]
             {
-                Backup(path);
-            }).ConfigureAwait(true);
+                StepResult.Failed(GetType().Name, "this module does not implement backup")
+            });
+
+        public virtual ModuleResult Restore(string path)
+            => ModuleResult.Aggregate(new[]
+            {
+                StepResult.Failed(GetType().Name, "this module does not implement restore")
+            });
+
+        public virtual async Task<ModuleResult> BackupAsync(string path)
+        {
+            return await Task.Run(() => Backup(path)).ConfigureAwait(true);
         }
 
-        public virtual async Task RestoreAsync(string path)
+        public virtual async Task<ModuleResult> RestoreAsync(string path)
         {
-            await Task.Run(() =>
-            {
-                Restore(path);
-            }).ConfigureAwait(true);
+            return await Task.Run(() => Restore(path)).ConfigureAwait(true);
         }
-
     }
 }

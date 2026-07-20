@@ -1,30 +1,18 @@
-﻿using Appcopier;
+using Appcopier;
 
 namespace Conf
 {
-    public class WAPrivacy : BackupBase
+    public class WAPrivacy : RegistryModule
     {
-        public string Key = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore";
+        protected override string Key => @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore";
+
+        // CapabilityAccessManager ConsentStore is present on every Windows 11 install.
+        protected override bool AbsenceIsNormal => false;
 
         public WAPrivacy()
         {
             Title = "Apps Privacy";
             Info = "This will export Application privacy settings. These settings can be found in the GUI by going to SETTINGS\\PRIVACY.";
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
-
-        public override void Backup(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, false);
-        }
-
-        public override void Restore(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, true);
         }
     }
 }

@@ -120,17 +120,92 @@ namespace Views
                 // Get selected items from listApps
                 var selectedPackages = listApps.CheckedItems.Cast<string>().ToList();
 
+                // Every package's outcome is inspected. This used to discard the returned
+                // ProcessOutcome entirely, so with winget missing the loop completed instantly
+                // having installed nothing and told the user nothing - a dialog that closed as
+                // though every package had been installed.
+                List<string> failures = new List<string>();
+
                 foreach (string packageIdentifier in selectedPackages)
                 {
-                    // Use Utils.RunWT to run winget command for each selected packageIdentifier
-                    string wingetCommand = $"winget install --id {packageIdentifier} --accept-source-agreements --accept-package-agreements";
-                    await Task.Run(() => Utils.RunWT(wingetCommand));
+                    // RunWingetAsync already runs on a background thread, so no outer Task.Run is
+                    // needed. The window is shown: an install is long, and winget's own progress is
+                    // the only progress reporting this dialog has.
+                    ProcessOutcome outcome = await Utils.RunWingetAsync(
+                        true,
+                        "install",
+                        "--id", packageIdentifier,
+                        "--accept-source-agreements",
+                        "--accept-package-agreements");
+
+                    string problem = Describe(outcome);
+
+                    if (problem != null)
+                        failures.Add(packageIdentifier + ": " + problem);
                 }
+
+                ReportOutcome(selectedPackages.Count, failures);
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Restoration failed. Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        /// <summary>
+        /// What went wrong with one package, or null if it installed.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors AStoreApps.Verify branch for branch, and for the same reason: "did not start" and
+        /// "started and we lost track of it" are different facts about whether this machine was
+        /// changed. A package winget may have half-installed must not be reported as untouched.
+        /// </remarks>
+        internal static string Describe(ProcessOutcome outcome)
+        {
+            if (outcome == null)
+                return "winget returned no outcome";
+
+            if (!outcome.Started)
+                return "could not run winget: " + outcome.Error;
+
+            if (outcome.TimedOut)
+                return "winget did not finish, and was stopped";
+
+            if (outcome.Error != null)
+                return "winget ran but its outcome could not be determined: " + outcome.Error;
+
+            if (outcome.ExitCode != 0)
+                return "winget exited with code " + outcome.ExitCode;
+
+            return null;
+        }
+
+        /// <remarks>
+        /// Says "installed" rather than "restored": winget install on a package that is already
+        /// present upgrades it to the current version, so a restore does not necessarily put the
+        /// machine back the way it was. Claiming otherwise would be the kind of unverified sentence
+        /// the rest of this work removed.
+        /// </remarks>
+        private static void ReportOutcome(int attempted, List<string> failures)
+        {
+            if (attempted == 0)
+            {
+                MessageBox.Show("No apps were ticked, so nothing was installed.", "Nothing to do",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (failures.Count == 0)
+            {
+                MessageBox.Show(
+                    $"winget installed {attempted} app(s).\n\nAlready-installed apps are upgraded to the current version rather than put back at the backed-up one.",
+                    "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            MessageBox.Show(
+                $"{failures.Count} of {attempted} app(s) did not install:\n\n{string.Join("\n", failures)}",
+                "Some apps did not install", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private void btnRestore_Click(object sender, EventArgs e)

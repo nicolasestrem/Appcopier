@@ -1,31 +1,19 @@
-﻿using Appcopier;
+using Appcopier;
 
 namespace Conf
 {
-    public class WVisualEffects : BackupBase
+    public class WVisualEffects : RegistryModule
     {
-        public string Key = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects";
+        protected override string Key => @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects";
+
+        // Unverified judgement, and the borderline call in this set.
+        protected override bool AbsenceIsNormal => true;
 
         public WVisualEffects()
         {
             Title = "Visual Effects";
             Info = "This will export all Windows Visual Effects settings. These settings can be found in the GUI by Start menu or Run box 'SystemPropertiesPerformance'.";
             RequiresExplorerRestart = true;
-        }
-
-        public override bool IsInstalled()
-        {
-            return Utils.KeyExists(Key);
-        }
-
-        public override void Backup(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, false);
-        }
-
-        public override void Restore(string path)
-        {
-            Utils.ExportImportRegistryKey(path + Title + ".reg", Key, true);
         }
     }
 }
