@@ -76,31 +76,104 @@ namespace Appcopier
             }
         }
 
-        internal static void ExportImportRegistryKey(string filePath, string registryPath, bool import)
+        private static readonly IRegistryTool DefaultRegistryTool = new RegeditTool();
+
+        /// <summary>
+        /// Exports one registry key and verifies the artifact it was supposed to produce.
+        /// </summary>
+        /// <remarks>
+        /// The verification is not belt-and-braces. Measured on Windows 11, 2026-07-20: regedit /e
+        /// against a key that does not exist returns exit code 0 and writes no file. Checking the
+        /// exit code alone would report success for a backup containing nothing.
+        /// </remarks>
+        internal static StepResult ExportRegistryKey(string filePath, string registryPath,
+                                                     bool absenceIsNormal, IRegistryTool tool = null)
         {
-            string path = $"\"{filePath}\"";
-            string key = $"\"{registryPath}\"";
+            tool = tool ?? DefaultRegistryTool;
 
-            using (Process proc = new Process())
+            KeyProbe probe = ProbeKey(registryPath);
+
+            if (probe == KeyProbe.Indeterminate)
+                return StepResult.Failed(registryPath, "could not read " + registryPath + " to check whether it exists");
+
+            if (probe == KeyProbe.Absent)
             {
-                try
-                {
-                    proc.StartInfo.FileName = "regedit.exe";
-                    proc.StartInfo.UseShellExecute = false;
-                    proc.StartInfo.Verb = "runas";
-
-                    string arguments = import ? $"/s {path} {key}" : $"/e {path} {key}";
-
-                    proc.StartInfo.Arguments = arguments;
-                    proc.Start();
-
-                    proc.WaitForExit();
-                }
-                catch (Exception ex)
-                {
-                    logger.Log(ex.Message);
-                }
+                return absenceIsNormal
+                    ? StepResult.Skipped(registryPath, "not present on this system")
+                    : StepResult.Failed(registryPath, "expected " + registryPath + " is missing");
             }
+
+            ProcessOutcome outcome = tool.Export(filePath, registryPath);
+
+            if (!outcome.Started)
+                return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
+
+            if (outcome.TimedOut)
+                return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.ExitCode != 0)
+                return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
+
+            string readError;
+
+            switch (RegFile.Validate(filePath, out readError))
+            {
+                case RegFileCheck.Missing:
+                    return StepResult.Failed(registryPath, "regedit reported success but wrote no file");
+                case RegFileCheck.Empty:
+                    return StepResult.Failed(registryPath, "regedit wrote an empty file");
+                case RegFileCheck.BadHeader:
+                    return StepResult.Failed(registryPath, "the exported file is not a valid .reg file");
+                case RegFileCheck.Unreadable:
+                    return StepResult.Failed(registryPath, "could not read back the exported file: " + readError);
+                default:
+                    return StepResult.Succeeded(registryPath, "exported " + registryPath);
+            }
+        }
+
+        /// <summary>
+        /// Imports one .reg file, having first checked it is worth importing.
+        /// </summary>
+        /// <remarks>
+        /// The pre-flight matters more than the exit code here. regedit /s returns 0 on a file it
+        /// only partially applied, so a successful run is reported as "applied", never "verified" -
+        /// reading the keys back to prove an import took is Phase 2b. Refusing a malformed file
+        /// BEFORE launching regedit is the one strong guarantee available on this path.
+        /// </remarks>
+        internal static StepResult ImportRegistryKey(string filePath, string registryPath,
+                                                     IRegistryTool tool = null)
+        {
+            tool = tool ?? DefaultRegistryTool;
+
+            string readError;
+
+            switch (RegFile.Validate(filePath, out readError))
+            {
+                case RegFileCheck.Missing:
+                    return StepResult.Skipped(registryPath, "nothing was backed up for this item");
+                case RegFileCheck.Empty:
+                    return StepResult.Failed(registryPath, "the backed-up file is empty - not importing it");
+                case RegFileCheck.BadHeader:
+                    return StepResult.Failed(registryPath, "the backed-up file is not a valid .reg file - not importing it");
+                case RegFileCheck.Unreadable:
+                    // Deliberately NOT worded as "invalid". We could not read it, so we do not know
+                    // whether it is valid - and a locked or ACL-denied file is a different problem
+                    // for the user to fix than a corrupt one.
+                    return StepResult.Failed(registryPath, "could not read the backed-up file: " + readError);
+            }
+
+            ProcessOutcome outcome = tool.Import(filePath);
+
+            if (!outcome.Started)
+                return StepResult.Failed(registryPath, "could not start regedit: " + outcome.Error);
+
+            if (outcome.TimedOut)
+                return StepResult.Failed(registryPath, "regedit did not exit - it may be showing an error dialog");
+
+            if (outcome.ExitCode != 0)
+                return StepResult.Failed(registryPath, "regedit exited with code " + outcome.ExitCode);
+
+            return StepResult.Applied(registryPath, registryPath);
         }
 
         // Reg operations
