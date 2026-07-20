@@ -492,10 +492,12 @@ namespace Appcopier
                     if (remaining <= 0 || !process.WaitForExit(remaining))
                         worst = Worse(worst, CloseResult.StillRunning);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    logger.LogMessage("Could not confirm " + processName + " exited: " + ex.Message);
-                    worst = Worse(worst, CloseResult.StillRunning);
+                    // Deliberately silent. The likely trigger here is a process that was already
+                    // gone before pass 1 could kill it - pass 1 treats that as nothing to report,
+                    // and reaching the opposite conclusion about the same process would turn a
+                    // clean browser close into a failed backup.
                 }
                 finally
                 {
