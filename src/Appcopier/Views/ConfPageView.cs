@@ -162,7 +162,7 @@ namespace Views
                 }
 
                 // Log backed-up elements
-                LogBackedUpElements(CurrentBackupPath, selectedConfigs);
+                LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
 
                 RunSummary summary = RunSummary.For(results, true, RunVerb.Backup);
 
@@ -181,25 +181,19 @@ namespace Views
             btnBackup.Enabled = true;
         }
 
-        // Write a backup_log.txt
-        private void LogBackedUpElements(string backupFolderPath, List<BackupBase> configurations)
+        // Write a backup_log.txt that records outcomes, not just the selection.
+        private void LogBackedUpElements(string backupFolderPath, List<BackupBase> configurations, List<ModuleResult> results)
         {
-            List<string> backedUpElements = new List<string>();
-
-            foreach (BackupBase configuration in configurations)
-            {
-                backedUpElements.Add($"{configuration.Title} ({configuration.GetType().Name})");
-            }
-
             string logFilePath = Path.Combine(backupFolderPath, "backup_log.txt");
 
             try
             {
-                File.WriteAllLines(logFilePath, backedUpElements);
+                string text = BackupLog.Compose(configurations, results, DateTime.Now.ToString());
+                File.WriteAllText(logFilePath, text);
             }
             catch (Exception ex)
             {
-                logger.Log($"Failed to create backup log file: {ex.Message}");
+                logger.LogMessage("Failed to create backup log file: " + ex.Message);
             }
         }
 
