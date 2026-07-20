@@ -22,6 +22,13 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[] { RestoreTarget.Folder(Folder) };
+
+        // "msedge" matches the backup path above: see the matching note in BGoogleChrome.
+        public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+            => new[] { new RestoreCloseRequirement("msedge", "Microsoft Edge", true) };
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();

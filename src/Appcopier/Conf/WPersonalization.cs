@@ -39,6 +39,22 @@ namespace Conf
             return b1;
         }
 
+        // Read from Keys on every access rather than captured once: Keys is a mutable public field
+        // filled by LoadSettings, so a snapshot taken at construction would silently describe a
+        // different set of keys than the one Restore actually imports.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+        {
+            get
+            {
+                List<RestoreTarget> targets = new List<RestoreTarget>();
+
+                foreach (string k in Keys)
+                    targets.Add(RestoreTarget.RegistryKey(k));
+
+                return targets;
+            }
+        }
+
         public override ModuleResult Backup(string path)
         {
             List<StepResult> steps = new List<StepResult>();

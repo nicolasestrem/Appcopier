@@ -22,6 +22,13 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[] { RestoreTarget.Folder(Folder) };
+
+        // "firefox" matches the backup path above: see the matching note in BGoogleChrome.
+        public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+            => new[] { new RestoreCloseRequirement("firefox", "Mozilla Firefox", true) };
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();

@@ -39,6 +39,20 @@ namespace Conf
             return b1;
         }
 
+        // Read from Keys on every access: see the matching note in WPersonalization.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+        {
+            get
+            {
+                List<RestoreTarget> targets = new List<RestoreTarget>();
+
+                foreach (string k in Keys)
+                    targets.Add(RestoreTarget.RegistryKey(k));
+
+                return targets;
+            }
+        }
+
         public override ModuleResult Backup(string path)
         {
             List<StepResult> steps = new List<StepResult>();

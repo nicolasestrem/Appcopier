@@ -22,6 +22,15 @@ namespace Conf
             return Directory.Exists(Folder);
         }
 
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[] { RestoreTarget.Folder(Folder) };
+
+        // "chrome" is the same process name the backup path above closes; the two must not drift,
+        // or the restore would overwrite a profile whose owning process is still holding it open.
+        // Consent is required because closing it discards open tabs the user can see.
+        public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+            => new[] { new RestoreCloseRequirement("chrome", "Google Chrome", true) };
+
         public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();

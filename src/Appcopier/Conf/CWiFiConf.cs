@@ -22,6 +22,17 @@ namespace Conf
             WarningMessage = "Restoring this backup adds every saved network in it back to this machine, for all accounts, not just yours. This includes networks you may have since forgotten.";
         }
 
+        // A command, not a file list: what gets added is one Wi-Fi profile per XML found in the
+        // backup, and netsh installs each machine-wide. The wording says "for all accounts" because
+        // that is the part of this restore a user would not otherwise expect.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[]
+            {
+                RestoreTarget.Command(
+                    "runs netsh to add every saved Wi-Fi network in the backup, with its password, " +
+                    "to this machine for all accounts")
+            };
+
         public override ModuleResult Backup(string path)
         {
             List<StepResult> steps = new List<StepResult>();

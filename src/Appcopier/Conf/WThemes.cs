@@ -55,6 +55,24 @@ namespace Conf
             return b1 || b2;
         }
 
+        // Both halves, in the order RestoreAsync applies them. Read from the fields on every access:
+        // see the matching note in WPersonalization.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+        {
+            get
+            {
+                List<RestoreTarget> targets = new List<RestoreTarget>();
+
+                foreach (string f in Folders)
+                    targets.Add(RestoreTarget.Folder(f));
+
+                foreach (string k in Keys)
+                    targets.Add(RestoreTarget.RegistryKey(k));
+
+                return targets;
+            }
+        }
+
         /// <remarks>
         /// The one module with heterogeneous sub-operations: two folder copies and a registry
         /// export, folded through a single Aggregate. The backup sources use absenceIsNormal=false

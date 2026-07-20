@@ -16,6 +16,17 @@ namespace Conf
             Info = "This will back up and restore TCP/IP network configuration.";
         }
 
+        // A command rather than a list of keys or folders: netsh applies the dump itself, and the
+        // set of interfaces it rewrites is decided by the backup file's contents, not by anything
+        // this module could enumerate up front.
+        public override IReadOnlyList<RestoreTarget> RestoreTargets
+            => new[]
+            {
+                RestoreTarget.Command(
+                    "runs netsh over the backed-up dump, which reapplies its IP addresses, DNS servers, " +
+                    "routes and interface settings to this machine's network adapters")
+            };
+
         public override ModuleResult Backup(string path)
         {
             List<StepResult> steps = new List<StepResult>();

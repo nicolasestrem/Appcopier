@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Appcopier
@@ -30,6 +31,39 @@ namespace Appcopier
 
         public virtual bool IsInstalled()
         { return false; }
+
+        /// <summary>
+        /// What this module's restore overwrites, in the words the confirmation dialog shows.
+        /// </summary>
+        /// <remarks>
+        /// The default is a loud marker for the same reason the Backup/Restore defaults below are a
+        /// failure rather than a skip: a future author who forgets produces something visible in the
+        /// text users read before consenting, not silence. Silence here is worse than a wrong entry,
+        /// because it asks for consent to an operation whose scope was never stated.
+        /// </remarks>
+        public virtual IReadOnlyList<RestoreTarget> RestoreTargets
+            => RestoreTarget.Undeclared(GetType().Name);
+
+        /// <summary>
+        /// Processes that must not be running while this module's restore writes their files.
+        /// </summary>
+        /// <remarks>
+        /// A declaration, not an action. The orchestrator decides and closes; module signatures do
+        /// not change, so no module opens a dialog from the thread it happens to be running on.
+        /// </remarks>
+        public virtual IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
+            => new RestoreCloseRequirement[0];
+
+        /// <summary>
+        /// Whether this module's restore writes anything, and so needs a pre-restore snapshot.
+        /// </summary>
+        /// <remarks>
+        /// Defaults to true so a future module is snapshotted unless its author deliberately opts
+        /// out. This is the same judgement call as absenceIsNormal and fails the same way in both
+        /// directions: set wrong here, a module either pays for a snapshot it cannot use or is
+        /// silently exempted from the one thing that would undo it.
+        /// </remarks>
+        public virtual bool RestoreMakesChanges => true;
 
         /// <remarks>
         /// The default is a FAILURE, not a Skip. It is unreachable for all 23 shipped modules -
