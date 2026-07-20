@@ -158,19 +158,34 @@ namespace Appcopier
                     return opened != null ? KeyProbe.Present : KeyProbe.Absent;
                 }
             }
-            catch (System.Security.SecurityException)
+            catch (System.Security.SecurityException ex)
             {
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException ex)
             {
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 // A malformed path or an unexpected provider error. Not knowing is the honest answer.
-                return KeyProbe.Indeterminate;
+                return Undetermined(key, ex);
             }
+        }
+
+        /// <summary>
+        /// Records why a key could not be probed, then reports that we could not tell.
+        /// </summary>
+        /// <remarks>
+        /// The logging is the point of the helper. Returning Indeterminate without recording the
+        /// cause would leave the user with "could not read this key" and no way to learn whether
+        /// that was a permission problem, a malformed path, or a provider fault - which is the same
+        /// silent discard this whole phase exists to remove.
+        /// </remarks>
+        private static KeyProbe Undetermined(string key, Exception ex)
+        {
+            logger.LogMessage("Could not probe " + key + ": " + ex.Message);
+            return KeyProbe.Indeterminate;
         }
 
         // Restart explorer.exe if required for back up closure

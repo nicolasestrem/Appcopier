@@ -46,5 +46,25 @@ namespace Appcopier.Tests
         [Fact]
         public void KeyExists_MalformedKey_ReturnsFalseInsteadOfThrowing()
             => Assert.False(Utils.KeyExists(@"NOT_A_HIVE\whatever"));
+
+        // --- Indeterminate: the state this task exists to create ---
+        //
+        // HKLM\SECURITY is ACL-restricted to SYSTEM, so OpenSubKey throws SecurityException for
+        // standard users AND for administrators. Verified on this machine, 2026-07-20, unelevated.
+        // Without this test the catch blocks - the only genuinely new logic here - have no coverage
+        // at all, and the Absent-vs-Indeterminate distinction rests entirely on a code comment.
+        //
+        // NOTE for anyone seeing this fail: that means the key became readable, not that ProbeKey
+        // regressed. Check the hive's ACL before changing the assertion.
+
+        [Fact]
+        public void ProbeKey_AccessDeniedKey_IsIndeterminateNotAbsent()
+            => Assert.Equal(KeyProbe.Indeterminate, Utils.ProbeKey(@"HKEY_LOCAL_MACHINE\SECURITY"));
+
+        // The deliberate asymmetry: the backup path treats Indeterminate as a failure, but the
+        // tree-build shim must map it to false, so an unprobeable module is never auto-selected.
+        [Fact]
+        public void KeyExists_AccessDeniedKey_IsFalse()
+            => Assert.False(Utils.KeyExists(@"HKEY_LOCAL_MACHINE\SECURITY"));
     }
 }
