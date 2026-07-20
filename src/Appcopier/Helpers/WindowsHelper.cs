@@ -412,19 +412,32 @@ namespace Appcopier
         }
 
         /// <summary>
+        /// The shared budget for the wait pass in <see cref="CloseProcess"/>, in milliseconds.
+        /// </summary>
+        /// <remarks>
+        /// Shared across every process in the tree, not five seconds each - a bounded per-process
+        /// wait is still unbounded in aggregate when Chrome yields 10-30 chrome.exe entries, and that
+        /// unbounded wait runs synchronously under an async void click handler with no dispatch off
+        /// the UI thread, so it froze the window instead of the process it was meant to bound.
+        /// </remarks>
+        private const int CloseTimeoutMs = 5000;
+
+        /// <summary>
         /// Asks every instance of a process to terminate.
         /// </summary>
         /// <remarks>
-        /// The guard is the point. Kill() throws InvalidOperationException when the process exited
-        /// between enumeration and the call - likely, not exotic, because Chrome is a whole tree of
-        /// child processes that come and go - and Win32Exception when access is denied. The browser
-        /// modules reach this from an async void click handler, so an escape here took down the
-        /// entire run and every result collected with it.
+        /// Two passes over the same process list, sharing one deadline, rather than kill-then-wait
+        /// per process. The guard is still the point: Kill() throws InvalidOperationException when
+        /// the process exited between enumeration and the call - likely, not exotic, because Chrome
+        /// is a whole tree of child processes that come and go - and Win32Exception when access is
+        /// denied. The browser modules reach this from an async void click handler, so an escape
+        /// here took down the entire run and every result collected with it.
         ///
-        /// Waits, bounded, after killing. Kill() is asynchronous, so without this the caller starts
-        /// copying while the process is still flushing and releasing file handles - a just-killed
-        /// Chrome still holds its SQLite files, so the copy that follows hits locked files. See the
-        /// wait itself for why five seconds.
+        /// Pass 1 kills every process with no waiting. Pass 2 waits on each against the remaining
+        /// shared budget. Kill() is asynchronous, so without waiting at all the caller starts copying
+        /// while the process is still flushing and releasing file handles - a just-killed Chrome
+        /// still holds its SQLite files, so the copy that follows hits locked files. See
+        /// <see cref="CloseTimeoutMs"/> for why the budget is shared instead of per process.
         /// </remarks>
         public static CloseResult CloseProcess(string processName)
         {
@@ -444,18 +457,12 @@ namespace Appcopier
 
             CloseResult worst = CloseResult.Exited;
 
+            // Pass 1: kill everything, no waiting. Handles stay open - pass 2 needs them.
             foreach (Process process in processes)
             {
                 try
                 {
                     process.Kill();
-
-                    // Bounded. Kill() is asynchronous, so without this the caller starts copying
-                    // while the process is still flushing and releasing file handles. Five seconds
-                    // is long enough for a browser tree to unwind and short enough that a wedged
-                    // process cannot stall a backup run.
-                    if (!process.WaitForExit(5000))
-                        worst = Worse(worst, CloseResult.StillRunning);
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
@@ -469,6 +476,25 @@ namespace Appcopier
                 catch (Exception ex)
                 {
                     logger.LogMessage("Could not close " + processName + ": " + ex.Message);
+                    worst = Worse(worst, CloseResult.StillRunning);
+                }
+            }
+
+            // Pass 2: wait on each against the remaining shared budget, then dispose.
+            Stopwatch waited = Stopwatch.StartNew();
+
+            foreach (Process process in processes)
+            {
+                try
+                {
+                    int remaining = CloseTimeoutMs - (int)waited.ElapsedMilliseconds;
+
+                    if (remaining <= 0 || !process.WaitForExit(remaining))
+                        worst = Worse(worst, CloseResult.StillRunning);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogMessage("Could not confirm " + processName + " exited: " + ex.Message);
                     worst = Worse(worst, CloseResult.StillRunning);
                 }
                 finally
