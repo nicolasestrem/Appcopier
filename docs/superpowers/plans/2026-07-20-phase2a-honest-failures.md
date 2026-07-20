@@ -347,7 +347,10 @@ namespace Appcopier
             // is exactly what GGaming and WTelemetry do on a stock consumer machine.
             if (ok.Length == 0)
             {
-                string reason = "nothing to back up: " +
+                // "nothing to do", not "nothing to back up": Aggregate serves both directions, and
+                // the restore path reaches this line too. A hardcoded backup verb produced
+                // "nothing to back up: handled interactively in the app restore dialog".
+                string reason = "nothing to do: " +
                     string.Join("; ", skipped.Select(s => s.Reason).Distinct());
 
                 return new ModuleResult(ResultState.Skipped, reason, all);
@@ -2122,9 +2125,12 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
         /// modules reach this from an async void click handler, so an escape here took down the
         /// entire run and every result collected with it.
         ///
-        /// Deliberately does NOT wait for exit. Adding a bounded wait would change what gets copied
-        /// (a still-flushing browser holds its SQLite files), which is a reliability fix rather than
-        /// a reporting one, and it belongs with the browser-module work.
+        /// Waits, bounded, after killing. An earlier draft deliberately did not, on the grounds that
+        /// waiting changes what gets copied rather than what gets reported - true, but it made
+        /// agreeing to close the browser USELESS: a just-killed Chrome still holds its SQLite
+        /// handles, the copy then hits locked files, and one failed file fails the step. Every
+        /// cooperative user got a red row. Say no and you get Skipped, say yes and you get Failed,
+        /// and either way you have no browser backup, which makes the prompt a dead control.
         /// </remarks>
         public static CloseResult CloseProcess(string processName)
         {
@@ -2149,6 +2155,13 @@ In `src/Appcopier/Helpers/WindowsHelper.cs`, replace `IsProcessRunning`, `CloseP
                 try
                 {
                     process.Kill();
+
+                    // Bounded. Kill() is asynchronous, so without this the caller starts copying
+                    // while the process is still flushing and releasing file handles. Five seconds
+                    // is long enough for a browser tree to unwind and short enough that a wedged
+                    // process cannot stall a backup run.
+                    if (!process.WaitForExit(5000))
+                        worst = Worse(worst, CloseResult.StillRunning);
                 }
                 catch (System.ComponentModel.Win32Exception ex)
                 {
@@ -2605,6 +2618,15 @@ All three are the same code with the folder and process name swapped. `BGoogleCh
 `msedge`. For Edge, word the absent-folder reason as *"no Edge profile data found"* rather than
 *"Edge is not installed"* — absence there usually means the browser was never launched.
 
+**That custom wording is backup-only.** On the restore path, an absent source means the *backup
+folder* has no Edge data — saying "no Edge profile data found" then makes a claim about the user's
+live machine that is not what was checked. Use the custom reason only in `BackupAsync`; let
+`RestoreAsync` fall through to `CopyResult.ToStep`'s default wording.
+
+**Step target convention:** pass `Title` as the `StepResult` target, never a full filesystem path.
+`Aggregate` renders the target into user-facing text, so a path produces rows reading
+`captured C:\Windows\Web\Wallpaper`. `WThemes` is the module that gets this wrong if unattended.
+
 - [ ] **Step 6: Migrate `WNetworkConf` and `AStoreApps`**
 
 `WNetworkConf` already consumes its exit code correctly (`:24`, `:27`) — keep that logic and wrap the
@@ -2764,6 +2786,14 @@ close prompt, which was previously a bare return reported as success."
 - Produces: `internal enum RunState { Problems, Done, NothingDone, DidNotRun }`; `internal sealed class RunSummary` with `RunState State`, `string Headline`, `string Detail`, `MessageBoxIcon Icon`, and `internal static RunSummary For(IReadOnlyList<ModuleResult> results, bool ran, RunVerb verb)`.
 
 `RunVerb` carries **two** words because one cannot serve both sentences: the success headline needs a past-tense verb ("Backed up 3 items") while the did-not-run message needs a noun ("Restore did not run"). A single string produces "Restored did not run."
+
+**The `ran` parameter is load-bearing, not decorative.** `PerformRestoration` returns an **empty
+list** when `CurrentRestorePath` is blank or missing, because the loop never executes — so an empty
+list cannot distinguish "the backup folder was not found" from "nothing was selected". `RunSummary`
+must not try to infer it. The caller passes
+`ran: CurrentRestorePath != "" && Directory.Exists(CurrentRestorePath)`, and the two cases produce
+different dialogs. Inferring from the list alone would reproduce the exact silent no-op this phase
+exists to remove.
 
 ```csharp
 internal sealed class RunVerb
