@@ -8,7 +8,10 @@ namespace Appcopier
         Valid,
         Missing,
         Empty,
-        BadHeader
+        BadHeader,
+
+        /// <summary>Present, but we could not read it. Says nothing about its contents.</summary>
+        Unreadable
     }
 
     /// <summary>
@@ -25,6 +28,14 @@ namespace Appcopier
 
         internal static RegFileCheck Validate(string path)
         {
+            string ignored;
+            return Validate(path, out ignored);
+        }
+
+        internal static RegFileCheck Validate(string path, out string error)
+        {
+            error = null;
+
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 return RegFileCheck.Missing;
 
@@ -37,11 +48,14 @@ namespace Appcopier
                 // header would NOT match. Pinned to this call deliberately.
                 text = File.ReadAllText(path);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // Unreadable is not the same as absent, but for the caller's purposes both mean
-                // "cannot be used", and the caller reports the path either way.
-                return RegFileCheck.BadHeader;
+                // NOT BadHeader. We did not read the contents, so we know nothing about them -
+                // saying "not a valid .reg file" here would send someone hunting for a corrupt
+                // backup when what they have is a locked file or a permissions problem. Same rule
+                // this design applies to registry keys: could-not-tell is its own answer.
+                error = ex.Message;
+                return RegFileCheck.Unreadable;
             }
 
             if (string.IsNullOrWhiteSpace(text))

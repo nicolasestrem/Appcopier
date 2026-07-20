@@ -103,5 +103,44 @@ namespace Appcopier.Tests
 
             Assert.Equal(RegFileCheck.BadHeader, RegFile.Validate(p));
         }
+
+        // A present-but-unreadable file says NOTHING about its contents. Reporting it as
+        // BadHeader would tell the user their backup is corrupt when it may be perfectly good
+        // and merely locked.
+        [Fact]
+        public void Validate_LockedFile_IsUnreadableNotBadHeader()
+        {
+            string p = Write("locked.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            using (new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Assert.Equal(RegFileCheck.Unreadable, RegFile.Validate(p));
+            }
+        }
+
+        [Fact]
+        public void Validate_LockedFile_ReportsWhyItCouldNotBeRead()
+        {
+            string p = Write("locked2.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            using (new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                string error;
+                RegFile.Validate(p, out error);
+
+                Assert.False(string.IsNullOrWhiteSpace(error));
+            }
+        }
+
+        [Fact]
+        public void Validate_ReadableFile_ReportsNoError()
+        {
+            string p = Write("clean.reg", RegFile.Header + "\r\n", new UnicodeEncoding(false, true));
+
+            string error;
+            RegFile.Validate(p, out error);
+
+            Assert.Null(error);
+        }
     }
 }
