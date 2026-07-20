@@ -415,6 +415,41 @@ Kept so overturned claims are not reintroduced.
   scope allowed, never rescue one the scope refused, because a module the scope allowed has a snapshot
   on disk and a module it refused does not.
 
+- *"Fixing the snapshot SET was enough."* It was not, and the same defect was still reachable one
+  layer down. `RestoreScope` settles which modules the snapshot must capture; nothing checked what the
+  snapshot then **reported**. `SnapshotGate.Evaluate` counted `Succeeded`, collected `Failed`, and
+  silently dropped `Skipped` — so a module could be in the snapshot set, come back `Skipped`, and be
+  restored with the gate reporting `Complete` and `restore_log.txt` stating that a snapshot completed.
+
+  The reachable chain ran through module code, which is why reviewing the pipeline alone missed it.
+  The snapshot calls `BackupAsync`, and the three browser modules prompt there when they find their
+  process running — a process this pipeline had already closed, but which relaunches during a profile
+  copy (background mode, or the user reopening it). That prompt is a `MessageBox` raised from a
+  thread-pool thread while the window is disabled, so it paints behind the app; answering "no" returns
+  `Skipped`, which the gate dropped.
+
+  Both halves are corrected. Modules no longer prompt when the caller has already taken consent
+  (`BackupBase.AllowPrompts`), which the snapshot sets — so during a snapshot a browser module can
+  only succeed or fail, never decline. This is the rule this spec already stated for the restore path,
+  now also true of the snapshot that precedes it. And the gate reports every skip by name rather than
+  dropping it, with `PartiallyCaptured` separated from `Complete`: a run that saved four of five items
+  must not read the same as one that saved all five.
+
+- *"An empty snapshot set means nothing needed capturing."* Two different facts share that shape.
+  Selecting only Chrome and leaving its consent box unticked empties the set because everything was
+  **refused**, and the gate then told the user "none of the selected items change anything when
+  restored" — false, and in the log as well as the dialog. `RestoreScope` knows which it is, so the
+  blocked count is passed to the gate and the two cases now read differently.
+
+- *"The suite's intermittent test host crash was thread-pool starvation under parallel collections."*
+  Wrong, and the workaround built on it (an assembly-wide `DisableTestParallelization`) was removed
+  rather than kept. `LogHelper`'s target is static, and `LogHelperTests` set it to a `RichTextBox` and
+  never cleared it, so every later test logged into a control on a thread with no message pump —
+  `Invoke` waiting on a pump that never runs, and a dead host if the control was finalized meanwhile.
+  It aborted roughly two runs in five, always with a `CopyFolderTests` locked-file test in flight,
+  because those log once per failed file. Reproduced on `main`, so it predates this branch. With the
+  leak fixed the suite is stable parallel and about three times faster.
+
 - *"Post-import `Indeterminate` should fail, like the export path."* Wrong, and backwards: on export the
   probe is the only evidence; post-import, exit code 0 already supports "applied". Failing there would
   report a false failure on every unelevated `HKLM` import — the cry-wolf direction.
