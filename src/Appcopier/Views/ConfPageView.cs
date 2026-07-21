@@ -83,6 +83,17 @@ namespace Views
             AddConfiguration(new DTouchpad(), "Devices");
             AddConfiguration(new GGaming(), "Gaming");
             AddConfiguration(new CWiFiConf(), "Credentials");
+            AddConfiguration(new ETerminal(), "Developer");
+            AddConfiguration(new EVSCode(), "Developer");
+            AddConfiguration(new ESsh(), "Developer");
+            AddConfiguration(new EEnvironment(), "Developer");
+
+            // Directly after EEnvironment on purpose: the two read one key and differ only in what
+            // they keep, and the tree checkbox is the opt-in. Adjacent rows are what makes that a
+            // choice the user can see rather than one buried in the list.
+            AddConfiguration(new EEnvironmentFiltered(), "Developer");
+
+            AddConfiguration(new EHosts(), "Developer");
 
             // Add event handler for button click
             btnRestartExplorer.Click += btnRestartExplorer_Click;
@@ -401,7 +412,10 @@ namespace Views
 
             foreach (BackupBase module in modules)
             {
-                if (!module.HasBackupIn(CurrentRestorePath))
+                // RestoreScope's, deliberately not a second copy: this asks the same question of
+                // the same modules that Evaluate asks moments later, and the two must not be able
+                // to disagree. See the remarks on RestoreScope.HasBackup.
+                if (!RestoreScope.HasBackup(module, CurrentRestorePath))
                     continue;
 
                 foreach (RestoreCloseRequirement requirement in

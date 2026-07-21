@@ -49,6 +49,28 @@ namespace Appcopier
         public string FirstError { get; set; }
 
         /// <summary>
+        /// The destination file was opened for writing, and therefore truncated, before the copy
+        /// failed. Set only by <see cref="Utils.CopyFile"/>; read only by <see cref="ToFileStep"/>.
+        /// </summary>
+        /// <remarks>
+        /// This exists because CopyFile writes in place with FileMode.Create, which truncates as
+        /// part of a successful open. Without it every failure reads "could not be copied", which
+        /// tells the user their file was left alone - true when the copy died reaching for the
+        /// SOURCE, false when it died mid-write, and the difference is whether the live
+        /// %WINDIR%\System32\drivers\etc\hosts they are looking at is intact or empty.
+        ///
+        /// It was accurate before the atomic write was reverted, because the temp-file swap really
+        /// did leave the destination untouched on failure. Reverting that made one existing sentence
+        /// wrong without touching the sentence, which is the kind of drift a reason string cannot
+        /// signal on its own.
+        ///
+        /// Set AFTER the FileStream constructor returns, deliberately: FileMode.Create truncates as
+        /// part of opening, so a constructor that throws has not truncated anything and the
+        /// destination is genuinely unchanged.
+        /// </remarks>
+        public bool DestinationTruncated { get; set; }
+
+        /// <summary>
         /// Maps the tally onto a step outcome.
         /// </summary>
         /// <remarks>
@@ -101,6 +123,59 @@ namespace Appcopier
 
             return StepResult.Succeeded(target,
                 string.Format("copied {0} file(s)", FilesCopied));
+        }
+
+        /// <summary>
+        /// Maps the tally of a SINGLE-FILE copy onto a step outcome.
+        /// </summary>
+        /// <remarks>
+        /// The same decision ladder as <see cref="ToStep"/>, differing only in the nouns. It exists
+        /// because ToStep's absent-and-not-normal wording is "expected folder for X is missing",
+        /// and telling a user their hosts FOLDER is missing describes something that was never
+        /// looked for. Wording is the product here - a reason that misnames what is missing sends
+        /// the reader to the wrong place on the disk - so the wording lives next to the mapping it
+        /// belongs to rather than being patched at each of the five call sites.
+        ///
+        /// FoldersFailed is not consulted: CopyFile never sets it. A directory it could not create
+        /// surfaces as the file failure it caused, which is the fact the user can act on.
+        /// </remarks>
+        /// <param name="absentReason">
+        /// As <see cref="ToStep"/>: restore callers must supply it, because on that side the
+        /// missing thing is the backup and not the live machine.
+        /// </param>
+        public StepResult ToFileStep(string target, bool absenceIsNormal, string absentReason = null)
+        {
+            if (SourceMissing)
+            {
+                return absenceIsNormal
+                    ? StepResult.Skipped(target, absentReason ?? "not present on this system")
+                    : StepResult.Failed(target, "expected file " + target + " is missing");
+            }
+
+            // The two failures are worded apart because the user's next action differs. A copy that
+            // never reached the destination leaves nothing to repair; one that died mid-write has
+            // left a truncated file in place, and for EHosts that file is machine-wide and read by
+            // everything that resolves a name. Saying "could not be copied" in that second case is
+            // technically true about the copy and materially false about the file.
+            if (FilesFailed > 0)
+            {
+                return DestinationTruncated
+                    ? StepResult.Failed(target,
+                        "the copy failed after it had begun writing, so " + target + " is now " +
+                        "incomplete and should be restored again or repaired by hand: " + FirstError)
+                    : StepResult.Failed(target,
+                        "could not be copied, and " + target + " was left unchanged: " + FirstError);
+            }
+
+            if (FilesCopied == 0)
+            {
+                // Unreachable through CopyFile, which always sets exactly one of the three. Kept
+                // as a failure rather than a Skip so a future caller that folds a hand-built
+                // CopyResult through here cannot get silence out of a copy that never happened.
+                return StepResult.Failed(target, "the copy reported neither success nor failure");
+            }
+
+            return StepResult.Succeeded(target, "copied 1 file");
         }
     }
 }

@@ -20,6 +20,187 @@ namespace Appcopier
             return result;
         }
 
+        /// <summary>
+        /// Copies exactly one file, creating the destination directory if it is missing.
+        /// </summary>
+        /// <remarks>
+        /// Returns the same tally type as <see cref="CopyFolder"/> so both directions fold through
+        /// one Skipped-vs-Failed ladder. It does not throw: a copy that fails comes back as
+        /// FilesFailed=1 with FirstError set, because a module that cannot distinguish "copied" from
+        /// "threw and was caught" is the failure mode Phase 2a exists to remove.
+        ///
+        /// Creating the destination directory is load-bearing rather than convenience: a machine
+        /// being restored onto may never have run ssh, so %USERPROFILE%\.ssh does not exist, and
+        /// failing there would report "could not be copied" for a restore that is simply first.
+        /// </remarks>
+        internal static async Task<CopyResult> CopyFile(string source, string destination)
+        {
+            CopyResult result = new CopyResult();
+
+            FileStream sourceStream;
+
+            // Absence is decided by the exception the OPEN raises, never by File.Exists - the rule
+            // RestAppsForm.AppExport.Read spells out, applied here. File.Exists answers a question
+            // about metadata, and a false from it folds "there is nothing here" together with "I
+            // was not allowed to find out". Only the first is normal, and it maps to Skipped for
+            // four of the five modules, so believing the second would report a settings file that
+            // was never captured as one the machine does not have.
+            //
+            // Measured on Windows 11, 2026-07-21, which is why the open is split from the copy
+            // rather than wrapped with it:
+            //   existing dir + missing file             -> FileNotFoundException
+            //   missing dir                             -> DirectoryNotFoundException
+            //   file used as a directory component      -> DirectoryNotFoundException
+            //   source path that is a directory         -> UnauthorizedAccessException
+            //   parent denied ListDirectory+ReadData    -> File.Exists TRUE, open throws
+            //   parent icacls /inheritance:r /deny (RX) -> File.Exists FALSE, open throws
+            //                                              UnauthorizedAccessException
+            //
+            // The last two lines are the whole reason this is not an Exists probe, and the gap
+            // between them is a trap worth naming: the first ACL leaves Traverse and
+            // ReadAttributes intact, so Exists still answers true and an Exists-based probe looks
+            // correct. Deny ReadAndExecute - which is what `icacls /inheritance:r /deny (RX)`
+            // does, and what the standard OpenSSH "permissions are too open" remedy does to
+            // %USERPROFILE%\.ssh - and Exists answers FALSE for a file that is sitting right
+            // there. An Exists probe would then set SourceMissing, and with AbsenceIsNormal true
+            // (ESsh, ETerminal, EVSCode) the user gets a green "not present on this system" over
+            // a file that exists and was never copied, with no backup directory written at all.
+            //
+            // That was this method's behaviour as first written, and the first measurement taken
+            // here used the narrower ACL and wrongly cleared it. Recorded because the measurement
+            // that exonerates a probe can be the one that did not deny enough.
+            try
+            {
+                sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
+            }
+            catch (FileNotFoundException)
+            {
+                result.SourceMissing = true;
+                logger.LogMessage("Source file does not exist: " + source);
+                return result;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // The folder the file would live in is not there - the app was never installed.
+                // Deliberately an absence here, unlike in RestAppsForm, where the folder had just
+                // been enumerated off disk and its disappearance meant the world moved underneath
+                // us. Nothing enumerated anything here: these paths are composed from Data.* roots
+                // for software that may simply not be present.
+                result.SourceMissing = true;
+                logger.LogMessage("Source folder does not exist: " + source);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                // Locked, access-denied, malformed, too long. We did not establish absence, we
+                // failed to look, and that is a failure rather than a reassuring skip.
+                result.FilesFailed++;
+                result.FirstError = source + ": " + ex.Message;
+                logger.LogMessage("Could not read source file " + source + ": " + ex.Message);
+                return result;
+            }
+
+            using (sourceStream)
+            {
+                // Written STRAIGHT INTO the destination with FileMode.Create. This method briefly
+                // wrote to a temporary file and renamed it into place, for atomicity, and that was
+                // reverted on 2026-07-21 after the trade was examined against the pre-restore
+                // snapshot. The reasoning is recorded because the atomic version looks like the
+                // more careful one and someone will want it back.
+                //
+                // A rename makes the content swap atomic: the live file is the old contents or the
+                // new ones, never a prefix. What it costs is the DIRECTORY ENTRY. Renaming replaces
+                // the entry, so a destination that is a link stops being one - measured on Windows
+                // 11, 2026-07-21, with a hard link: afterwards the link held the new content and
+                // the file it was linked to still held the old, no longer the same file.
+                //
+                // Line those two up against what the restore path already guarantees:
+                //
+                //                        | torn file (what atomicity prevents) | broken link (what it costs)
+                //   reported to the user | yes* - the step is Failed           | NO - every row green
+                //   undone by a snapshot | yes - old contents are in it        | NO - it captures
+                //                        |                                     | contents, not links
+                //
+                // * with one exception, because the claim has to be exact if the trade rests on it.
+                //   A torn file has three triggers: disk full, a source read error, and the app
+                //   being killed mid-restore. The first two throw, are caught below, and become a
+                //   Failed step the user sees. A KILL reports nothing at all - PerformRestoration
+                //   never returns, so no summary is shown and restore_log.txt is never written.
+                //   The snapshot half still holds in that case (it is taken before the restore
+                //   begins), so the file is recoverable, but the user is not told it needs
+                //   recovering. So: two of three triggers are loud, one is silent-but-recoverable,
+                //   and a broken link is silent-and-permanent. The trade still runs the same way,
+                //   and now it says so accurately rather than by rounding the kill case up to
+                //   "reported".
+                //
+                // Atomicity was buying protection from a failure that is loud and recoverable, and
+                // paying with one that is silent and permanent. Both columns point the same way, so
+                // the swap goes and Create comes back.
+                //
+                // Who the link case reaches: developers who symlink .ssh\config or VS Code's
+                // settings.json into a git-managed dotfiles repo - a common arrangement among
+                // exactly the people these modules are for. Create follows the link and updates the
+                // file behind it, which is what every editor saving that path already does.
+                //
+                // The rejected middle option was to detect a link and write through it while
+                // keeping the rename otherwise. That needs a branch this environment CANNOT test:
+                // creating a symbolic link requires elevation or Developer Mode, so the symlink arm
+                // would ship unexercised. An untested branch guarding a silent failure is worse
+                // than not having the branch, and writing directly gets link-preservation
+                // structurally instead - the same reason ESsh excludes private keys by never
+                // enumerating the directory rather than by filtering it.
+                //
+                // Residual, stated rather than buried: Create truncates before the first byte, so a
+                // copy that dies part-way (disk full, source read error, the app killed
+                // mid-restore) leaves the destination empty or half-written. That is the failure in
+                // the left column above - Failed step plus snapshot for the first two, snapshot
+                // only for the kill, per the footnote - and for the files these modules carry, all
+                // a few kilobytes, the window is microseconds. A real cost, accepted knowingly.
+                //
+                // Create also PRESERVES the destination's security descriptor, because it truncates
+                // an existing file rather than replacing it. That matters on .ssh\config, whose
+                // recommended permissions are an explicit non-inheriting ACE, and on hosts, which
+                // can carry an anti-tamper ACE from EDR or GPO. The temp-file version had to reach
+                // for File.Replace to hold this property (File.Move(overwrite) handed the
+                // destination the temp file's freshly inherited descriptor - measured: protected
+                // True -> False, 1 explicit rule -> 7 inherited). Writing in place gets it for
+                // free, and CopyFileTests pins it so a future rewrite cannot quietly lose it.
+                try
+                {
+                    string destinationDir = Path.GetDirectoryName(destination);
+
+                    if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
+                        Directory.CreateDirectory(destinationDir);
+
+                    long length = sourceStream.Length;
+
+                    using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                    {
+                        // The open has already truncated the destination. Recorded HERE - after the
+                        // constructor returned, before a single byte is written - because that is
+                        // the exact instant the live file stops being intact, and ToFileStep needs
+                        // to know it to avoid telling the user their file was left alone.
+                        result.DestinationTruncated = true;
+
+                        await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
+                    }
+
+                    result.FilesCopied++;
+                    result.BytesCopied += length;
+                }
+                catch (Exception ex)
+                {
+                    result.FilesFailed++;
+                    if (result.FirstError == null)
+                        result.FirstError = source + ": " + ex.Message;
+
+                    logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
+                }
+            }
+
+            return result;
+        }
+
         private static async Task CopyFolderInto(string source, string destination,
                                                  CopyResult result, bool isRoot)
         {

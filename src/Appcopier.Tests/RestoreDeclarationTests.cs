@@ -32,7 +32,10 @@ namespace Appcopier.Tests
         {
             List<BackupBase> modules = Modules().ToList();
 
-            Assert.Equal(19, modules.Count);
+            // 19 before Phase 3b, plus the six Developer-category modules it added. Six rather than
+            // five because EEnvironment ships in two variants - the plain export and the opt-in
+            // filtered one - which are separate tree entries by design, not a duplicate.
+            Assert.Equal(25, modules.Count);
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
@@ -95,12 +98,13 @@ namespace Appcopier.Tests
             Assert.False(req.NeedsConsent);
         }
 
-        // Every other module closes nothing, so a close requirement appearing anywhere else is a
-        // new prompt nobody decided to add. The three browser modules, which declared consented
-        // closes, were retired in Phase 3a; consented closes return with the 3b dev-tooling
-        // modules, and this roster is where they get recorded.
+        // Every module outside this roster closes nothing, so a close requirement appearing
+        // anywhere else is a new prompt nobody decided to add. The three browser modules, which
+        // declared consented closes, were retired in Phase 3a; the roster was empty apart from
+        // APinnedApps until Phase 3b, whose Terminal and VS Code modules are the consented closes
+        // this list was left open for.
         [Fact]
-        public void OnlyPinnedApps_DeclaresACloseRequirement()
+        public void OnlyTheRecordedRoster_DeclaresCloseRequirements()
         {
             string[] declaring = Modules()
                 .Where(m => m.ProcessesToCloseBeforeRestore.Count > 0)
@@ -108,7 +112,23 @@ namespace Appcopier.Tests
                 .OrderBy(n => n)
                 .ToArray();
 
-            Assert.Equal(new[] { "APinnedApps" }, declaring);
+            Assert.Equal(new[] { "APinnedApps", "ETerminal", "EVSCode" }, declaring);
+        }
+
+        // Consent is the whole decision on RestoreCloseRequirement, so which modules ask for it is
+        // pinned separately from which modules close something. APinnedApps deliberately does not
+        // ask (Windows restarts the Start menu on its own); both 3b modules do, because closing
+        // them costs the user shell sessions and unsaved editor buffers.
+        [Fact]
+        public void OnlyTheDeveloperModules_AskForCloseConsent()
+        {
+            string[] consenting = Modules()
+                .Where(m => m.ProcessesToCloseBeforeRestore.Any(r => r != null && r.NeedsConsent))
+                .Select(m => m.GetType().Name)
+                .OrderBy(n => n)
+                .ToArray();
+
+            Assert.Equal(new[] { "ETerminal", "EVSCode" }, consenting);
         }
 
         [Fact]
@@ -131,7 +151,13 @@ namespace Appcopier.Tests
                 .Where(m => m is RegistryModule)
                 .ToList();
 
-            Assert.Equal(9, registryModules.Count);
+            // 9 before Phase 3b, plus EEnvironment and EEnvironmentFiltered - both plain single-key
+            // registry modules despite shipping with the file-based Developer set.
+            //
+            // Those two declare the SAME key, and this test is fine with that: it asserts each
+            // module declares the key it writes, not that keys are unique across modules. Two
+            // modules over one key is this pair's whole design - they differ in what they keep.
+            Assert.Equal(11, registryModules.Count);
 
             foreach (BackupBase m in registryModules)
             {
@@ -293,14 +319,55 @@ namespace Appcopier.Tests
             Assert.True(RestoreTarget.Undeclared("SomeModule").Single().IsUndeclared);
         }
 
-        // Every module that closes something must be able to say whether the backup holds anything
-        // for it, because closing is what costs the user work. Answering against a real folder
-        // rather than a fake: the whole point is the on-disk layout the module's own restore reads.
-        [Theory]
-        [InlineData(typeof(Conf.APinnedApps))]
-        public void ModulesThatCloseSomething_KnowWhetherTheBackupHoldsAnythingForThem(Type type)
+        // Every module that closes something must say NO to an empty backup, because closing is
+        // what costs the user work - shell sessions, unsaved editor buffers - and a restore with
+        // nothing to copy must never be worth that.
+        //
+        // Reflection-driven rather than an [InlineData] roster. It was a Theory with a single
+        // APinnedApps row through Phase 3a, when APinnedApps was the only module closing anything;
+        // 3b added two more and the roster did not follow, which left ETerminal with no direct
+        // coverage at all. That is the "hand-written list a forgetful author also forgets to
+        // extend" this file warns about at the top, having happened to this file.
+        //
+        // Only the negative direction is swept, and deliberately: what counts as "something to
+        // restore" differs by shape - a directory for a FolderModule, a named artifact inside it
+        // for a FileModule - so the positive case is asserted per shape in FolderModuleTests,
+        // FileModuleTests and VSCodeModuleTests. An empty backup meaning "no" is the invariant
+        // they all genuinely share.
+        [Fact]
+        public void EveryModuleThatClosesSomething_SaysNoToAnEmptyBackup()
         {
-            BackupBase module = (BackupBase)Activator.CreateInstance(type);
+            List<BackupBase> closing = Modules()
+                .Where(m => m.ProcessesToCloseBeforeRestore.Count > 0)
+                .ToList();
+
+            // If this trips, the sweep found nothing and is no longer protecting anything.
+            Assert.NotEmpty(closing);
+
+            string root = Path.Combine(Path.GetTempPath(), "achas_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+
+            try
+            {
+                foreach (BackupBase module in closing)
+                {
+                    Assert.False(module.HasBackupIn(root),
+                        module.GetType().Name + " would close its process for an empty backup");
+                }
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        // APinnedApps is a FolderModule, so for it the directory IS the artifact - its restore
+        // copies the folder wholesale. Kept as its own case now that the sweep above covers only
+        // the shared negative direction.
+        [Fact]
+        public void PinnedApps_TreatsItsBackupDirectoryAsSomethingToRestore()
+        {
+            BackupBase module = new APinnedApps();
 
             string root = Path.Combine(Path.GetTempPath(), "achas_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -315,6 +382,19 @@ namespace Appcopier.Tests
             finally
             {
                 Directory.Delete(root, recursive: true);
+            }
+        }
+
+        // A null entry in a close declaration reaches the consent dialog's rendering, which is
+        // user-facing text at a consent boundary. RestoreTargets gets this assertion; close
+        // requirements did not.
+        [Fact]
+        public void NoShippedModuleDeclaresANullCloseRequirement()
+        {
+            foreach (BackupBase m in Modules())
+            {
+                Assert.NotNull(m.ProcessesToCloseBeforeRestore);
+                Assert.DoesNotContain(m.ProcessesToCloseBeforeRestore, r => r == null);
             }
         }
 

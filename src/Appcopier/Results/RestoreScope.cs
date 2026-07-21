@@ -168,8 +168,17 @@ namespace Appcopier
         /// A module whose probe throws has told us nothing, and silently skipping a restore the user
         /// asked for is worse than an unnecessary close - one loses their intent, the other loses
         /// their tabs.
+        ///
+        /// INTERNAL, not private, because ConfPageView.ProcessesWorthClosing asks the same question
+        /// of the same modules moments earlier and must get the same answer. It briefly had its own
+        /// copy of this method - added in Phase 3b when the artifact-aware probes gained a throwing
+        /// path and that call site turned out to have no guard at all - and two implementations of
+        /// one rule is the bug class this type exists to remove: if either catch is ever narrowed
+        /// or either fallback flipped, ProcessesWorthClosing closes an app that Evaluate then
+        /// blocks as NothingToRestore, and the user pays their open tabs for a module that is never
+        /// restored. One rule, one place, both callers.
         /// </remarks>
-        private static bool HasBackup(BackupBase module, string restoreSourcePath)
+        internal static bool HasBackup(BackupBase module, string restoreSourcePath)
         {
             try
             {
