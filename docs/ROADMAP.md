@@ -12,7 +12,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 2b | Restore safety: snapshot, rollback, confirmation | **Done** — [spec](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md) |
 | 2c | Known module bugs | **Done** — [spec](superpowers/specs/2026-07-20-phase2c-module-bugs-design.md) |
 | 3a | Module bases: refactor & retire | **In review** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
-| 3b | Module coverage: developer tooling | Not started |
+| 3b | Module coverage: developer tooling | **In review** — [spec](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md) |
 | 3c | Module coverage: power-user settings | Not started |
 | 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
 
@@ -270,14 +270,37 @@ Full design: [`superpowers/specs/2026-07-21-phase3a-module-bases-design.md`](sup
 - The 2b-deferred `AllowPrompts` cleanup resolved itself: the retirement removed the flag's only
   readers, so the mechanism was deleted outright rather than redesigned.
 
-### Phase 3b — developer tooling (not started)
+### Phase 3b — developer tooling (in review)
 
-New `FileModule` base + `RestoreTarget.File` kind, new "Developer" tree category (prefix `E`):
+Full design: [`superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md`](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md).
+
+~~New `FileModule` base + `RestoreTarget.File` kind, new "Developer" tree category (prefix `E`):
 Windows Terminal settings, VS Code settings/keybindings/snippets, `.ssh` **config and known_hosts only**
 (private keys are deliberately excluded from plaintext backups — user decision), user environment
 variables (`HKCU\Environment`), `hosts` file. Terminal and VS Code declare consented closes: both rewrite
 their own settings files while running, so an unclosed app can silently overwrite a restored file minutes
-later. Deferred with reasons recorded: WSL config, VS Code extension list + reinstall dialog.
+later.~~ All landed. Notes on what the implementation decided that the entry above did not anticipate:
+
+- **`FileModule` is a whitelist by construction** — it copies the files it is given and never enumerates
+  a directory. That is what makes the private-key exclusion structural rather than a filter someone has
+  to keep correct, and it is pinned from both directions by `DeveloperModuleTests`.
+- **`ETerminal` covers three installs, not one** (Store, Preview, unpackaged — user decision). All three
+  files are called `settings.json`, so it is the first consumer of the file-side naming seam; without the
+  override the second export would overwrite the first while both reported success. Same defect class as
+  the WThemes one 2c fixed, caught before shipping this time because the rule was already written down.
+- **`EVSCode` is hand-rolled, not a `FileModule`** — two files plus the `snippets` *folder*. Teaching the
+  base about folders for one consumer is the dropped-`CommandModule` mistake from 3a; `WThemes` is the
+  precedent for a heterogeneous module instead.
+- **`EEnvironment` is a plain `RegistryModule`.** The category describes what the user backs up, not
+  which base it needs. Two things disclosed rather than engineered: the restore is an additive merge
+  (`PATH` is where users will expect otherwise), and no `WM_SETTINGCHANGE` broadcast is sent, so running
+  shells keep their old values. The broadcast is deferred as its own review, not forgotten.
+- **`EHosts` is the only module in the category that writes machine-wide.** No pre-flight elevation
+  probe: an unelevated write already fails honestly through the copy primitive, and a second check would
+  be a second place that has to agree with the first about what "can write" means.
+
+Deferred with reasons recorded in the spec: WSL config, VS Code extension list + reinstall dialog,
+VS Code Insiders/VSCodium and per-profile settings, the `WM_SETTINGCHANGE` broadcast.
 
 ### Phase 3c — power-user settings (not started)
 

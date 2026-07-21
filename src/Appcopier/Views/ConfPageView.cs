@@ -83,6 +83,11 @@ namespace Views
             AddConfiguration(new DTouchpad(), "Devices");
             AddConfiguration(new GGaming(), "Gaming");
             AddConfiguration(new CWiFiConf(), "Credentials");
+            AddConfiguration(new ETerminal(), "Developer");
+            AddConfiguration(new EVSCode(), "Developer");
+            AddConfiguration(new ESsh(), "Developer");
+            AddConfiguration(new EEnvironment(), "Developer");
+            AddConfiguration(new EHosts(), "Developer");
 
             // Add event handler for button click
             btnRestartExplorer.Click += btnRestartExplorer_Click;

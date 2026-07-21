@@ -102,5 +102,46 @@ namespace Appcopier
             return StepResult.Succeeded(target,
                 string.Format("copied {0} file(s)", FilesCopied));
         }
+
+        /// <summary>
+        /// Maps the tally of a SINGLE-FILE copy onto a step outcome.
+        /// </summary>
+        /// <remarks>
+        /// The same decision ladder as <see cref="ToStep"/>, differing only in the nouns. It exists
+        /// because ToStep's absent-and-not-normal wording is "expected folder for X is missing",
+        /// and telling a user their hosts FOLDER is missing describes something that was never
+        /// looked for. Wording is the product here - a reason that misnames what is missing sends
+        /// the reader to the wrong place on the disk - so the wording lives next to the mapping it
+        /// belongs to rather than being patched at each of the five call sites.
+        ///
+        /// FoldersFailed is not consulted: CopyFile never sets it. A directory it could not create
+        /// surfaces as the file failure it caused, which is the fact the user can act on.
+        /// </remarks>
+        /// <param name="absentReason">
+        /// As <see cref="ToStep"/>: restore callers must supply it, because on that side the
+        /// missing thing is the backup and not the live machine.
+        /// </param>
+        public StepResult ToFileStep(string target, bool absenceIsNormal, string absentReason = null)
+        {
+            if (SourceMissing)
+            {
+                return absenceIsNormal
+                    ? StepResult.Skipped(target, absentReason ?? "not present on this system")
+                    : StepResult.Failed(target, "expected file " + target + " is missing");
+            }
+
+            if (FilesFailed > 0)
+                return StepResult.Failed(target, "could not be copied: " + FirstError);
+
+            if (FilesCopied == 0)
+            {
+                // Unreachable through CopyFile, which always sets exactly one of the three. Kept
+                // as a failure rather than a Skip so a future caller that folds a hand-built
+                // CopyResult through here cannot get silence out of a copy that never happened.
+                return StepResult.Failed(target, "the copy reported neither success nor failure");
+            }
+
+            return StepResult.Succeeded(target, "copied 1 file");
+        }
     }
 }

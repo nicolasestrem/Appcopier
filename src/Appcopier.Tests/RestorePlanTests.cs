@@ -65,11 +65,35 @@ namespace Appcopier.Tests
                 new FakeModule("Wi-Fi", new[]
                 {
                     RestoreTarget.Command("runs netsh wlan add profile for every saved network")
+                }),
+                new FakeModule("SSH", new[]
+                {
+                    RestoreTarget.File(@"C:\Users\me\.ssh\config")
                 }));
 
             Assert.Contains(@"C:\Users\me\AppData\Local\Microsoft\Windows\Themes", plan.ConfirmationText);
             Assert.Contains(@"HKEY_CURRENT_USER\Control Panel\Desktop", plan.ConfirmationText);
             Assert.Contains("runs netsh wlan add profile for every saved network", plan.ConfirmationText);
+            Assert.Contains(@"C:\Users\me\.ssh\config", plan.ConfirmationText);
+        }
+
+        // Each kind renders with its own label, so the user reading the dialog can tell a file
+        // from the folder containing it - "folder: C:\Users\me\.ssh" and "file: C:\Users\me\.ssh\config"
+        // are very different promises about what survives the restore. A kind added without a
+        // Render arm falls through to the bare path and fails here rather than shipping unlabelled.
+        [Fact]
+        public void ConfirmationText_LabelsEachTargetKind()
+        {
+            RestorePlan plan = PlanFor(new FakeModule("Mixed", new[]
+            {
+                RestoreTarget.RegistryKey(@"HKEY_CURRENT_USER\Control Panel\Desktop"),
+                RestoreTarget.Folder(@"C:\Users\me\.ssh"),
+                RestoreTarget.File(@"C:\Users\me\.ssh\config")
+            }));
+
+            Assert.Contains(@"registry key: HKEY_CURRENT_USER\Control Panel\Desktop", plan.ConfirmationText);
+            Assert.Contains(@"folder: C:\Users\me\.ssh", plan.ConfirmationText);
+            Assert.Contains(@"file: C:\Users\me\.ssh\config", plan.ConfirmationText);
         }
 
         // A module declaring several keys must show all of them: rendering only the first would
@@ -314,10 +338,27 @@ namespace Appcopier.Tests
             Assert.Contains(pinned.RestoreTargets.Single().Path, plan.ConfirmationText);
             Assert.DoesNotContain(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
 
-            // No shipped module carries a consented close since the browsers were retired in 3a;
-            // the consent mechanics stay covered by the FakeModule tests above, and the 3b
-            // dev-tooling modules are expected to repopulate this.
+            // The roster was empty between Phase 3a (which retired the browsers) and Phase 3b.
+            // Neither module here declares a consented close, so the emptiness is still asserted -
+            // it is now a fact about these two rather than about the whole app.
             Assert.Empty(plan.ConsentEntries);
+        }
+
+        // The end-to-end consent path over a REAL module, which nothing asserted between 3a and 3b
+        // because no shipped module declared one. The FakeModule tests above cover the mechanics;
+        // this covers that a shipped module's declaration actually reaches the dialog.
+        [Fact]
+        public void RealModuleWithAConsentedClose_ProducesAConsentEntry()
+        {
+            ETerminal terminal = new ETerminal();
+
+            RestorePlan plan = PlanFor(terminal);
+
+            RestoreConsentEntry only = Assert.Single(plan.ConsentEntries);
+
+            Assert.Equal("WindowsTerminal", only.ProcessName);
+            Assert.Contains("Windows Terminal", only.Label);
+            Assert.Contains(terminal.WarningMessage, plan.ConfirmationText);
         }
 
         // --- Construction ---

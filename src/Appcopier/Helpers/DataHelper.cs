@@ -14,6 +14,11 @@ namespace DataHelper
         internal static string ProgramData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         internal static string WindowsFolder = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 
+        // %USERPROFILE%. Added in Phase 3b for .ssh, which lives at the profile root rather than
+        // under AppData. GetFolderPath rather than ExpandEnvironmentVariables to match every other
+        // root here, and because the environment variable is user-writable.
+        internal static string UserProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
         // Application.StartupPath has no trailing separator on .NET Framework but does on .NET 5+,
         // so plain concatenation would yield "...\\app\". Path.Combine normalizes both cases.
         // The trailing separator is part of this field's contract - callers concatenate onto it.

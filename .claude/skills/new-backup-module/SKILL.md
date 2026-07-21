@@ -17,7 +17,7 @@ Read `CLAUDE.md`'s "Reporting outcomes" and "Restore safety" sections before wri
    | `A` | Apps | "Apps" |
    | `C` | Credentials | "Credentials" |
    | `D` | Devices | "Devices" |
-   | `E` | Developer tooling | "Developer" (arrives with Phase 3b) |
+   | `E` | Developer tooling | "Developer" |
    | `G` | Gaming | "Gaming" |
    | `W` | Windows settings | "Settings" |
 
@@ -96,6 +96,36 @@ namespace Conf
 
 The base has deliberately **no close-before-backup logic**. A module whose backup must close the owning app first is a different shape: hand-roll from `BackupBase` so the requirement is visible, and read `Conf/FolderModule.cs`'s remarks first.
 
+## Step 1ci — Named files inside a folder? Inherit `FileModule`
+
+Copies the files you list into `{Title}\` in the backup and puts them back. Use this — **not** `FolderModule` — whenever the folder holds anything you must not capture: it copies what `Files` lists and never enumerates a directory, which is how `ESsh` excludes private keys structurally rather than by a filter someone has to keep correct.
+
+```csharp
+using DataHelper;
+
+namespace Conf
+{
+    public class EExample : FileModule
+    {
+        public EExample()
+        {
+            Title = "Example";
+            Info = "This will back up ...";
+
+            Files.Add(Data.UserProfile + "\\.config\\app.json");
+        }
+
+        // Per file, and abstract on purpose: the shipped consumers genuinely disagree.
+        protected override bool AbsenceIsNormal(string file) => true;
+    }
+}
+```
+
+Two rules, both the file-side form of ones you already know:
+
+- **N files must produce N distinct names.** The default name is the file's *base name*. If two of your files share one — three Windows Terminal installs all call theirs `settings.json` — you **must** override `BackupFileNameFor`, or the second copy silently overwrites the first while both steps report success. Match on the path, never on list position.
+- **Never derive the name from the full path.** Paths are composed from `Data.*` roots and carry the backing-up account's user name, so a path-derived name stops resolving under any other account.
+
 ## Step 1d — A command's export? Use `Utils.RunToolAsync` + `Utils.ValidateExportArtifact`
 
 There is intentionally no `CommandModule` base — the shipped command modules proved too different for one (see the Phase 3a spec). Hand-roll from `BackupBase`, override the **async** pair, and use the shared seams:
@@ -124,7 +154,7 @@ winget specifically goes through `Utils.RunWingetAsync`, not `RunToolAsync` — 
 
 ```csharp
 public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
-    => new[] { new RestoreCloseRequirement("code", "Visual Studio Code", needsConsent: true) };
+    => new[] { new RestoreCloseRequirement("Code", "Visual Studio Code", needsConsent: true) };
 ```
 
 The process name is what `Process.GetProcessesByName` takes — no `.exe`. Require consent for anything whose closing destroys work the user can see; pass `false` only for a process Windows brings straight back on its own. **Never** write into a profile whose owner is running without one of these. This also applies to apps that *rewrite their own settings files while running* (Windows Terminal, VS Code): an unclosed app can overwrite the restored file minutes later while the row reads applied.

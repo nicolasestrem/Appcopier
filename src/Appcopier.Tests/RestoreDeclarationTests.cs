@@ -32,7 +32,8 @@ namespace Appcopier.Tests
         {
             List<BackupBase> modules = Modules().ToList();
 
-            Assert.Equal(19, modules.Count);
+            // 19 before Phase 3b, plus the five Developer-category modules it added.
+            Assert.Equal(24, modules.Count);
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
@@ -95,12 +96,13 @@ namespace Appcopier.Tests
             Assert.False(req.NeedsConsent);
         }
 
-        // Every other module closes nothing, so a close requirement appearing anywhere else is a
-        // new prompt nobody decided to add. The three browser modules, which declared consented
-        // closes, were retired in Phase 3a; consented closes return with the 3b dev-tooling
-        // modules, and this roster is where they get recorded.
+        // Every module outside this roster closes nothing, so a close requirement appearing
+        // anywhere else is a new prompt nobody decided to add. The three browser modules, which
+        // declared consented closes, were retired in Phase 3a; the roster was empty apart from
+        // APinnedApps until Phase 3b, whose Terminal and VS Code modules are the consented closes
+        // this list was left open for.
         [Fact]
-        public void OnlyPinnedApps_DeclaresACloseRequirement()
+        public void OnlyTheRecordedRoster_DeclaresCloseRequirements()
         {
             string[] declaring = Modules()
                 .Where(m => m.ProcessesToCloseBeforeRestore.Count > 0)
@@ -108,7 +110,23 @@ namespace Appcopier.Tests
                 .OrderBy(n => n)
                 .ToArray();
 
-            Assert.Equal(new[] { "APinnedApps" }, declaring);
+            Assert.Equal(new[] { "APinnedApps", "ETerminal", "EVSCode" }, declaring);
+        }
+
+        // Consent is the whole decision on RestoreCloseRequirement, so which modules ask for it is
+        // pinned separately from which modules close something. APinnedApps deliberately does not
+        // ask (Windows restarts the Start menu on its own); both 3b modules do, because closing
+        // them costs the user shell sessions and unsaved editor buffers.
+        [Fact]
+        public void OnlyTheDeveloperModules_AskForCloseConsent()
+        {
+            string[] consenting = Modules()
+                .Where(m => m.ProcessesToCloseBeforeRestore.Any(r => r != null && r.NeedsConsent))
+                .Select(m => m.GetType().Name)
+                .OrderBy(n => n)
+                .ToArray();
+
+            Assert.Equal(new[] { "ETerminal", "EVSCode" }, consenting);
         }
 
         [Fact]
@@ -131,7 +149,9 @@ namespace Appcopier.Tests
                 .Where(m => m is RegistryModule)
                 .ToList();
 
-            Assert.Equal(9, registryModules.Count);
+            // 9 before Phase 3b, plus EEnvironment - which is a plain single-key registry module
+            // despite shipping with the file-based Developer set.
+            Assert.Equal(10, registryModules.Count);
 
             foreach (BackupBase m in registryModules)
             {

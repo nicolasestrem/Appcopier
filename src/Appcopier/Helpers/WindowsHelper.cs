@@ -20,6 +20,76 @@ namespace Appcopier
             return result;
         }
 
+        /// <summary>
+        /// Copies exactly one file, creating the destination directory if it is missing.
+        /// </summary>
+        /// <remarks>
+        /// Returns the same tally type as <see cref="CopyFolder"/> so both directions fold through
+        /// one Skipped-vs-Failed ladder. It does not throw: a copy that fails comes back as
+        /// FilesFailed=1 with FirstError set, because a module that cannot distinguish "copied" from
+        /// "threw and was caught" is the failure mode Phase 2a exists to remove.
+        ///
+        /// Creating the destination directory is load-bearing rather than convenience: a machine
+        /// being restored onto may never have run ssh, so %USERPROFILE%\.ssh does not exist, and
+        /// failing there would report "could not be copied" for a restore that is simply first.
+        /// </remarks>
+        internal static async Task<CopyResult> CopyFile(string source, string destination)
+        {
+            CopyResult result = new CopyResult();
+
+            FileInfo sourceFile;
+
+            try
+            {
+                sourceFile = new FileInfo(source);
+
+                if (!sourceFile.Exists)
+                {
+                    result.SourceMissing = true;
+                    logger.LogMessage("Source file does not exist: " + source);
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A path this process cannot even construct a FileInfo for - too long, malformed,
+                // permission-denied on a parent. NOT SourceMissing: we did not establish absence,
+                // we failed to look. Absence maps to Skipped for most modules, so reporting a
+                // failed probe as absence is the "I could not tell" -> "nothing was there" slide.
+                result.FilesFailed++;
+                result.FirstError = source + ": " + ex.Message;
+                logger.LogMessage("Could not examine source file " + source + ": " + ex.Message);
+                return result;
+            }
+
+            try
+            {
+                string destinationDir = Path.GetDirectoryName(destination);
+
+                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
+                    Directory.CreateDirectory(destinationDir);
+
+                using (FileStream sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true))
+                using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                {
+                    await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
+                }
+
+                result.FilesCopied++;
+                result.BytesCopied += sourceFile.Length;
+            }
+            catch (Exception ex)
+            {
+                result.FilesFailed++;
+                if (result.FirstError == null)
+                    result.FirstError = source + ": " + ex.Message;
+
+                logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
+            }
+
+            return result;
+        }
+
         private static async Task CopyFolderInto(string source, string destination,
                                                  CopyResult result, bool isRoot)
         {

@@ -7,11 +7,13 @@ namespace Appcopier
     {
         RegistryKey,
         Folder,
+        File,
         Command
     }
 
     /// <summary>
-    /// One thing a module's restore writes to: a registry key, a folder, or an external command.
+    /// One thing a module's restore writes to: a registry key, a folder, a file, or an external
+    /// command.
     /// </summary>
     /// <remarks>
     /// Declarative only. Nothing here performs or checks an operation - it is the text the user is
@@ -63,6 +65,17 @@ namespace Appcopier
 
         public static RestoreTarget Folder(string path)
             => new RestoreTarget(RestoreTargetKind.Folder, path);
+
+        /// <summary>One file this module's restore overwrites.</summary>
+        /// <remarks>
+        /// Separate from <see cref="Folder"/> because the two are different promises to the user.
+        /// "folder: C:\Users\me\.ssh" reads as "everything under here is replaced"; the developer
+        /// modules replace named files inside directories they otherwise leave alone, and a
+        /// restore that overstates its scope is the same defect as one that understates it - the
+        /// user is consenting against this text.
+        /// </remarks>
+        public static RestoreTarget File(string path)
+            => new RestoreTarget(RestoreTargetKind.File, path);
 
         public static RestoreTarget Command(string description)
             => new RestoreTarget(RestoreTargetKind.Command, description);

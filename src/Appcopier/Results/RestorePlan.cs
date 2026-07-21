@@ -215,6 +215,13 @@ namespace Appcopier
             {
                 case RestoreTargetKind.RegistryKey: return "registry key: " + target.Path;
                 case RestoreTargetKind.Folder: return "folder: " + target.Path;
+                case RestoreTargetKind.File: return "file: " + target.Path;
+
+                // Command falls here on purpose: its Path is already a sentence written for this
+                // dialog ("runs netsh to re-apply..."), so prefixing it would read as a label on a
+                // path. Any kind added without an arm here also lands on it and renders bare -
+                // RestorePlanTests asserts a prefix per kind so that shows up as a failing test
+                // rather than as an unlabelled line in the text the user consents against.
                 default: return target.Path;
             }
         }
