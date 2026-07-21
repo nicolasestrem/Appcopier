@@ -51,34 +51,24 @@ namespace Conf
                     "netsh",
                     new[] { "wlan", "export", "profile", "key=clear", "folder=" + path.TrimEnd('\\') });
 
-                string[] after = Directory.GetFiles(path, "*.xml");
-                int added = 0;
-                foreach (string file in after)
+                List<string> changed = new List<string>();
+                foreach (string file in Directory.GetFiles(path, "*.xml"))
                 {
                     DateTime previousWrite;
                     bool existedBefore = before.TryGetValue(file, out previousWrite);
 
                     if (!existedBefore || File.GetLastWriteTimeUtc(file) > previousWrite)
-                        added++;
+                        changed.Add(file);
                 }
 
-                if (outcome == null || !outcome.Started)
+                bool succeeded = outcome != null && outcome.Started && !outcome.TimedOut
+                                 && outcome.Error == null && outcome.ExitCode == 0;
+
+                if (succeeded && changed.Count > 0)
                 {
-                    steps.Add(StepResult.Failed(Title, "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error)));
+                    steps.Add(StepResult.Succeeded(Title, $"exported {changed.Count} Wi-Fi profile(s)"));
                 }
-                else if (outcome.TimedOut)
-                {
-                    steps.Add(StepResult.Failed(Title, "netsh did not finish"));
-                }
-                else if (outcome.Error != null)
-                {
-                    steps.Add(StepResult.Failed(Title, "netsh ran but its outcome could not be determined: " + outcome.Error));
-                }
-                else if (outcome.ExitCode != 0)
-                {
-                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {outcome.ExitCode}"));
-                }
-                else if (added == 0)
+                else if (succeeded)
                 {
                     // netsh has been measured printing "saved successfully" with exit code 0 while
                     // writing nothing (the export path was too long for it). A zero exit code alone
@@ -87,7 +77,34 @@ namespace Conf
                 }
                 else
                 {
-                    steps.Add(StepResult.Succeeded(Title, $"exported {added} Wi-Fi profile(s)"));
+                    string reason;
+
+                    if (outcome == null || !outcome.Started)
+                        reason = "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error);
+                    else if (outcome.TimedOut)
+                        reason = "netsh did not finish";
+                    else if (outcome.Error != null)
+                        reason = "netsh ran but its outcome could not be determined: " + outcome.Error;
+                    else
+                        reason = $"netsh exited with code {outcome.ExitCode}";
+
+                    // A bounded export can die part-way through having already written some of the
+                    // profiles, into a folder the restore side reads back by CONTENT - so whatever
+                    // this run wrote or overwrote must go with the failure, or a backup the row
+                    // reports as Failed would still restore a partial profile set. Same rule as
+                    // the runner's stdoutFile pre-clear, applied to files netsh names itself.
+                    string stuck = TryRemovePartialExports(changed);
+
+                    if (stuck != null)
+                        reason += "; the partial profile file(s) it left could not be removed and would still restore: " + stuck;
+
+                    // A timed-out netsh is killed, but the kill is deliberately not escalated when
+                    // it fails - a process that outlives the timeout can keep writing profiles
+                    // after this cleanup ran, and a complete profile file always restores.
+                    if (outcome != null && outcome.TimedOut)
+                        reason += "; if netsh is in fact still running, profile files it writes after this point would also restore";
+
+                    steps.Add(StepResult.Failed(Title, reason));
                 }
             }
             catch (Exception ex)
@@ -96,6 +113,39 @@ namespace Conf
             }
 
             return ModuleResult.Aggregate(steps);
+        }
+
+        /// <summary>
+        /// Best-effort removal of the files a failed export wrote or overwrote. Returns the names
+        /// it could not remove (with why), or null when everything (or nothing) was cleaned up.
+        /// </summary>
+        /// <remarks>
+        /// Scoped to what the restore side would actually find, with the same predicate it uses
+        /// (WlanProfile.IsWlanProfile), so "what a failed backup removes" and "what a restore
+        /// discovers" cannot drift apart: a truncated file fails the XML parse and cannot restore
+        /// anyway, and a foreign .xml some other writer put in the shared folder is not this
+        /// module's to delete.
+        /// </remarks>
+        private static string TryRemovePartialExports(List<string> files)
+        {
+            List<string> stuck = new List<string>();
+
+            foreach (string file in files)
+            {
+                if (!WlanProfile.IsWlanProfile(file))
+                    continue;
+
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    stuck.Add(Path.GetFileName(file) + " (" + ex.Message + ")");
+                }
+            }
+
+            return stuck.Count == 0 ? null : string.Join(", ", stuck);
         }
 
         public override async Task<ModuleResult> RestoreAsync(string path)

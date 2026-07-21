@@ -788,10 +788,11 @@ namespace Appcopier
         /// Failed. On a non-zero exit nothing is written either: the captured text is the tool's
         /// error banner, and a restore would happily "apply" it. A path that cannot be cleared
         /// fails the run before the tool starts - a file we cannot remove is a file we cannot
-        /// vouch for. A write that fails is logged and any partial file it left is removed, so
-        /// the artifact check then reports the missing file, which is the user-visible fact; a
-        /// partial that cannot be removed fails the run instead, because a truncated dump passes
-        /// the ladder's non-empty check and would restore as if it were whole.
+        /// vouch for. A write that fails is logged and any partial file it left is removed - or,
+        /// when a lock blocks the delete, renamed aside out of the restore side's view - so the
+        /// artifact check then reports the missing file, which is the user-visible fact; a partial
+        /// that can neither be removed nor moved fails the run instead, because a truncated dump
+        /// passes the ladder's non-empty check and would restore as if it were whole.
         ///
         /// winget deliberately does NOT go through here: RestAppsForm shows winget's own console
         /// window as its only progress reporting, which is incompatible with redirected streams,
@@ -884,14 +885,30 @@ namespace Appcopier
                                 // passes the artifact ladder's non-empty check, so it must go.
                                 // Once it is gone, returning the exit code is truthful: the
                                 // artifact check that must follow any export sees the missing
-                                // file. A partial that cannot be removed is a file we cannot
-                                // vouch for, and the only honest outcome left names it.
+                                // file. A partial that cannot be removed gets a second chance -
+                                // a lock that blocks deletion does not always block a rename,
+                                // and consumers of the backup folder find artifacts by their
+                                // expected name or extension, so moving the partial aside takes
+                                // it out of the restore side's view even when it cannot be
+                                // destroyed. Only when neither works does the run fail: a file
+                                // we can neither remove nor hide is a file we cannot vouch for,
+                                // and the only honest outcome left names it.
                                 string writeClearError = TryDeleteExport(stdoutFile);
 
                                 if (writeClearError != null)
-                                    return ProcessOutcome.OutcomeUnknown(
-                                        "its output could not be fully written to " + stdoutFile +
-                                        ", and the partial file could not be removed: " + writeClearError);
+                                {
+                                    try
+                                    {
+                                        File.Move(stdoutFile, stdoutFile + ".partial", overwrite: true);
+                                    }
+                                    catch (Exception moveEx)
+                                    {
+                                        return ProcessOutcome.OutcomeUnknown(
+                                            "its output could not be fully written to " + stdoutFile +
+                                            ", and the partial file could not be removed (" + writeClearError +
+                                            ") or moved aside (" + moveEx.Message + ")");
+                                    }
+                                }
                             }
                         }
 

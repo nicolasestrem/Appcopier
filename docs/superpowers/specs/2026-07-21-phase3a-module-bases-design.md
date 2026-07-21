@@ -150,7 +150,25 @@ Claude reviewer) and two suggestions declined with reasons:
    missing file), and a partial that cannot be removed fails the run as `OutcomeUnknown`, naming the
    file. The mid-write throw itself has no deterministic injection point without a filesystem seam;
    the pinning tests cover the two adjacent contracts instead — an unclearable previous export fails
-   before the tool starts, and a failed write leaves nothing the ladder would bless.
+   before the tool starts, and a failed write leaves nothing the ladder would bless. A safety pass
+   over the fix added a second-chance defense: a partial that cannot be deleted (an AV lock being
+   the plausible cause) is renamed to `.partial`, which takes it out of the restore side's
+   exact-name view even when it cannot be destroyed; only when both fail does the run fail.
+
+5. The same partial-artifact rule, for the files `netsh wlan export` names itself: the newly bounded
+   Wi-Fi export can time out (or exit non-zero) having already written some profile XMLs into the
+   reused backup folder, and `CWiFiConf.RestoreAsync` discovers profiles by *content* from that same
+   folder — so a backup whose row says Failed would still restore a partial profile set. The module
+   already snapshots the folder by mtime to count what netsh wrote; on any unsuccessful outcome that
+   changed set is now deleted, and a file that cannot be removed is named in the failure reason as
+   one that "would still restore", with the reason it is stuck. Deletion is scoped by the *same
+   content predicate the restore side discovers with* (`WlanProfile.IsWlanProfile`), so the two can
+   never drift: a truncated file fails the XML parse and cannot restore anyway, and a foreign
+   `.xml` some future module writes into the shared folder is not this module's to delete. One
+   residual honestly disclosed rather than closed: a timed-out `netsh` whose kill fails can keep
+   writing after the cleanup ran, so the timeout reason says files written from that point on would
+   also restore. Not unit-tested: exercising these needs a real `netsh wlan` failure mid-export,
+   which is the elevation/hardware-dependent territory the suite deliberately avoids.
 
 Declined: two Gemini suggestions to null-guard `FolderModule`'s constructor parameter and a
 subclass-returned-null `ProcessesToCloseBeforeRestore`. Neither matches a reachable path — every call
