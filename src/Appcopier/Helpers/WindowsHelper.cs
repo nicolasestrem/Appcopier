@@ -5,7 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace Appcopier
 {
@@ -917,6 +916,18 @@ namespace Appcopier
             }
         }
 
+        /// <summary>
+        /// Tells the user that a link could not be opened. Registered by the app at startup; null in
+        /// any process that has no UI, where the log line below is the whole report.
+        /// </summary>
+        /// <remarks>
+        /// This exists because OpenUrl lives in engine code that cannot reference WinForms, and the
+        /// failure it reports is one only a human can act on. Registration happens as the first
+        /// statement of Program.Main, before any form, timer or worker thread exists, so the window
+        /// in which this is unexpectedly null is not reachable from a running app.
+        /// </remarks>
+        internal static Action<string, Exception> UrlFailureUi;
+
         private static void ReportUrlFailure(string url, Exception ex)
         {
             // OpenUrl is called from a System.Timers.Timer thread, and .NET 8 no longer swallows
@@ -925,15 +936,14 @@ namespace Appcopier
             // dialog can itself fail on exactly the locked-down machines this catch exists for.
             // Swallowing is the last resort here, not a shortcut; the alternative is a crash whose
             // only cause was that we could not display a warning about a link.
+            //
+            // The catch also contains the registered handler: it runs arbitrary app code, and this
+            // frame is still the one standing between a link failure and process termination.
             try
             {
                 logger.Log("Failed to open {0}: {1}", url, ex.Message);
 
-                MessageBox.Show(
-                    $"Could not open this link in your browser:\n\n{url}\n\n{ex.Message}",
-                    "Unable to open link",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                UrlFailureUi?.Invoke(url, ex);
             }
             catch
             {

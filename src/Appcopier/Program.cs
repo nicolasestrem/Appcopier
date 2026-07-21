@@ -84,11 +84,37 @@ namespace Appcopier
         }
 
         /// <summary>
+        /// Hands the engine the UI it cannot reference itself.
+        /// </summary>
+        /// <remarks>
+        /// Engine code does not depend on WinForms; the few places where it genuinely needs to reach
+        /// a human do it through a delegate the app fills in here. This runs as the first statement
+        /// of Main, before any form, timer or worker thread exists, because an unregistered seam is
+        /// silent (a link failure logs but shows nothing) or fails closed (the app restore dialog
+        /// reports Failed) - both correct in a headless process, both wrong in this one.
+        ///
+        /// Neither delegate may throw: the callers are a timer thread and a thread-pool restore.
+        /// MessageBox.Show can fail on locked-down machines, so both call sites keep their own
+        /// catch-all around this.
+        /// </remarks>
+        private static void RegisterUiSeams()
+        {
+            Utils.UrlFailureUi = (url, ex) =>
+                MessageBox.Show(
+                    $"Could not open this link in your browser:\n\n{url}\n\n{ex.Message}",
+                    "Unable to open link",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
         static void Main()
         {
+            RegisterUiSeams();
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
