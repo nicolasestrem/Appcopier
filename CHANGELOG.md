@@ -24,6 +24,15 @@ The app restore item ("Remember installed apps") now reports a **failure** rathe
 where its dialog cannot be opened at all. Previously both outcomes looked identical, and one of them was
 a success.
 
+### Fixed — two long-standing resource leaks
+
+Both were found by review of this PR and both predate it; neither is visible in normal use.
+
+- The app reinstall dialog was never disposed after being closed, so its window handle and every
+  drawing object on it stayed allocated until the app exited. Opening it repeatedly in one session
+  leaked once per open.
+- The update check left its network client undisposed on every run.
+
 ### Planned — a rebuilt interface (Phase 4)
 
 Nothing here has shipped yet. This entry records the direction so the change is not a surprise when it

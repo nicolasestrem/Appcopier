@@ -109,7 +109,20 @@ namespace Appcopier
 
             // AppStoreApps.RestoreAsync deliberately returns a completed Task so this runs on the
             // caller's STA thread rather than an MTA pool thread - see the remarks there.
-            Conf.AppStoreApps.RestoreDialog = () => new RestAppsForm().ShowDialog();
+            //
+            // ShowDialog, unlike Show, does NOT dispose the form when it closes - it keeps the
+            // instance alive so the caller can still read its state, which is why this one needs
+            // disposing by hand. The old call site (AppStoreApps.Restore before Phase 4 PR 2)
+            // never did, so every restore of that module leaked the form's window handle and
+            // every GDI object on it for the life of the process. Reaching the same dialog again
+            // from a later restore in the same session leaked another.
+            Conf.AppStoreApps.RestoreDialog = () =>
+            {
+                using (RestAppsForm restoreApps = new RestAppsForm())
+                {
+                    restoreApps.ShowDialog();
+                }
+            };
         }
 
         /// <summary>

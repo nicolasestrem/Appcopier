@@ -10,10 +10,14 @@ namespace Appcopier
     /// comparison that decides what it says.
     /// </summary>
     /// <remarks>
-    /// This lived on <see cref="Data"/> until Phase 4 PR 2 and moved here unchanged, for two reasons
-    /// that both point the same way. It is almost entirely MessageBoxes, and Data is engine code that
-    /// no longer references WinForms; and it calls <see cref="Program"/>, which is the application
-    /// entry point and cannot be reached from a library the application itself depends on.
+    /// This lived on <see cref="Data"/> until Phase 4 PR 2, for two reasons that both point the same
+    /// way. It is almost entirely MessageBoxes, and Data is engine code that no longer references
+    /// WinForms; and it calls <see cref="Program"/>, which is the application entry point and cannot
+    /// be reached from a library the application itself depends on.
+    ///
+    /// It moved verbatim, and then took exactly one change: the WebClient below is now disposed.
+    /// Everything a deployed client depends on is untouched - the URL, the parse, and all five
+    /// message texts.
     ///
     /// What stayed behind on Data is the part with no UI and no back-reference: ParseLatestVersion,
     /// IsInet, and the Uri constants. ParseLatestVersion in particular is pinned by
@@ -28,7 +32,16 @@ namespace Appcopier
             {
                 try
                 {
-                    string assemblyInfo = new WebClient().DownloadString(Data.Uri.URL_ASSEMBLY);
+                    // Disposed, which the pre-move code did not do. DownloadString has already
+                    // returned the whole body by the time this block exits, so nothing here reads
+                    // the client afterwards - and Data.IsInet, ten lines below in the file this
+                    // moved out of, already wrapped its own WebClient exactly this way.
+                    string assemblyInfo;
+
+                    using (WebClient client = new WebClient())
+                    {
+                        assemblyInfo = client.DownloadString(Data.Uri.URL_ASSEMBLY);
+                    }
 
                     string parsed = Data.ParseLatestVersion(assemblyInfo);
 
