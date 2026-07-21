@@ -134,6 +134,30 @@ namespace Appcopier
                 // The suffix is not a name a caller might legitimately want: a leftover .appcopier-tmp
                 // is never matched by a restore, which composes the exact artifact name it wants,
                 // nor by HasBackupIn, which does the same.
+                //
+                // KNOWN BEHAVIOUR CHANGE, disclosed rather than fixed: writing through a temp file
+                // and renaming REPLACES the directory entry, so it breaks a link rather than
+                // writing through it. The in-place FileMode.Create this replaced followed the link
+                // and updated the underlying file. Measured on Windows 11, 2026-07-21, with a hard
+                // link: after the rename the link holds the new content while the file it was
+                // linked to still holds the old one - they are no longer the same file. NOT
+                // MEASURED, because this environment cannot create symbolic links without
+                // elevation or Developer Mode: whether a symlink behaves the same. Windows
+                // documents ReplaceFile and MoveFileEx as operating on the reparse point, so the
+                // expectation is that it does, but that is reasoning and not a measurement, and it
+                // is written here as such.
+                //
+                // Who this reaches: developers who symlink .ssh\config or VS Code's settings.json
+                // into a git-managed dotfiles repo, which is a common arrangement among exactly
+                // the people these modules are for. For them a restore now replaces the link with
+                // an ordinary file instead of updating the repo behind it.
+                //
+                // Not repaired here on purpose. Detecting a link and writing through it is a
+                // different write path, and it is one this environment cannot exercise - shipping
+                // untested handling for the case would be worse than stating the limit. It is also
+                // not obvious which behaviour is correct: writing through silently modifies a git
+                // repository the user did not name, and replacing the link silently dismantles
+                // their setup. That is a decision to take deliberately, not inside a copy helper.
                 string temporary = destination + ".appcopier-tmp";
 
                 try

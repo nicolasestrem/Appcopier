@@ -213,6 +213,30 @@ secrets named differently. Disclosed rather than filtered, and the reasoning is 
 `ESsh` also gained a warning: `known_hosts` is a man-in-the-middle defence, and overwriting it deserves
 a line in the text the user consents against.
 
+## Open, and needing a decision rather than a fix
+
+**A restore replaces a symlinked file instead of writing through it.** The atomic write renames a temp
+file into place, which replaces the directory entry, so a linked destination loses its link. The in-place
+`FileMode.Create` it replaced followed the link and updated the underlying file. Measured 2026-07-21 with
+a **hard** link: afterwards the link holds the new content and the file it was linked to still holds the
+old one. **Not measured for symbolic links** — this environment cannot create them without elevation or
+Developer Mode. Windows documents `ReplaceFile`/`MoveFileEx` as acting on the reparse point, so the
+expectation is that symlinks behave the same, but that is reasoning, not a measurement.
+
+It matters because symlinking `.ssh\config` or VS Code's `settings.json` into a git-managed dotfiles repo
+is a common arrangement among precisely the audience these modules serve. For those users a restore now
+dismantles the link rather than updating the repo behind it.
+
+Deliberately not fixed in this phase, on two grounds. Writing through a link is a different write path
+that this environment cannot exercise, and shipping untested handling for the case is worse than stating
+the limit. And neither behaviour is self-evidently correct: writing through silently modifies a git
+repository the user never named in the restore, while replacing the link silently dismantles their setup.
+That is a product decision, not something to settle inside a copy helper.
+
+Note this arrived with **atomicity**, not with the `File.Replace` correction — any temp-and-rename scheme
+has it, `File.Move` included. The choice is between atomic-but-link-replacing and in-place-but-tearable,
+and the truncation risk on a machine-wide `hosts` file is what settled it.
+
 ## Deferred, with reasons
 
 - **WSL configuration.** The state that matters lives inside distro filesystems; `%USERPROFILE%\.wslconfig`
