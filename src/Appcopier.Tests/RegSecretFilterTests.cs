@@ -327,6 +327,55 @@ namespace Appcopier.Tests
             }
         }
 
+        // The fourth continuation shape: a still-open quoted string whose visible fragment ends in
+        // an ESCAPED literal backslash.
+        //
+        //   "MULTILINE"="abc\\
+        //   def"
+        //
+        // Line one ends in `\\` - one escaped backslash, which is ordinary content, not a marker.
+        // The walk originally ran the backslash loop FIRST and asked only "is the last character a
+        // backslash", which cannot tell this from a hex wrap. It swallowed `def"` as payload without
+        // inspecting it for a closing quote, then hunted for that quote one line too late, and
+        // refused the whole export. Fail-closed, so no leak - but a total outage of the feature,
+        // reached by ordinary content, since Windows paths end in backslashes constantly.
+        //
+        // Fixed by deciding the shape from the value's FORM before either walk runs, rather than by
+        // adding a fifth special case. Verified to fail without that reorder.
+        [Fact]
+        public void AQuotedValueEndingInAnEscapedBackslashBeforeANewline_IsNotMistakenForAHexWrap()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string path = WriteReg(dir,
+                    "Windows Registry Editor Version 5.00\n" +
+                    "\n" +
+                    "[HKEY_CURRENT_USER\\Environment]\n" +
+                    "\"MULTILINE\"=\"abc\\\\\n" +
+                    "def\"\n" +
+                    "\"NEXT\"=\"somevalue\"\n" +
+                    "\"GITHUB_TOKEN\"=\"ghp_LEAKED\"\n");
+
+                RegFilterOutcome outcome = RegSecretFilter.FilterInPlace(path);
+
+                Assert.True(outcome.Ok, "a legitimate export was refused: " + outcome.Error);
+                Assert.Equal(new[] { "GITHUB_TOKEN" }, outcome.Removed.ToArray());
+
+                string text = ReadReg(path);
+
+                Assert.DoesNotContain("ghp_LEAKED", text);
+                Assert.Contains("\"MULTILINE\"", text);
+                Assert.Contains("def\"", text);
+                Assert.Contains("\"NEXT\"", text);   // the walk resynchronised
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
         // ...and when such a value IS the secret, both of its physical lines must go. Removing only
         // the naming line would leave the credential's own text sitting in the backup.
         [Fact]
@@ -483,6 +532,11 @@ namespace Appcopier.Tests
                     // A value ending in a newline - the closing quote lands alone on its own line.
                     key.SetValue("ENDS_NL", "trailing\r\n");
 
+                    // A path-like value whose fragment ends in a backslash immediately before the
+                    // raw newline. Exports as `"BS_NL"="abc\\` - an escaped literal backslash that
+                    // a last-character test cannot tell from a hex continuation marker.
+                    key.SetValue("BS_NL", "abc\\\r\ndef");
+
                     key.SetValue("GITHUB_TOKEN", "ghp_secret_value");
 
                     // Written last so it lands after the secret: proves the walk resynchronised
@@ -515,6 +569,7 @@ namespace Appcopier.Tests
                 Assert.Contains("line2\"", raw);
                 Assert.Contains("@=\"default", raw);
                 Assert.Contains("secondline\"", raw);
+                Assert.Contains("\"abc\\\\", raw);   // escaped backslash immediately before a newline
 
                 RegFilterOutcome outcome = RegSecretFilter.FilterInPlace(reg);
 
@@ -536,6 +591,9 @@ namespace Appcopier.Tests
                 // The default value survives whole, both physical lines of it.
                 Assert.Contains("@=\"default", text);
                 Assert.Contains("secondline\"", text);
+
+                Assert.Contains("\"BS_NL\"", text);
+                Assert.Contains("def\"", text);
 
                 Assert.Equal(RegFileCheck.Valid, RegFile.Validate(reg));
             }

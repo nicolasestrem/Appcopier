@@ -152,18 +152,41 @@ namespace Appcopier
                 List<string> block = new List<string> { lines[i] };
                 int backslashContinued = 0;
 
-                while (Continues(lines[i]) && i + 1 < lines.Length)
-                {
-                    i++;
-                    block.Add(lines[i]);
-                    backslashContinued++;
-                }
+                // WHICH continuation applies is decided from the value's FORM, before either walk
+                // runs, and the order matters.
+                //
+                // These two ran the other way round - backslash walk first, then the quoted check -
+                // and the backslash walk asked only "is the last character a \", which cannot tell a
+                // hex wrap from a still-open quoted string whose fragment ends in an ESCAPED literal
+                // backslash. Measured on real reg.exe output, a REG_SZ whose value is "abc\" + a raw
+                // newline + "def":
+                //
+                //   "MULTILINE"="abc\\
+                //   def"
+                //
+                // Line one ends in \\ - one escaped backslash, not a marker - so the old order
+                // swallowed `def"` as hex payload without ever looking at it for a closing quote,
+                // then started hunting for that quote one line too late. Result was a refusal of the
+                // whole export. Fail-closed, so no leak, but a total outage of the feature reached
+                // by ordinary content: Windows paths end in backslashes constantly.
+                //
+                // Asking OpensUnterminatedString first removes the ambiguity rather than patching
+                // it, because that function reads the value's actual form - it walks the escapes, so
+                // it knows \\ is a literal backslash and not a terminator. A hex payload is not a
+                // quoted string, so exactly one of the two branches can apply. Third time this
+                // parser has been wrong about a continuation shape, and the first time the fix has
+                // been to stop guessing rather than to add another case.
+                bool stringLeftOpen = OpensUnterminatedString(lines[i]);
 
-                // The second continuation shape: a quoted string holding a raw newline, which
-                // regedit emits without any marker at all. Runs to the closing quote rather than to
-                // a trailing backslash, and is mutually exclusive with the walk above - a hex
-                // payload is not a quoted string, so only one of the two can apply to a given line.
-                bool stringLeftOpen = OpensUnterminatedString(block[0]);
+                if (!stringLeftOpen)
+                {
+                    while (Continues(lines[i]) && i + 1 < lines.Length)
+                    {
+                        i++;
+                        block.Add(lines[i]);
+                        backslashContinued++;
+                    }
+                }
 
                 if (stringLeftOpen)
                 {

@@ -432,11 +432,15 @@ namespace Appcopier.Tests
             }
         }
 
-        // Utils.CopyFile writes through a "<name>.appcopier-tmp" file and renames it into place. A
-        // crash between those two steps leaves that temp file in the backup folder, and it must
-        // not then read as a captured artifact - which would earn a process kill and then restore
-        // nothing. Both readers compose the exact name they want, so neither matches it; this
-        // pins that rather than trusting it.
+        // A stray "<name>.appcopier-tmp" in the backup folder must not read as a captured artifact -
+        // which would earn a process kill and then restore nothing.
+        //
+        // Written when Utils.CopyFile staged through exactly such a sibling and renamed it into
+        // place, so a crash between those steps left one behind. That staging is GONE as of the
+        // in-place write, so this is now a REGRESSION GUARD rather than a live hazard: it holds the
+        // property that both readers compose the exact artifact name they want, and so would not be
+        // fooled if any future scheme reintroduced a scratch file. The behaviour it guards is worth
+        // keeping; the hazard that motivated it no longer exists.
         [Fact]
         public void HasBackupIn_IsNotFooledByALeftoverTemporaryFile()
         {

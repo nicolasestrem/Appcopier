@@ -1,4 +1,5 @@
 using DataHelper;
+using System.IO;
 
 namespace Conf
 {
@@ -29,7 +30,7 @@ namespace Conf
             Info = "This will back up the Windows hosts file, where manual name-to-address mappings live - the entries used to point a domain at a local server or to block one. It affects every user and every program on this PC, not just your account.";
             WarningMessage = "The hosts file is shared by the whole PC. Restoring it replaces the mappings every user and program on this machine resolves names through, and can redirect or block sites system-wide. Entries added since the backup are lost, not merged.";
 
-            Files.Add(Data.WindowsFolder + "\\System32\\drivers\\etc\\hosts");
+            Files.Add(Path.Combine(Data.WindowsFolder, "System32", "drivers", "etc", "hosts"));
         }
 
         // False: every Windows install ships this file, and Windows does not remove it. Absent

@@ -376,6 +376,27 @@ Design points worth keeping:
   (`line2"`, or a bare `"` for a value ending in a newline). Both variants pinned, both verified to return
   `Ok=True` and retain the credential without the check.
 
+  **And a fourth shape, found by PR review and confirmed by measurement.** `Continues` decided "is this a
+  hex wrap" from the trimmed line's LAST CHARACTER being `\`, which cannot tell a genuine marker from a
+  still-open quoted string whose fragment ends in an **escaped literal backslash**. Measured — a `REG_SZ`
+  whose value is `abc\` + a raw newline + `def`:
+
+  ```
+  "MULTILINE"="abc\\
+  def"
+  ```
+
+  The old order ran the backslash walk first, so it swallowed `def"` as payload without ever inspecting it
+  for a closing quote, then hunted for that quote one line too late. Real export, real result: the whole
+  file refused. Fail-closed again, so no leak — but a total outage reached by *ordinary* content, since
+  Windows paths end in backslashes constantly.
+
+  Fixed by asking `OpensUnterminatedString` **first** and choosing the branch from the value's form, rather
+  than adding a fifth special case. That function walks the escapes, so it knows `\\` is a literal
+  backslash and not a terminator; a hex payload is not a quoted string, so exactly one branch can apply.
+  Third time this parser was wrong about a continuation shape and the first time the fix was to stop
+  guessing. Both the literal fixture and the real-`reg.exe` export test verified to fail without it.
+
   **The same defect then turned up one value-form over.** A DEFAULT value (`@="..."`, not
   `"NAME"="..."`) containing a newline was still refused, because the quoted-continuation walk keyed
   only on the named form. Found on real `reg.exe` output. Fixed by a `ValueStartOf` that knows both
