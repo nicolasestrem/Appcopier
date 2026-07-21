@@ -171,10 +171,17 @@ exonerates a probe can be the one that did not deny enough.**
 before it knows the copy will succeed, and `CopyFolder` creates it before enumerating — so an entirely
 failed backup, or a user with an empty `snippets` folder and no customised settings, leaves a `{Title}\`
 that exists and holds nothing. A directory probe then buys a *consented process kill* for a restore that
-copies nothing: every Terminal tab, every unsaved VS Code buffer, for a no-op knowable in advance. The
-cross-machine case is worse — a Preview-only backup restored onto a Store-only machine passed the
-directory probe and then skipped all three files. Both `FileModule` and `EVSCode` now require a named
-artifact. `FolderModule` keeps the directory probe, correctly: its restore copies the directory wholesale.
+copies nothing: every Terminal tab, every unsaved VS Code buffer, for a no-op knowable in advance. Both
+`FileModule` and `EVSCode` now require a named artifact. `FolderModule` keeps the directory probe,
+correctly: its restore copies the directory wholesale.
+
+A correction to the first write-up of this fix, which justified it partly with a cross-machine scenario —
+a Preview-only backup restored onto a Store-only machine. **That scenario does not hit the bug.**
+`ETerminal` populates `Files` unconditionally in its constructor, so it always asks about all three
+installs, and both the old directory probe and the new artifact probe answer true; the restore then
+writes the preview file correctly. The empty-directory case is real and sufficient on its own. Recorded
+because a fix justified by a scenario that does not occur invites someone to "simplify" it later after
+finding the scenario impossible.
 
 **The write was not atomic.** `FileMode.Create` truncates before the first byte, so a failure mid-copy
 left the destination empty or half-written — and for `EHosts` that destination is the machine-wide

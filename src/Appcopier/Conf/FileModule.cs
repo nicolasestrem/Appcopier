@@ -138,10 +138,23 @@ namespace Conf
 
             foreach (string f in Files)
             {
-                // File.Exists, not an open: this is a cheap "is there anything for me" probe on a
-                // folder this app wrote, and a false here costs an unnecessary close rather than a
-                // silent data loss - the opposite balance from Utils.CopyFile, where the same
-                // question decides whether a real file is reported as absent.
+                // File.Exists rather than an open attempt, and the cost of that is worth stating
+                // correctly, because an earlier version of this comment stated it BACKWARDS.
+                //
+                // A false here does NOT merely cost an unnecessary close - that is what a false
+                // POSITIVE costs. A false NEGATIVE makes RestoreScope block the module as
+                // NothingToRestore, so the user is told "nothing was backed up for this item" over
+                // a backup that is sitting right there, and the restore they asked for silently
+                // does not happen. And File.Exists answers false, without throwing, for a file
+                // whose parent directory denies access - the same ACL shape Utils.CopyFile was
+                // just corrected for - so RestoreScope's catch, which exists to fall towards
+                // restoring when the answer is unreliable, can never engage here.
+                //
+                // Kept anyway, on the balance of the two: the backup folder is one this app wrote
+                // and normally reads back under the same account, whereas opening every candidate
+                // file to answer a yes/no question costs a handle per file on every restore. The
+                // exposure is a misreport, not data loss, and nothing is overwritten. Revisit if
+                // restoring from a folder carried off another machine turns out to be common.
                 if (File.Exists(Path.Combine(backupDir, BackupFileNameFor(f))))
                     return true;
             }

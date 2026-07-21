@@ -488,9 +488,13 @@ namespace Appcopier.Tests
             }
         }
 
-        // The cross-machine case: the backup holds an artifact, but not one THIS machine's file
-        // list asks for. Closing the app would cost the user their tabs for a restore that then
-        // reports "nothing was backed up" for every file.
+        // The backup holds an artifact, but not one this module's file list asks for.
+        //
+        // A base-class rule, deliberately not a claim about ETerminal: ETerminal populates Files
+        // unconditionally, so it always asks about all three installs and a Preview-only backup
+        // does answer true for it - correctly, since its restore writes that preview file. This
+        // covers a module whose Files differ between the backing-up and restoring machines, which
+        // is what the artifact probe has to get right in general.
         [Fact]
         public void HasBackupIn_IsFalseWhenTheBackupHoldsSomeoneElsesArtifact()
         {

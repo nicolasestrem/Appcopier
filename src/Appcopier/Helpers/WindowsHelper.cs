@@ -150,7 +150,39 @@ namespace Appcopier
                         await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
                     }
 
-                    File.Move(temporary, destination, overwrite: true);
+                    // File.Replace, NOT File.Move(overwrite: true). Measured on Windows 11,
+                    // 2026-07-21, against a destination hardened the `icacls /inheritance:r` way
+                    // (inheritance off, one explicit ACE):
+                    //
+                    //   File.Move(overwrite)  -> protected True->FALSE, 1 rule -> 7 inherited
+                    //   File.Replace          -> protected True, 1 rule, unchanged
+                    //
+                    // Move replaces the destination wholesale, so the TEMP file's freshly
+                    // inherited security descriptor becomes the destination's. That silently
+                    // widens access on exactly the two modules where it matters: a restored
+                    // .ssh\config reverts to inheriting its parent - and .ssh\config names
+                    // internal hosts, jump-host topology and usernames - while a hosts file
+                    // carrying an explicit anti-tamper ACE from EDR or GPO loses it, elevated and
+                    // machine-wide, with nothing reporting the change.
+                    //
+                    // FileMode.Create truncated in place and preserved the descriptor, so this is
+                    // a regression the atomicity fix would have introduced. Content atomicity is
+                    // not worth a silent security-boundary change; Replace gives both.
+                    //
+                    // Replace is tried FIRST rather than guarded by File.Exists, deliberately:
+                    // File.Exists answers false for a destination whose parent denies access, and
+                    // taking the Move branch on that answer would reset the ACL of precisely the
+                    // hardened file this exists to protect.
+                    try
+                    {
+                        File.Replace(temporary, destination, null);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        // No destination to replace: the first capture of this file, or a restore
+                        // onto a machine that never had it. Nothing to preserve, so create it.
+                        File.Move(temporary, destination, overwrite: true);
+                    }
 
                     result.FilesCopied++;
                     result.BytesCopied += length;

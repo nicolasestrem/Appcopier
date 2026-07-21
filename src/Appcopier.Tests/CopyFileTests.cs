@@ -475,6 +475,71 @@ namespace Appcopier.Tests
             }
         }
 
+        // The restore must not widen who can read the file it overwrites.
+        //
+        // Writing through a temp file and renaming is what makes the content swap atomic, but
+        // File.Move(overwrite) hands the destination the TEMP file's security descriptor - so a
+        // destination hardened with inheritance removed comes back inheriting again. Measured:
+        // protected True -> False, 1 explicit rule -> 7 inherited. File.Replace preserves it.
+        //
+        // This is a security boundary on two real modules: .ssh\config, whose recommended
+        // permissions are exactly this hardened shape and which names internal hosts and
+        // usernames; and hosts, which can carry an explicit anti-tamper ACE and is written
+        // elevated and machine-wide.
+        [Fact]
+        public async Task RestoringOverAHardenedFile_PreservesItsPermissions()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "source");
+                File.WriteAllText(source, "RESTORED");
+
+                string dest = Path.Combine(dir, "config");
+                File.WriteAllText(dest, "ORIGINAL");
+
+                string me = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+
+                try
+                {
+                    FileInfo info = new FileInfo(dest);
+                    System.Security.AccessControl.FileSecurity acl = info.GetAccessControl();
+
+                    // Inheritance off, one explicit ACE - the `icacls /inheritance:r` shape.
+                    acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+                    acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                        me,
+                        System.Security.AccessControl.FileSystemRights.FullControl,
+                        System.Security.AccessControl.AccessControlType.Allow));
+                    info.SetAccessControl(acl);
+                }
+                catch (Exception)
+                {
+                    return;   // Cannot arrange the precondition; assert nothing.
+                }
+
+                bool protectedBefore = new FileInfo(dest).GetAccessControl()
+                    .AreAccessRulesProtected;
+
+                if (!protectedBefore)
+                    return;   // The hardening did not take; nothing to assert.
+
+                CopyResult r = await Utils.CopyFile(source, dest);
+
+                Assert.Equal(1, r.FilesCopied);
+                Assert.Equal("RESTORED", File.ReadAllText(dest));
+
+                // The content changed; the permissions did not.
+                Assert.True(new FileInfo(dest).GetAccessControl().AreAccessRulesProtected,
+                    "the restore re-enabled inheritance on a file that had it removed");
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
         // --- ToFileStep: the same ladder as ToStep, differing only in the nouns ---
 
         [Fact]
