@@ -15,17 +15,19 @@ Read `CLAUDE.md`'s "Reporting outcomes" and "Restore safety" sections before wri
    | Prefix | Category | Tree node name in UI |
    |--------|----------|----------------------|
    | `A` | Apps | "Apps" |
-   | `B` | Browser | "Browser" |
    | `C` | Credentials | "Credentials" |
    | `D` | Devices | "Devices" |
+   | `E` | Developer tooling | "Developer" (arrives with Phase 3b) |
    | `G` | Gaming | "Gaming" |
    | `W` | Windows settings | "Settings" |
-2. **What gets backed up** — a registry key, a folder, or both. Look at an existing module in the same category first and follow its shape.
+
+   There is no `B`/Browser row anymore: the browser modules were retired in Phase 3a, and the roadmap says not to add new ones.
+2. **What gets backed up** — registry key(s), a folder, or a command's output. Pick the matching base below; hand-roll from `BackupBase` only when none fits, and say why in the class remarks.
 3. **Whether an absent target is normal.** A touchpad key on a desktop is normal; a key the module exists to capture is not. This flag is the difference between a reassuring "skipped" and a real problem being hidden, in one direction, and crying wolf in the other.
 
 ## Step 1a — Single registry key? Inherit `RegistryModule`
 
-This is the common case (10 of the 23 shipped modules). It supplies `Backup`, `Restore`, `IsInstalled` and the restore declaration from your data, so the skipped-vs-failed decision and the `RestoreTargets` declaration are written once rather than copied.
+The most common case (9 of the 19 shipped modules). It supplies `Backup`, `Restore`, `IsInstalled` and the restore declaration from your data. Its files are named `{Title}.reg` — a compatibility promise with existing backups.
 
 ```csharp
 using Appcopier;
@@ -48,83 +50,93 @@ namespace Conf
 }
 ```
 
-Check `Conf/RegistryModule.cs` for the exact member names before writing — it is the authority, this is a sketch.
+## Step 1b — Several registry keys? Inherit `MultiKeyRegistryModule`
 
-## Step 1b — Anything else: inherit `BackupBase`
-
-`Backup`/`Restore` return a `ModuleResult`, never `void`. Build `StepResult`s and fold them with `ModuleResult.Aggregate` — that is the only construction path, and there are deliberately no `ModuleResult.Succeeded/Skipped/Failed` factories.
+One `.reg` file **per key**, named from the key via `RegFileNameFor` — never `{Title}.reg` in a loop, which is the WThemes landmine `BackupFileNamingTests` exists to catch. Add keys in the constructor; the base reads `Keys` at access time.
 
 ```csharp
-using Appcopier;
-using System.Collections.Generic;
-
 namespace Conf
 {
-    public class WExample : BackupBase
+    public class WExample : MultiKeyRegistryModule
     {
-        public List<string> Keys = new List<string> { /* ... */ };
-
         public WExample()
         {
             Title = "Example";
             Info = "This will back up ...";
-            // Optional:
-            // WarningMessage = "...";         // shown while browsing AND in the restore confirmation
-            // RequiresExplorerRestart = true; // offers the restart button after a successful restore
+
+            Keys.Add(@"HKEY_CURRENT_USER\Software\...");
+            Keys.Add(@"HKEY_LOCAL_MACHINE\SOFTWARE\...");
         }
 
-        public override ModuleResult Backup(string path)
-        {
-            List<StepResult> steps = new List<StepResult>();
-
-            foreach (string key in Keys)
-                steps.Add(Utils.ExportRegistryKey(FileFor(path, key), key, absenceIsNormal: false));
-
-            return ModuleResult.Aggregate(steps);
-        }
-
-        public override ModuleResult Restore(string path)
-        {
-            List<StepResult> steps = new List<StepResult>();
-
-            foreach (string key in Keys)
-                steps.Add(Utils.ImportRegistryKey(FileFor(path, key), key));
-
-            return ModuleResult.Aggregate(steps);
-        }
-
-        // One file per key, with the backslashes flattened. The existing multi-key modules each
-        // carry their own copy of this; follow whichever one you are sitting next to.
-        private string FileFor(string path, string key)
-            => Path.Combine(path, $"{Title}_{key.Replace('\\', '_')}.reg");
-
-        // The restore path reads this out to the user before overwriting anything.
-        public override IReadOnlyList<RestoreTarget> RestoreTargets
-            => Keys.ConvertAll(RestoreTarget.RegistryKey);
+        // Per key - IsInstalled() answering true says nothing about the other keys.
+        protected override bool AbsenceIsNormal(string key) => false;
     }
 }
 ```
 
-Folder modules use `await Utils.CopyFolder(source, destination)`, which returns a `CopyResult`; call `.ToStep(...)` on it rather than inventing a step. See `Conf/BMozillaFirefox.cs`.
+## Step 1c — One folder? Inherit `FolderModule`
 
-**A module that overwrites a live app's profile must also declare its process:**
+Backs the folder up under `{Title}` in the backup and restores it back. `AbsenceIsNormal` defaults to `true` (a missing profile folder usually means the feature was never used); override it for a folder whose absence is a fault.
+
+```csharp
+using DataHelper;
+
+namespace Conf
+{
+    public class EExample : FolderModule
+    {
+        public EExample() : base(Data.LocalAppData + "\\Vendor\\App")
+        {
+            Title = "Example";
+            Info = "This will back up ...";
+        }
+    }
+}
+```
+
+The base has deliberately **no close-before-backup logic**. A module whose backup must close the owning app first is a different shape: hand-roll from `BackupBase` so the requirement is visible, and read `Conf/FolderModule.cs`'s remarks first.
+
+## Step 1d — A command's export? Use `Utils.RunToolAsync` + `Utils.ValidateExportArtifact`
+
+There is intentionally no `CommandModule` base — the shipped command modules proved too different for one (see the Phase 3a spec). Hand-roll from `BackupBase`, override the **async** pair, and use the shared seams:
+
+```csharp
+public override async Task<ModuleResult> BackupAsync(string path)
+{
+    string file = Path.Combine(path, ExportFileName);   // keyless artifact: name it with a const on THIS class
+
+    ProcessOutcome outcome = await Utils.RunToolAsync("sometool", new[] { "export" }, stdoutFile: file);
+
+    // Walk the full ladder: null / !Started / TimedOut / Error != null / ExitCode != 0 - see
+    // WNetworkConf.Verify for the shape - then check the artifact. An exit code is not evidence.
+    ...
+    return ModuleResult.Aggregate(new[] { Utils.ValidateExportArtifact(file, Title, "sometool", "exported ...") });
+}
+```
+
+`RestoreTargets` for a command module is `RestoreTarget.Command("...")` — a plain-language description over 30 characters, because it is the only thing the user can judge the command by (`RestoreDeclarationTests` enforces this). Restore-side reasons say **applied**, never *verified*.
+
+winget specifically goes through `Utils.RunWingetAsync`, not `RunToolAsync` — it can show its own console window and carries a ten-minute budget.
+
+## Declarations every module needs
+
+**A module that overwrites a live app's files must declare its process:**
 
 ```csharp
 public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
-    => new[] { new RestoreCloseRequirement("firefox", "Mozilla Firefox", needsConsent: true) };
+    => new[] { new RestoreCloseRequirement("code", "Visual Studio Code", needsConsent: true) };
 ```
 
-The process name is what `Process.GetProcessesByName` takes — no `.exe`. Require consent for anything whose closing destroys work the user can see (an open browser with tabs); pass `false` only for a process Windows brings straight back on its own, where a checkbox asks permission for something the user cannot meaningfully decline and only adds to the dialog fatigue that makes the real checkboxes stop being read. **Never** write into a profile whose owner is running without one of these — the orchestrator does the closing, but only for processes that were declared.
+The process name is what `Process.GetProcessesByName` takes — no `.exe`. Require consent for anything whose closing destroys work the user can see; pass `false` only for a process Windows brings straight back on its own. **Never** write into a profile whose owner is running without one of these. This also applies to apps that *rewrite their own settings files while running* (Windows Terminal, VS Code): an unclosed app can overwrite the restored file minutes later while the row reads applied.
 
-Leave `RestoreMakesChanges` alone unless the module's restore genuinely writes nothing. Setting it false exempts the module from the pre-restore snapshot, which means a restore that cannot be undone.
+Leave `RestoreMakesChanges` alone unless the module's restore genuinely writes nothing. Setting it false exempts the module from the pre-restore snapshot, which means a restore that cannot be undone. Likewise, **anything a restore writes must be read by the module's own `Backup`** — the snapshot is an ordinary backup, so a restore path that writes elsewhere is invisible to it while the gate still reports the restore undoable.
 
-Conventions the base class implies:
-- The incoming `path` ends with a trailing backslash; existing modules concatenate rather than `Path.Combine`.
+Conventions the bases imply:
 - `Restore` must consume exactly what `Backup` produced — same filename, same key.
-- `IsInstalled()` returns `false` by default; override it so "Select installed" works.
-- **Never show a dialog from module code on the restore path.** Modules run on thread-pool threads, where a `MessageBox` has no owner and can paint behind the main window. Restore consent is gathered by `ConfPageView` before dispatch.
+- Keyless artifacts (a `.json`, a `.pow`) are named by a `const` on the class that writes them (`AppStoreApps.ExportFileName` is the pattern); `.reg` names come from `RegFileNameFor`.
+- **Never show a dialog from module code on the restore path.** Modules run on thread-pool threads. Restore consent is gathered by `ConfPageView` before dispatch. There is no backup-time prompt mechanism anymore either (`AllowPrompts` was removed in 3a); if a module ever truly needs one, it takes the permission as a call parameter, never as instance state.
 
-Do **not** add a `<Compile Include="Conf\WExample.cs" />` entry to `Appcopier.csproj`. Since the .NET 8 migration the project is SDK-style and globs `**/*.cs`, so an explicit entry is a duplicate and fails the build with `NETSDK1022`.
+Do **not** add a `<Compile Include>` entry to `Appcopier.csproj` — the SDK project globs `**/*.cs`.
 
 ## Step 2 — Register in the UI tree
 
@@ -134,7 +146,15 @@ In `src/Appcopier/Views/ConfPageView.cs`, method `InitializeConfigurations()`, a
 AddConfiguration(new WExample(), "Settings");
 ```
 
-The second argument must exactly match an existing tree node name from the table above (a typo silently creates a new top-level category).
+The second argument must exactly match the tree node name from the table above (a typo silently creates a new top-level category; a genuinely new category is created by spelling it consistently on every module that belongs to it).
+
+## Step 3 — Update the hand-kept test rosters
+
+The declaration tests enumerate modules by reflection, but a few assertions are hand-kept and **will fail until updated** — that is their job:
+
+- `RestoreDeclarationTests`: the total module count, the RegistryModule-subclass count, and the close-requirements roster if your module declares one.
+- `ModuleShapeTests.EveryRegisteredModule_HasATitle`: append your module to the array.
+- `BackupFileNamingTests`: nothing to edit for a new module, but your keys must not collide with any existing `.reg` filename — the global uniqueness sweep catches it.
 
 ## Verify
 
