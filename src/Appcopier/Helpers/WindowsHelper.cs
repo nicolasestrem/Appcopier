@@ -37,54 +37,88 @@ namespace Appcopier
         {
             CopyResult result = new CopyResult();
 
-            FileInfo sourceFile;
+            FileStream sourceStream;
 
+            // Absence is decided by the exception the OPEN raises, never by File.Exists - the rule
+            // RestAppsForm.AppExport.Read spells out, applied here. File.Exists answers a question
+            // about metadata, and a false from it folds "there is nothing here" together with "I
+            // was not allowed to find out". Only the first is normal, and it maps to Skipped for
+            // four of the five modules, so believing the second would report a settings file that
+            // was never captured as one the machine does not have.
+            //
+            // Measured on Windows 11, 2026-07-21, which is why the open is split from the copy
+            // rather than wrapped with it:
+            //   existing dir + missing file             -> FileNotFoundException
+            //   missing dir                             -> DirectoryNotFoundException
+            //   file used as a directory component      -> DirectoryNotFoundException
+            //   file whose parent denies read/list      -> File.Exists TRUE, open throws
+            //                                              UnauthorizedAccessException
+            // Note what the last line actually says: on these measurements the dangerous case
+            // does NOT reach the absence branch even with an Exists probe - Exists answers true
+            // and the open fails loudly. So this is not repairing a demonstrated defect, and it
+            // is not written here as if it were. It is the house rule applied for its own sake:
+            // classifying on the exception cannot fold "not allowed to look" into "not there" for
+            // ANY access shape, including ones not measured above, whereas an Exists probe is
+            // only correct for as long as its answers keep lining up. Cheap insurance on the
+            // silent-wrong-data direction, in a module whose absence branch reports Skipped.
             try
             {
-                sourceFile = new FileInfo(source);
-
-                if (!sourceFile.Exists)
-                {
-                    result.SourceMissing = true;
-                    logger.LogMessage("Source file does not exist: " + source);
-                    return result;
-                }
+                sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
+            }
+            catch (FileNotFoundException)
+            {
+                result.SourceMissing = true;
+                logger.LogMessage("Source file does not exist: " + source);
+                return result;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // The folder the file would live in is not there - the app was never installed.
+                // Deliberately an absence here, unlike in RestAppsForm, where the folder had just
+                // been enumerated off disk and its disappearance meant the world moved underneath
+                // us. Nothing enumerated anything here: these paths are composed from Data.* roots
+                // for software that may simply not be present.
+                result.SourceMissing = true;
+                logger.LogMessage("Source folder does not exist: " + source);
+                return result;
             }
             catch (Exception ex)
             {
-                // A path this process cannot even construct a FileInfo for - too long, malformed,
-                // permission-denied on a parent. NOT SourceMissing: we did not establish absence,
-                // we failed to look. Absence maps to Skipped for most modules, so reporting a
-                // failed probe as absence is the "I could not tell" -> "nothing was there" slide.
+                // Locked, access-denied, malformed, too long. We did not establish absence, we
+                // failed to look, and that is a failure rather than a reassuring skip.
                 result.FilesFailed++;
                 result.FirstError = source + ": " + ex.Message;
-                logger.LogMessage("Could not examine source file " + source + ": " + ex.Message);
+                logger.LogMessage("Could not read source file " + source + ": " + ex.Message);
                 return result;
             }
 
-            try
+            using (sourceStream)
             {
-                string destinationDir = Path.GetDirectoryName(destination);
-
-                if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
-                    Directory.CreateDirectory(destinationDir);
-
-                using (FileStream sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true))
-                using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                try
                 {
-                    await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
+                    string destinationDir = Path.GetDirectoryName(destination);
+
+                    if (!string.IsNullOrEmpty(destinationDir) && !Directory.Exists(destinationDir))
+                        Directory.CreateDirectory(destinationDir);
+
+                    long length = sourceStream.Length;
+
+                    using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                    {
+                        await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
+                    }
+
+                    result.FilesCopied++;
+                    result.BytesCopied += length;
                 }
+                catch (Exception ex)
+                {
+                    result.FilesFailed++;
+                    if (result.FirstError == null)
+                        result.FirstError = source + ": " + ex.Message;
 
-                result.FilesCopied++;
-                result.BytesCopied += sourceFile.Length;
-            }
-            catch (Exception ex)
-            {
-                result.FilesFailed++;
-                if (result.FirstError == null)
-                    result.FirstError = source + ": " + ex.Message;
-
-                logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
+                    logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
+                }
             }
 
             return result;
