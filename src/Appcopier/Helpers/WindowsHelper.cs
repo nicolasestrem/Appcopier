@@ -779,11 +779,17 @@ namespace Appcopier
         /// WNetworkConf comment documents. Both streams are therefore drained CONCURRENTLY, from
         /// the moment the process starts, with the exit wait running against neither.
         ///
-        /// <paramref name="stdoutFile"/> lands the captured stdout on disk after the tool exits.
-        /// A failed write is logged and the file simply not produced - the artifact check that
-        /// must follow any export (exit codes are not evidence) then reports the missing file,
-        /// which is the user-visible fact, rather than this method inventing an outcome for a
-        /// process that ran fine.
+        /// <paramref name="stdoutFile"/> lands the captured stdout on disk, and only for a run
+        /// that exited 0. The path is CLEARED before the tool starts, for the same two reasons
+        /// ExportRegistryKey documents: the artifact check that must follow any export (exit
+        /// codes are not evidence) could otherwise be satisfied by a file this run did not write,
+        /// and the backup folder is reused across Backup clicks in one app session - so a failed
+        /// re-export would otherwise leave the previous run's file restorable while the row says
+        /// Failed. On a non-zero exit nothing is written either: the captured text is the tool's
+        /// error banner, and a restore would happily "apply" it. A path that cannot be cleared
+        /// fails the run before the tool starts - a file we cannot remove is a file we cannot
+        /// vouch for. A failed write is logged and the file simply not produced; the artifact
+        /// check then reports the missing file, which is the user-visible fact.
         ///
         /// winget deliberately does NOT go through here: RestAppsForm shows winget's own console
         /// window as its only progress reporting, which is incompatible with redirected streams,
@@ -795,6 +801,15 @@ namespace Appcopier
         {
             return await Task.Run(() =>
             {
+                if (stdoutFile != null)
+                {
+                    string clearError = TryDeleteExport(stdoutFile);
+
+                    if (clearError != null)
+                        return ProcessOutcome.NeverStarted(
+                            "could not clear the previous export at " + stdoutFile + ": " + clearError);
+                }
+
                 // Mirrors RunWingetAsync: once Start() has returned the tool may already be doing
                 // its work, so a later exception must not be reported as "never started".
                 bool started = false;
@@ -852,7 +867,7 @@ namespace Appcopier
                         if (error.Length > 0)
                             logger.LogMessage(fileName + " (stderr): " + error);
 
-                        if (stdoutFile != null)
+                        if (stdoutFile != null && proc.ExitCode == 0)
                         {
                             try
                             {

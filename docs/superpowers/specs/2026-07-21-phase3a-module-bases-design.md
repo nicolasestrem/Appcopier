@@ -118,9 +118,29 @@ both are disclosed in CHANGELOG with the manual alternatives.
   designed from one example plus a guess.
 - The WTelemetry legacy-filename fallback (2c decision stands: the old payload names the stale hive).
 
+## Safety review findings (fixed before the PR)
+
+The `windows-safety-reviewer` pass over the branch confirmed the refactor behavior-preserving where
+intended and raised three warnings, all addressed in the same branch:
+
+1. `RunToolAsync` did not pre-clear `stdoutFile`, so a failed re-export into the session's reused
+   backup folder left the previous run's file restorable while the row said Failed — the stale-artifact
+   landmine `ExportRegistryKey` documents. The runner now clears the path before the tool starts and
+   fails the run if it cannot.
+2. On a non-zero exit the runner wrote the tool's error banner as the artifact, which restore would
+   "apply". It now writes the file only for exit 0.
+3. `FolderModule.RestoreAsync` passed the backup-side `AbsenceIsNormal` flag through, so a future
+   `false` subclass would have failed a legitimately-older backup with wrong-machine wording. The
+   restore side now always treats an absent source as `NothingBackedUp`.
+
+Accepted as-is, with reasons: `netsh exec` is now killed at the 60s bound where main waited forever
+(honestly reported as "may have partly applied", and the dump is inside the pre-restore snapshot), and
+`netsh exec`'s exit-0-on-partial-failure is unchanged from main and covered by the applied-not-verified
+wording rule.
+
 ## Verification
 
-`dotnet build` + `dotnet test` green at every commit boundary (506 → 497 → 504 → 510 tests as clusters
-landed); `windows-safety-reviewer` pass over the runner and module changes before the PR; manual
-elevated smoke of the migrated modules is on the release checklist rather than per-commit, since no
-module's registry keys, filenames, or copy targets changed.
+`dotnet build` + `dotnet test` green at every commit boundary (506 → 497 → 504 → 510 → 513 tests as
+clusters landed); the safety pass above ran before the PR; manual elevated smoke of the migrated
+modules is on the release checklist rather than per-commit, since no module's registry keys, filenames,
+or copy targets changed.

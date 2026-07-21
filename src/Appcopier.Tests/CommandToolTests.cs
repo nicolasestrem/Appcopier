@@ -40,6 +40,54 @@ namespace Appcopier.Tests
             }
         }
 
+        // The stale-artifact landmine, for command exports: the backup folder is reused across
+        // Backup clicks in one session, so a failed re-export must not leave the previous run's
+        // file there to be restored after the row said Failed. Same rule as ExportRegistryKey's
+        // pre-clear, held here for RunToolAsync.
+        [Fact]
+        public async Task RunToolAsync_FailedRun_RemovesTheStaleArtifact()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "out.txt");
+
+            try
+            {
+                File.WriteAllText(file, "the previous run's export");
+
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "cmd.exe", new[] { "/c", "exit", "3" }, stdoutFile: file);
+
+                Assert.Equal(3, outcome.ExitCode);
+                Assert.False(File.Exists(file));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // On a non-zero exit the captured text is the tool's error banner, and writing it would
+        // hand the restore side a file it will happily "apply".
+        [Fact]
+        public async Task RunToolAsync_FailedRun_WritesNoErrorBannerArtifact()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "out.txt");
+
+            try
+            {
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "cmd.exe", new[] { "/c", "echo error banner & exit 5" }, stdoutFile: file);
+
+                Assert.Equal(5, outcome.ExitCode);
+                Assert.False(File.Exists(file));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
         [Fact]
         public async Task RunToolAsync_ReportsTheRealExitCode()
         {

@@ -93,7 +93,12 @@ namespace Conf
         {
             CopyResult copy = await Utils.CopyFolder(Path.Combine(path, Title), Folder);
 
-            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, AbsenceIsNormal, NothingBackedUp) });
+            // Absence is ALWAYS normal on this side, whatever the module's flag says: the flag
+            // describes the live machine, and the source here is the backup folder - a backup
+            // that predates the module legitimately holds nothing for it. Passing the flag
+            // through would let an AbsenceIsNormal=false subclass fail that restore with
+            // "expected folder is missing", backup-side wording about the wrong machine.
+            return ModuleResult.Aggregate(new[] { copy.ToStep(Title, true, NothingBackedUp) });
         }
     }
 }

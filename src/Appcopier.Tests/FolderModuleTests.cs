@@ -121,6 +121,30 @@ namespace Appcopier.Tests
             }
         }
 
+        // The AbsenceIsNormal flag describes the LIVE machine and must not leak into the restore
+        // direction: a backup that predates the module legitimately holds nothing for it, and
+        // failing that with "expected folder is missing" would be backup-side wording about the
+        // wrong machine.
+        [Fact]
+        public async Task Restore_WithNothingBackedUp_IsSkippedEvenWhenAbsenceIsNotNormal()
+        {
+            string backup = NewTempDir();
+            string live = NewTempDir();
+
+            try
+            {
+                ModuleResult r = await new MandatoryFolderModule(live).RestoreAsync(backup);
+
+                Assert.Equal(ResultState.Skipped, r.State);
+                Assert.Equal("nothing was backed up for this item", r.Steps.Single().Reason);
+            }
+            finally
+            {
+                Directory.Delete(backup, recursive: true);
+                Directory.Delete(live, recursive: true);
+            }
+        }
+
         [Fact]
         public async Task BackupThenRestore_RoundTripsTheFolder()
         {
