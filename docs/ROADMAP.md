@@ -298,6 +298,17 @@ later.~~ All landed. Notes on what the implementation decided that the entry abo
 - **`EHosts` is the only module in the category that writes machine-wide.** No pre-flight elevation
   probe: an unelevated write already fails honestly through the copy primitive, and a second check would
   be a second place that has to agree with the first about what "can write" means.
+- **`EEnvironment` ships in two variants**, added after review. `EEnvironmentFiltered` exports the same
+  key and drops values whose *names* look like credentials, naming every one it dropped. The plain module
+  is unchanged and both are separate ticks, so the tree checkbox is the opt-in and the default behaviour
+  did not move. The spec records why the original "no filter, disclose instead" reasoning was superseded
+  rather than simply wrong — it assumed the filter would replace the plain export.
+- **`Utils.CopyFile` writes in place, not atomically**, after a reversal recorded in the spec. A
+  temp-file-and-rename replaces the directory entry and so breaks a hard link or symlink — silently, and
+  unrecoverably, because the pre-restore snapshot captures file *contents* and cannot restore link
+  structure. The torn-file failure that atomicity prevented is by contrast reported and snapshot-undoable.
+  Guarding a loud recoverable failure at the cost of a silent permanent one is the wrong trade. Pinned by
+  a hard-link test verified to fail against the atomic version.
 
 Deferred with reasons recorded in the spec: WSL config, VS Code extension list + reinstall dialog,
 VS Code Insiders/VSCodium and per-profile settings, the `WM_SETTINGCHANGE` broadcast.

@@ -185,9 +185,8 @@ finding the scenario impossible.
 
 **The write was not atomic.** `FileMode.Create` truncates before the first byte, so a failure mid-copy
 left the destination empty or half-written — and for `EHosts` that destination is the machine-wide
-`hosts` file. Now written to a temp file and renamed. Honest limit, stated in the test: the induced
-failure happens at the source open, which is before the destination is touched, so that test passes
-against a direct write too; a genuine mid-`CopyToAsync` failure is not reachable from this suite.
+`hosts` file. Changed to write to a temp file and rename. **This was subsequently reverted** — see
+"Reversed after review" below, which supersedes this paragraph and explains why.
 
 Also from review: `EVSCode` gained a named `BackupNameFor` seam (two inline `Path.GetFileName` call sites
 could drift apart — the WThemes shape), an internal setter on `SnippetsFolder` so its hand-rolled async
@@ -210,32 +209,224 @@ word for word the hazard `ESsh` refuses to carry private keys over — two modul
 opposite stances. Defensible, because a private key is *always* a credential and excluding it loses
 nothing, whereas filtering variables by name guesswork would drop real settings while still missing
 secrets named differently. Disclosed rather than filtered, and the reasoning is in the class remarks.
+(Superseded in part: an opt-in filtered sibling was added afterwards — see "Reversed after review". The
+plain export and its disclosure are unchanged.)
 `ESsh` also gained a warning: `known_hosts` is a man-in-the-middle defence, and overwriting it deserves
 a line in the text the user consents against.
 
+## Reversed after review
+
+These two were raised as open questions at the end of the first round and decided by the user on
+2026-07-21. Both reverse or extend a decision recorded above; the earlier text is left in place rather
+than edited away, because the reasoning that produced it was not obviously wrong at the time and someone
+will otherwise re-derive it.
+
+### The atomic write is gone; `CopyFile` writes in place again
+
+The temp-file-and-rename made the content swap atomic and, in doing so, replaced the **directory entry** —
+so a destination that was a link stopped being one. Measured 2026-07-21 with a hard link: afterwards the
+link held the new content while the file it was linked to still held the old, no longer the same file.
+
+Laying the two failures side by side is what settled it:
+
+| | torn file (atomicity prevents) | broken link (atomicity causes) |
+|---|---|---|
+| reported to the user | yes\* — the step goes `Failed` | **no — every row green** |
+| undoable from the snapshot | yes — old contents are in it | **no** |
+
+\* With one exception, caught in review and worth stating precisely because the trade rests on this
+column. A torn file has three triggers: disk full, a source read error, and Appcopier being killed
+mid-restore. The first two throw, are caught, and surface as a `Failed` step. A **kill reports nothing** —
+`PerformRestoration` never returns, so no summary is shown and `restore_log.txt` is never written. The
+snapshot half still holds there (it is taken before the restore begins), so the file is recoverable but
+the user is not told it needs recovering. Two of three triggers loud, one silent-but-recoverable, against
+a broken link that is silent-and-permanent. The trade runs the same way; it just should not be stated by
+rounding the kill case up to "reported".
+
+The snapshot is taken by running the module's own `Backup`, which captures file *contents*. It has no
+representation of "this path was a link", so restoring it cannot put one back. Atomicity was therefore
+buying protection from a **loud, recoverable** failure and paying for it with a **silent, permanent** one.
+Both columns point the same way.
+
+**The rejected middle option** was to detect a link and write through it while keeping the rename
+otherwise. That needs a branch this environment cannot test — creating a symbolic link requires elevation
+or Developer Mode — so the symlink arm would ship unexercised. An untested branch guarding a silent
+failure is worse than not having the branch. Writing directly gets link-preservation *structurally*
+instead, which is the same move `ESsh` makes by never enumerating `.ssh` rather than filtering it.
+
+**Accepted cost, not an oversight:** `FileMode.Create` truncates before the first byte, so a copy that
+dies mid-stream leaves the destination empty or half-written. That is the left column — reported, and the
+snapshot holds the original. The files these modules carry are a few kilobytes, so the window is
+microseconds. It is real, and it is the price.
+
+**A reason string that the revert silently falsified.** `ToFileStep` worded every failure "could not be
+copied", which reads as *the destination was left alone*. That was accurate while the temp-file swap
+guaranteed it, and became false the moment `CopyFile` went back to writing in place — without the sentence
+being touched, which is precisely the drift a reason string cannot signal about itself. `CopyResult` now
+carries `DestinationTruncated`, set immediately after the `FileStream` constructor returns (a constructor
+that throws has truncated nothing), and the two failures are worded apart: *left unchanged* versus *now
+incomplete and should be restored again or repaired by hand*. The difference is whether the live
+`hosts` file the user is looking at is intact.
+
+Coverage is asymmetric and labelled as such: the flag's **false** case goes through the real `CopyFile`,
+the **true** case is a hand-built tally driving `ToFileStep`, because a genuine mid-`CopyToAsync` failure
+is not reachable from this suite. The one line that sets the flag to true is not covered by a test.
+
+**Now covered by a test that discriminates.** `RestoringOverALinkedFile_WritesThroughTheLink` creates a
+**hard** link (`CreateHardLink` needs no privilege) and asserts the file behind it moved too. Verified by
+reinstating the temp-file swap and watching it fail with `ORIGINAL`.
+
+**How far the link claim is actually measured**, since the revert rests on it and the wording matters:
+
+| fixture | privilege needed | result |
+|---|---|---|
+| hard link, in-place `Create` | none | both names stay in sync — link intact |
+| hard link, temp + `Replace` | none | names split — link broken |
+| junction (reparse point), in-place `Create` | none | wrote **through** to the real target; reparse point intact |
+| **file symbolic link** | `SeCreateSymbolicLinkPrivilege` or Developer Mode | **not measured — unavailable in this session** |
+
+The A/B on one fixture isolates the write strategy rather than arguing it, and the junction shows in-place
+`Create` resolves *through* a reparse point instead of replacing it. What remains inference is the tag: a
+junction is `IO_REPARSE_TAG_MOUNT_POINT`, a file symlink is `IO_REPARSE_TAG_SYMLINK`. Both are resolved by
+the object manager during path parsing and .NET opens neither with `FILE_FLAG_OPEN_REPARSE_POINT`, so the
+mechanism is the same one — but the mechanism is what was measured, not that specific tag. Stated at that
+strength and no higher.
+
+Two existing tests were re-scoped rather than deleted. `RestoringOverAHardenedFile_PreservesItsPermissions`
+now passes for free — `FileMode.Create` truncates rather than replaces, so the security descriptor
+survives — but is kept as the guard against any future scheme that stages through another file and
+reintroduces the `File.Move(overwrite)` ACL trap. `SuccessfulCopy_LeavesNoTemporaryFileBehind` is likewise
+now a regression guard rather than a live hazard. `FailedCopy_LeavesTheDestinationAtItsPreviousContents`
+had its comment corrected: it pins that `CopyFile` does not truncate on its way to failing at the *source
+open*, which is worth having, and it is explicitly not evidence of atomicity that no longer exists.
+
+### `EEnvironment` gains an opt-in filtered sibling
+
+`EEnvironmentFiltered` exports the same key and rewrites the `.reg` without values whose **names** match a
+credential fragment list (`RegSecretFilter`). `EEnvironment` is unchanged.
+
+The earlier text above argued no filter should be built, because name guesswork is wrong in both
+directions. That was right about the filter and wrong about the conclusion: it assumed the filter would
+**replace** the plain export, and a partial backup silently standing in for a complete one really would be
+worse than an honest disclosure. Two separate tree entries make both failure directions visible instead —
+a false positive is named in the step reason the user reads at backup time with the unfiltered module one
+tick away, and a false negative is bounded by never claiming the export is free of secrets. The stale
+reasoning is corrected in `EEnvironment`'s remarks rather than deleted, because it looked conclusive and
+turned on an assumption it never stated.
+
+Design points worth keeping:
+
+- **The tree checkbox is the entire opt-in mechanism.** The app has no settings surface, and adding one
+  for a single choice would be a larger change than the feature.
+- **Whole logical values are filtered, never lines.** `regedit` wraps `hex(2)` payloads — how every
+  `REG_EXPAND_SZ` variable including `PATH` is written — across many lines with a trailing backslash.
+  Line-wise filtering would drop the naming line and leave the credential's continuation bytes behind as
+  orphans, in a file that no longer parses. `AMatchingMultiLineHexValue_IsRemovedEntirely` covers this and
+  was verified to fail without the continuation walk.
+- **A filter failure discards the export.** At that point the file on disk is a complete export under a
+  filename promising it excludes credentials — the worst artifact this module could leave. If the delete
+  also fails, the reason names the path and says what is in it.
+- **There are THREE continuation shapes, not one, and the third was found by measurement contradicting a
+  stated belief.** The walk originally handled only regedit's trailing-backslash wrap. A comment asserted
+  that a `REG_SZ` containing a CRLF would be escaped as `\r\n` and stay on one logical line. It is not.
+  Measured 2026-07-21 — `Registry.SetValue(key, "MULTILINE", "line1\r\nline2")` then `reg.exe export`,
+  unelevated, exit 0:
+
+  ```
+  "PLAIN"="ordinary"
+  "MULTILINE"="line1
+  line2"
+  "EXPANDED"=hex(2):25,00,...,49,00,\
+    4c,00,45,00,...
+  "TRAILING_BS"="C:\\Users\\me\\"
+  ```
+
+  The newline is emitted **raw** — no escape, no marker. The same export confirms the two shapes the code
+  was right about: `REG_EXPAND_SZ` gets the backslash wrap, and a value ending in a literal backslash still
+  ends on its closing quote.
+
+  **The cost of the wrong belief was a false refusal, not a leak.** The walk read the first physical line
+  as a complete value, met `line2"` at the top level, could not account for it, and refused the entire
+  export — so `AbandonUnfiltered` deleted it and the step went red. For any user with a newline in an
+  environment variable: no filtered backup, ever, with a reason they cannot act on. Fail-closed kept it
+  safe and made it useless. Blast radius was the filtered module only; plain `EEnvironment` never parses
+  the file.
+
+  Now a quoted value that does not close on its physical line continues to the closing quote, and one that
+  never closes (a truncated export) fails the file. The over-consumption check is deliberately **not**
+  applied to these lines: a backslash continuation carries hex payload, so a declaration inside one is
+  always a boundary error, but a quoted continuation carries arbitrary user data where text shaped like
+  `"NAME"="x"` is legitimate content — checking it would reintroduce the false refusal from the other side.
+
+  **That exemption immediately let the credential leak back in, and it was caught by running it rather
+  than by re-reading it.** The reasoning above says a quoted continuation's terminator is unambiguous.
+  That is true and it is not the whole story: what follows the terminator is not. Measured:
+
+  ```
+  "PATH"="line1
+  "GITHUB_TOKEN"="ghp_LEAKED"     -> Ok=True  removed=[]  credential retained
+  xx"GITHUB_TOKEN"="ghp_LEAKED"   -> Ok=True  removed=[]  credential retained
+  ```
+
+  The quote that closes `PATH`'s string is the one at the *start* of the token line, so the walk swallowed
+  that whole physical line — declaration and credential — into `PATH`'s block, found `PATH` innocent and
+  wrote it back whole. The same silent leak as the backslash case, arriving through the shape exempted
+  from the check that catches it. Fixed by requiring that nothing but whitespace follow the closing quote;
+  a well-formed export always terminates at end of line, so this refuses none of the measured shapes
+  (`line2"`, or a bare `"` for a value ending in a newline). Both variants pinned, both verified to return
+  `Ok=True` and retain the credential without the check.
+
+  One test builds a real key and exports it with `reg.exe` rather than hand-writing the fixture, and
+  asserts the raw newline is present before filtering. Every other fixture in that file is a string
+  literal encoding my beliefs about the format, and one of those beliefs was wrong; this one fails if the
+  format drifts again. All four newline tests verified to fail without the rule.
+- **A boundary error is refused in BOTH directions.** The check below was initially one-directional and a
+  review caught it by running the code rather than reading it. `IsUnaccountable` only ever sees `block[0]`,
+  so it catches a boundary read *early* — a stranded continuation lands at the top level and is inspected —
+  and structurally cannot catch one read *late*, where the walk over-consumes and swallows the next
+  declaration into a benign block:
+
+  ```
+  "PATH"=hex(2):43,00,\
+    3a,00,\                      <- dangling continuation marker
+  "GITHUB_TOKEN"="ghp_LEAKED"    <- eaten as more of PATH's payload
+  ```
+
+  `block[0]` is `PATH`, `PATH` is not a secret, so the block is written back whole with the credential in
+  it — `Ok=true`, `removed=[]`. A filtered-looking artifact reporting success while holding exactly what
+  it promised to exclude, reached from the opposite side of the same assumption. Now any *continuation*
+  line that itself parses as a `"NAME"=` declaration fails the file. Verified to fail without the check.
+
+  Not reachable from well-formed `regedit` output, which escapes backslashes inside quoted strings as
+  `\\` so such a line ends on the closing quote. It is reachable from a **truncated** export — a `.reg`
+  cut off mid-hex-block has precisely that shape — and truncated dumps are a hazard this codebase already
+  acts on elsewhere, deleting partial captures because they pass a non-empty check and restore as if whole.
+- **An export whose structure cannot be accounted for is refused, not half-filtered.** Found by running
+  the filter against a real `HKCU\Environment` export: a malformed continuation produced a file where the
+  credential's *name* had been stripped and its payload bytes were still present, and `FilterInPlace`
+  returned `Ok`. That artifact looks filtered, passes a header check, and is not filtered. Any top-level
+  line that is not the header, a blank, a `[key]`, a `"name"=` declaration or a `@=` default — most
+  importantly a stranded continuation — now fails the whole filter. The refusal quotes the offending line
+  truncated to 40 characters, because that line can itself be credential payload and the reason reaches
+  the log and the results summary.
+
+  Worth recording how it was found, because the trigger was a **bad test fixture, not a bug**: the fixture
+  ended a hex line with `,\r\n` in C# source (comma, CR, LF) where a literal trailing backslash was
+  needed, so it was never a continuation. The filter handled that input correctly. But the *failure mode*
+  it exposed — name stripped, payload retained, success reported — is real for any future misread
+  boundary, and it is silent. The fixture was fixed and the defence was added anyway.
+
+  Verified against a genuine export afterwards: the injected credential and its multi-line payload are
+  both gone, `PATH` and a three-line `TEMP` survive intact, and the result still passes `RegFile.Validate`
+  with the correct UTF-16LE BOM.
+- **Not tested end to end.** `Backup` shells out to `regedit`; the suite covers the filter and the two
+  step-building methods directly, leaving the export→filter→aggregate wiring uncovered. Stated in the test
+  file header.
+
 ## Open, and needing a decision rather than a fix
 
-**A restore replaces a symlinked file instead of writing through it.** The atomic write renames a temp
-file into place, which replaces the directory entry, so a linked destination loses its link. The in-place
-`FileMode.Create` it replaced followed the link and updated the underlying file. Measured 2026-07-21 with
-a **hard** link: afterwards the link holds the new content and the file it was linked to still holds the
-old one. **Not measured for symbolic links** — this environment cannot create them without elevation or
-Developer Mode. Windows documents `ReplaceFile`/`MoveFileEx` as acting on the reparse point, so the
-expectation is that symlinks behave the same, but that is reasoning, not a measurement.
-
-It matters because symlinking `.ssh\config` or VS Code's `settings.json` into a git-managed dotfiles repo
-is a common arrangement among precisely the audience these modules serve. For those users a restore now
-dismantles the link rather than updating the repo behind it.
-
-Deliberately not fixed in this phase, on two grounds. Writing through a link is a different write path
-that this environment cannot exercise, and shipping untested handling for the case is worse than stating
-the limit. And neither behaviour is self-evidently correct: writing through silently modifies a git
-repository the user never named in the restore, while replacing the link silently dismantles their setup.
-That is a product decision, not something to settle inside a copy helper.
-
-Note this arrived with **atomicity**, not with the `File.Replace` correction — any temp-and-rename scheme
-has it, `File.Move` included. The choice is between atomic-but-link-replacing and in-place-but-tearable,
-and the truncation risk on a machine-wide `hosts` file is what settled it.
+Nothing outstanding. The two entries that stood here — the plaintext-secrets exposure and the symlink
+behaviour — were decided on 2026-07-21 and are recorded above.
 
 ## Deferred, with reasons
 
