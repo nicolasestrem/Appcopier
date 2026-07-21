@@ -246,9 +246,59 @@ document.
   breakage attributed to DPI that is actually the 2023 layout.
 - **Tested seams are consumed unchanged.** `RunSummary`, `RestorePlan.Render`, `BackupLog`/
   `RestoreLog.Compose`, `ExplorerRestartPrompt.IsNeeded`, `RestoreScope.HasBackup` are read as strings
-  and booleans by the new views exactly as the MessageBoxes read them. **Existing tests must pass
-  unmodified**; PR 2 changes only their project reference.
+  and booleans by the new views exactly as the MessageBoxes read them. Tests change only where the
+  extraction forces it, and every such change is named in advance below — **not discovered during the
+  diff.**
 - The release artifact stays one self-contained ~69 MB exe, no `PublishTrimmed`, elevation unchanged.
+
+## Correction: PR 2 is not a pure refactor
+
+Recorded the same day this spec was written, before PR 2 started, from a direct read of the files
+rather than from the plan's assumption. **The first draft of this document called the Core extraction a
+"pure refactor" with "zero behavior change" and asserted that existing tests would pass unmodified.
+Both claims are false**, and the reason they were made is worth keeping: they were inherited from a
+design agent's summary and never checked against the source. Five UI dependencies live inside code this
+spec had already assigned to a UI-free library.
+
+- **`Results/RunSummary.cs:61` exposes `public MessageBoxIcon Icon`** — a `System.Windows.Forms` enum on
+  one of the most heavily tested engine types, and `RunSummaryTests.cs:110` asserts against
+  `MessageBoxIcon.Warning` directly. Core cannot both be UI-free and keep this member. It becomes a
+  Core-side severity enum with the UI mapping it, **and that test changes** — the one place the
+  "unmodified tests" claim provably fails. Path D deletes the summary MessageBox anyway, so the member
+  was going to lose its only consumer regardless; the extraction just forces the timing.
+- **`Helpers/DataHelper.cs:25` builds `Data.DataRootDir` from `Application.StartupPath`** — a WinForms
+  API, and the root path of *every backup the app has ever written*. This is the highest-risk item in
+  PR 2 by a wide margin. Phase 1 was already burned once here: `Application.StartupPath` gained a
+  trailing separator on .NET 5+ and doubled it throughout backup paths. **The replacement must be
+  measured on a real single-file self-contained publish, not reasoned about** — `AppContext.BaseDirectory`
+  and `Environment.ProcessPath` do not necessarily agree with `Application.StartupPath` under
+  `PublishSingleFile` with `IncludeNativeLibrariesForSelfExtract`, which is exactly how this app ships.
+  Getting it wrong silently relocates where every user's backups live, and the failure is invisible at
+  build and test time because neither runs single-file. Measure with the `/release` publish command
+  before changing the line.
+- **`Helpers/WindowsHelper.cs:932` shows a MessageBox** inside `Utils.ReportUrlFailure`.
+- **`Helpers/DataHelper.cs:89-119` — `CheckForUpdates` is almost entirely MessageBoxes**, including a
+  Yes/No that opens a download page.
+- **`Conf/AppStoreApps.cs` opens `RestAppsForm`**, as `CLAUDE.md` already documents.
+
+Two further constraints the plan did not account for:
+
+- **`Properties/AssemblyInfo.cs:52` carries `InternalsVisibleTo("Appcopier.Tests")`, and most engine
+  types are `internal`** (`internal class Data`, among others). Core needs its own `InternalsVisibleTo`
+  for the test project, and — because the app consumes internal engine types — very likely one for
+  `Appcopier` as well. The alternative, widening types to public, is a larger and more permanent API
+  decision than PR 2 should be making by accident.
+- **`AssemblyInfo.cs` must not move.** The deployed v0.30.0 checker downloads that exact raw GitHub path
+  and string-parses it, and `Program.cs:24` resolves the local version through `typeof(Program).Assembly`.
+  Both sides stay correct **only while `Program.cs` and `AssemblyInfo.cs` remain in the app project.**
+  Moving `Properties/` into Core because it looks like infrastructure would leave the app assembly with
+  no `AssemblyFileVersionAttribute` — and with `GenerateAssemblyInfo` false, the SDK would not supply
+  one — so the reflection lookup falls through to `Application.ProductVersion` and the update check
+  reports a phantom update on every run. Silent, and only observable in a shipped build.
+
+The consequence for the PR sequence: **PR 2's estimate is not credible until the `DataRootDir`
+measurement is done**, and it should be split so the path change is its own reviewable commit with the
+measurement pasted into it. The rest of the extraction is genuinely mechanical; that one line is not.
 
 ## PR sequence
 
@@ -259,8 +309,10 @@ Nine PRs, each shipping a working app.
 2. **Core extraction.** New `src/Appcopier.Core/` class library on `net8.0-windows`: `BackupBase`,
    `Conf/*`, `Results/*`, `Utils`/`WindowsHelper`, `DataHelper`, `OSHelper`. `LogHelper` splits into a
    Core `ILogSink` seam and a UI RichTextBox sink, keeping the `Log`/`LogMessage` format-string
-   discipline verbatim. `Appcopier.Tests` retargets to Core and changes in no other way. Zero behavior
-   change. ~1–1.5 wk.
+   discipline verbatim. **See the correction section below — this is not the pure refactor the first
+   draft claimed**, and the `Application.StartupPath` → `DataRootDir` change inside it must be measured
+   on a single-file publish and land as its own commit. Estimate deferred until that measurement exists;
+   the mechanical remainder is ~1–1.5 wk.
 3. **Backup manifest (engine, no UI).** As above. ~2–3 days.
 4. **Shell + NavigationService + Home.** `MainForm` becomes rail plus content host; the static
    `ViewHelper.SwitchView` is replaced by an instance `NavigationService`, because "clear the panel, add
