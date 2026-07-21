@@ -376,8 +376,20 @@ Design points worth keeping:
   (`line2"`, or a bare `"` for a value ending in a newline). Both variants pinned, both verified to return
   `Ok=True` and retain the credential without the check.
 
+  **The same defect then turned up one value-form over.** A DEFAULT value (`@="..."`, not
+  `"NAME"="..."`) containing a newline was still refused, because the quoted-continuation walk keyed
+  only on the named form. Found on real `reg.exe` output. Fixed by a `ValueStartOf` that knows both
+  forms — deliberately *not* by teaching `TryReadDeclaration` about `@=`, since `IsUnaccountable` and
+  the over-consumption check both use "parses as a declaration" as their test, and a default-value line
+  must not look like a swallowed declaration. Two questions that share a prefix: *where does the value
+  start* and *is this a named declaration*.
+
+  Low reachability for this module — `HKCU\Environment` does not normally carry a default value — but
+  `reg export` walks subkeys, so any subkey with a multi-line default trips it, and the cost is the
+  whole feature rather than a warning.
+
   One test builds a real key and exports it with `reg.exe` rather than hand-writing the fixture, and
-  asserts the raw newline is present before filtering. Every other fixture in that file is a string
+  asserts the raw newline and the `@=` form are present before filtering. Every other fixture in that file is a string
   literal encoding my beliefs about the format, and one of those beliefs was wrong; this one fails if the
   format drifts again. All four newline tests verified to fail without the rule.
 - **A boundary error is refused in BOTH directions.** The check below was initially one-directional and a

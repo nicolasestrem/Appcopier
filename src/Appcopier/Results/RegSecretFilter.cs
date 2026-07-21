@@ -479,16 +479,48 @@ namespace Appcopier
         /// </remarks>
         private static bool OpensUnterminatedString(string line)
         {
-            string name;
-            int valueStart;
+            int valueStart = ValueStartOf(line);
 
-            if (!TryReadDeclaration(line, out name, out valueStart))
+            if (valueStart < 0)
                 return false;
 
             if (valueStart >= line.Length || line[valueStart] != '"')
                 return false;   // hex:, hex(2):, dword: - not a quoted string at all
 
             return IndexOfUnescapedQuote(line, valueStart + 1) < 0;
+        }
+
+        /// <summary>
+        /// Where a line's value begins, across BOTH value-start forms, or -1 if it has neither.
+        /// </summary>
+        /// <remarks>
+        /// The <c>@=</c> default value is a value-start form too, and forgetting it cost the same
+        /// false refusal as the raw-newline defect, one form over: a default value containing a
+        /// newline never entered the quoted-continuation walk, so its second physical line reached
+        /// the top level and the whole export was refused. Found on real <c>reg.exe</c> output.
+        ///
+        /// Deliberately NOT folded into <see cref="TryReadDeclaration"/>, which must keep returning
+        /// false for <c>@=</c>: <see cref="IsUnaccountable"/> and the over-consumption check both
+        /// treat "parses as a declaration" as their test, and teaching that parser about <c>@=</c>
+        /// would make a default-value line look like a swallowed declaration. Two questions - where
+        /// does the value start, and is this a named declaration - that happen to share a prefix.
+        ///
+        /// Low reachability for this module, kept because it is cheap and the failure is a total
+        /// outage of the feature. <c>HKCU\Environment</c> does not normally carry a default value,
+        /// but <c>reg export</c> walks subkeys, so any subkey with a multi-line default trips it.
+        /// </remarks>
+        private static int ValueStartOf(string line)
+        {
+            if (line == null)
+                return -1;
+
+            if (line.StartsWith("@=", StringComparison.Ordinal))
+                return 2;
+
+            string name;
+            int valueStart;
+
+            return TryReadDeclaration(line, out name, out valueStart) ? valueStart : -1;
         }
 
         /// <summary>

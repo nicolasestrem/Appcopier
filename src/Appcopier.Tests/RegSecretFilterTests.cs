@@ -463,6 +463,14 @@ namespace Appcopier.Tests
                     key.SetValue("PLAIN", "ordinary");
                     key.SetValue("MULTILINE", "line1\r\nline2");
 
+                    // The DEFAULT value, which exports as `@="..."` rather than `"NAME"="..."`.
+                    // With a newline in it this is the raw-newline defect one value-form over: the
+                    // quoted-continuation walk keyed only on the "NAME"= form, so this never
+                    // entered it, its second line reached the top level, and the whole export was
+                    // refused. Set through the empty-string name, which is how the default value is
+                    // addressed.
+                    key.SetValue("", "default\r\nsecondline");
+
                     // A benign value whose CONTENT looks like a secret declaration, immediately
                     // before a real one. This is the case that justifies exempting quoted
                     // continuations from the over-consumption check: regedit escapes the embedded
@@ -500,9 +508,13 @@ namespace Appcopier.Tests
                 if (!File.Exists(reg))
                     return;   // export did not happen; assert nothing rather than a false verdict
 
-                // The precondition this test is actually about. If reg.exe ever starts escaping the
-                // newline, this fixture stops covering the case and must not silently pass.
-                Assert.Contains("line2\"", File.ReadAllText(reg));
+                // The preconditions this test is actually about. If reg.exe ever starts escaping
+                // the newline, these fixtures stop covering the case and must not silently pass.
+                string raw = File.ReadAllText(reg);
+
+                Assert.Contains("line2\"", raw);
+                Assert.Contains("@=\"default", raw);
+                Assert.Contains("secondline\"", raw);
 
                 RegFilterOutcome outcome = RegSecretFilter.FilterInPlace(reg);
 
@@ -520,6 +532,10 @@ namespace Appcopier.Tests
                 Assert.Contains("decoy", text);
                 Assert.Contains("\"ENDS_NL\"", text);
                 Assert.Contains("\"AFTER_MARKER\"", text);
+
+                // The default value survives whole, both physical lines of it.
+                Assert.Contains("@=\"default", text);
+                Assert.Contains("secondline\"", text);
 
                 Assert.Equal(RegFileCheck.Valid, RegFile.Validate(reg));
             }
