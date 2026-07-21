@@ -1,20 +1,20 @@
-﻿using System;
-using System.Windows.Forms;
+using System;
 
 namespace Appcopier
 {
     internal class LogHelper
     {
         private static readonly LogHelper instance = new LogHelper();
-        private static RichTextBox target = null;
+        private static ILogSink sink = null;
 
         private LogHelper()
         { }  // Private constructor to prevent external instantiation
 
-        // Logger to target rtbLog
-        public void SetTarget(RichTextBox richText)
+        // Logger to the sink that renders it - see ILogSink. The app registers a RichTextBox-backed
+        // sink; everything else in the process logs into nothing, silently and on purpose.
+        public void SetSink(ILogSink logSink)
         {
-            target = richText;
+            sink = logSink;
         }
 
         public void Log(string format, params object[] args)
@@ -23,16 +23,9 @@ namespace Appcopier
 
             try
             {
-                if (target != null)
+                if (sink != null)
                 {
-                    if (target.InvokeRequired)
-                    {
-                        target.Invoke(new Action(() => AppendLog(format, args)));
-                    }
-                    else
-                    {
-                        AppendLog(format, args);
-                    }
+                    AppendLog(format, args);
                 }
             }
             catch (Exception ex)
@@ -62,7 +55,7 @@ namespace Appcopier
         {
             try
             {
-                target.AppendText(string.Format(format, args));
+                sink.Append(string.Format(format, args));
             }
             catch (FormatException ex)
             {
@@ -84,14 +77,7 @@ namespace Appcopier
         {
             try
             {
-                if (target.InvokeRequired)
-                {
-                    target.Invoke(new Action(() => target.Clear()));
-                }
-                else
-                {
-                    target.Clear();
-                }
+                sink.Clear();
             }
             catch { }
         }
