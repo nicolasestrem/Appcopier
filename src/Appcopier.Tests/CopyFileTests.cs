@@ -1,6 +1,7 @@
 using Appcopier;
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -176,13 +177,21 @@ namespace Appcopier.Tests
             }
         }
 
-        // The case the exception-based classification exists for. Measured on Windows 11: a file
-        // whose parent denies read has File.Exists == TRUE and throws UnauthorizedAccessException
-        // on open - so it must land in FilesFailed, never in SourceMissing. Reporting it as absent
-        // would tell the user a settings file they own is "not present on this system".
+        // THE test for the exception-based classification, and the rights it denies are the whole
+        // point. Measured on Windows 11, 2026-07-21:
         //
-        // Skipped rather than failed when the ACL cannot be applied: some CI accounts cannot edit
-        // a DACL, and a test that cannot set up its own precondition must not claim a verdict.
+        //   deny ListDirectory + ReadData  -> File.Exists TRUE   (an Exists probe looks correct)
+        //   deny ReadAndExecute            -> File.Exists FALSE  (an Exists probe reports absent)
+        //
+        // Only the second discriminates, because only it denies Traverse and ReadAttributes. A
+        // version of this test written against the first passes against a broken implementation -
+        // which is exactly what happened here before a review caught it. ReadAndExecute is also
+        // the realistic shape: `icacls /inheritance:r` is the standard remedy for OpenSSH's
+        // "permissions are too open", and it is applied to the very folder ESsh reads.
+        //
+        // Returns rather than fails when the DACL cannot be edited: a test that cannot establish
+        // its own precondition must not return a verdict. The guard is verified by hand - flip it
+        // to a throw and confirm it does not fire - rather than trusted.
         [Fact]
         public async Task SourceUnderAnUnreadableParent_IsFailedAndNeverReportedAsAbsent()
         {
@@ -193,32 +202,46 @@ namespace Appcopier.Tests
             string inside = Path.Combine(lockedDir, "settings.json");
             File.WriteAllText(inside, "{\"a\":1}");
 
-            System.Security.AccessControl.FileSystemAccessRule rule = null;
-            System.Security.AccessControl.DirectorySecurity acl = null;
+            string me = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+            System.Security.AccessControl.FileSystemAccessRule deny = null;
 
             try
             {
                 try
                 {
                     DirectoryInfo info = new DirectoryInfo(lockedDir);
-                    acl = info.GetAccessControl();
+                    System.Security.AccessControl.DirectorySecurity acl = info.GetAccessControl();
 
-                    rule = new System.Security.AccessControl.FileSystemAccessRule(
-                        System.Security.Principal.WindowsIdentity.GetCurrent().Name,
-                        System.Security.AccessControl.FileSystemRights.ListDirectory
-                            | System.Security.AccessControl.FileSystemRights.ReadData,
+                    // Inheritance off first: an inherited Allow would otherwise keep granting the
+                    // traverse right whose absence is what makes Exists answer false.
+                    acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+                    acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                        me,
+                        System.Security.AccessControl.FileSystemRights.FullControl,
+                        System.Security.AccessControl.AccessControlType.Allow));
+                    info.SetAccessControl(acl);
+
+                    deny = new System.Security.AccessControl.FileSystemAccessRule(
+                        me,
+                        System.Security.AccessControl.FileSystemRights.ReadAndExecute,
                         System.Security.AccessControl.InheritanceFlags.ContainerInherit
                             | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
                         System.Security.AccessControl.PropagationFlags.None,
                         System.Security.AccessControl.AccessControlType.Deny);
 
-                    acl.AddAccessRule(rule);
+                    acl = info.GetAccessControl();
+                    acl.AddAccessRule(deny);
                     info.SetAccessControl(acl);
                 }
                 catch (Exception)
                 {
                     return;   // Could not deny ourselves access; nothing to assert.
                 }
+
+                // The precondition this test is actually about: the file is there, and the probe
+                // an earlier version of CopyFile used answers "absent" about it.
+                if (File.Exists(inside))
+                    return;   // ACL did not take effect (some filesystems ignore it); assert nothing.
 
                 CopyResult r = await Utils.CopyFile(inside, Path.Combine(dir, "dest"));
 
@@ -230,13 +253,18 @@ namespace Appcopier.Tests
             {
                 try
                 {
-                    if (rule != null && acl != null)
-                    {
-                        DirectoryInfo info = new DirectoryInfo(lockedDir);
-                        System.Security.AccessControl.DirectorySecurity restore = info.GetAccessControl();
-                        restore.RemoveAccessRule(rule);
-                        info.SetAccessControl(restore);
-                    }
+                    DirectoryInfo info = new DirectoryInfo(lockedDir);
+                    System.Security.AccessControl.DirectorySecurity restore = info.GetAccessControl();
+
+                    if (deny != null)
+                        restore.RemoveAccessRule(deny);
+
+                    restore.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                        me,
+                        System.Security.AccessControl.FileSystemRights.FullControl,
+                        System.Security.AccessControl.AccessControlType.Allow));
+
+                    info.SetAccessControl(restore);
                 }
                 catch (Exception)
                 {
@@ -244,6 +272,206 @@ namespace Appcopier.Tests
                 }
 
                 try { Directory.Delete(dir, recursive: true); } catch (Exception) { }
+            }
+        }
+
+        // A path the framework rejects outright. Not an absence - we never got far enough to
+        // establish one - so it must be a failure.
+        [Fact]
+        public async Task MalformedSourcePath_IsFailedRatherThanReportedAbsent()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                CopyResult r = await Utils.CopyFile("bad\0path", Path.Combine(dir, "dest"));
+
+                Assert.False(r.SourceMissing);
+                Assert.Equal(1, r.FilesFailed);
+                Assert.False(string.IsNullOrWhiteSpace(r.FirstError));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A directory where a file was expected is demonstrably PRESENT, so reporting it absent
+        // would be a claim about something we can see. Measured: opening a directory as a file
+        // throws UnauthorizedAccessException, so the exception-based classification gets this
+        // right where an Exists probe (which answers false for a directory) would not.
+        [Fact]
+        public async Task SourceThatIsADirectory_IsFailedNotReportedAsAbsent()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string asDirectory = Path.Combine(dir, "config");
+                Directory.CreateDirectory(asDirectory);
+
+                CopyResult r = await Utils.CopyFile(asDirectory, Path.Combine(dir, "dest"));
+
+                Assert.False(r.SourceMissing);
+                Assert.Equal(1, r.FilesFailed);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A cleared hosts or a zero-byte settings.json is real. One file copied, zero bytes - so
+        // no future caller starts reading BytesCopied == 0 as "nothing happened".
+        [Fact]
+        public async Task EmptyFile_IsCopiedAndCountedAsOne()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "hosts");
+                File.WriteAllText(source, string.Empty);
+
+                string dest = Path.Combine(dir, "copy", "hosts");
+                CopyResult r = await Utils.CopyFile(source, dest);
+
+                Assert.Equal(1, r.FilesCopied);
+                Assert.Equal(0, r.BytesCopied);
+                Assert.True(File.Exists(dest));
+                Assert.Equal(string.Empty, File.ReadAllText(dest));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // The likeliest real restore failure for EHosts. It refuses rather than clearing the
+        // attribute - the honest behaviour, since silently stripping a read-only flag the user set
+        // is a change they did not ask for - and the original content survives the refusal.
+        [Fact]
+        public async Task ReadOnlyDestination_IsAFailureAndLeavesTheOriginalIntact()
+        {
+            string dir = NewTempDir();
+            string dest = Path.Combine(dir, "hosts");
+
+            try
+            {
+                string source = Path.Combine(dir, "source");
+                File.WriteAllText(source, "new content");
+
+                File.WriteAllText(dest, "original content");
+                File.SetAttributes(dest, FileAttributes.ReadOnly);
+
+                CopyResult r = await Utils.CopyFile(source, dest);
+
+                Assert.False(r.SourceMissing);
+                Assert.Equal(1, r.FilesFailed);
+
+                File.SetAttributes(dest, FileAttributes.Normal);
+                Assert.Equal("original content", File.ReadAllText(dest));
+            }
+            finally
+            {
+                try { File.SetAttributes(dest, FileAttributes.Normal); } catch (Exception) { }
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task DestinationThatIsADirectory_IsAFailureWithAReason()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "config");
+                File.WriteAllText(source, "Host example");
+
+                string dest = Path.Combine(dir, "blocked");
+                Directory.CreateDirectory(dest);
+
+                CopyResult r = await Utils.CopyFile(source, dest);
+
+                Assert.Equal(1, r.FilesFailed);
+                Assert.False(string.IsNullOrWhiteSpace(r.FirstError));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A failed copy leaves the live file at its previous contents.
+        //
+        // HONEST SCOPE, because this test was nearly labelled as proving atomicity and does not:
+        // it induces the failure at the SOURCE OPEN, which happens before the destination is
+        // touched at all, so it passes against a direct FileMode.Create write too - verified by
+        // temporarily reverting the temp-file-and-rename and watching it still pass. What the
+        // rename actually protects against is a failure DURING CopyToAsync - disk full, a source
+        // read error mid-stream, the process killed - and that is NOT covered here, because
+        // inducing a mid-stream failure through a path-based API needs a filesystem this suite
+        // cannot arrange.
+        //
+        // Kept anyway: "a failed copy does not damage the destination" is worth pinning on its
+        // own, and it is the half a test can reach. The uncovered half is stated so nobody reads
+        // a green suite as evidence for it.
+        [Fact]
+        public async Task FailedCopy_LeavesTheDestinationAtItsPreviousContents()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "source");
+                File.WriteAllText(source, "new content");
+
+                string dest = Path.Combine(dir, "hosts");
+                File.WriteAllText(dest, "127.0.0.1 localhost");
+
+                CopyResult r;
+
+                // Source locked exclusively: CopyFile cannot open it, so the copy fails.
+                using (new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    r = await Utils.CopyFile(source, dest);
+                }
+
+                Assert.Equal(1, r.FilesFailed);
+
+                // The live file is untouched, not truncated.
+                Assert.Equal("127.0.0.1 localhost", File.ReadAllText(dest));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A successful copy must leave nothing behind but the destination itself - no stray
+        // .appcopier-tmp beside it, which would end up in the backup folder and, on the restore
+        // side, in the user's profile.
+        [Fact]
+        public async Task SuccessfulCopy_LeavesNoTemporaryFileBehind()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "config");
+                File.WriteAllText(source, "Host example");
+
+                string destDir = Path.Combine(dir, "out");
+                CopyResult r = await Utils.CopyFile(source, Path.Combine(destDir, "config"));
+
+                Assert.Equal(1, r.FilesCopied);
+                Assert.Equal(new[] { "config" },
+                    Directory.GetFiles(destDir).Select(Path.GetFileName).ToArray());
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
             }
         }
 
@@ -278,6 +506,21 @@ namespace Appcopier.Tests
 
             Assert.Equal(ResultState.Skipped, s.State);
             Assert.Equal("nothing was backed up for this item", s.Reason);
+        }
+
+        // Precedence: a hard absence cannot be softened by a caller-supplied reason. Unreachable
+        // from the current call sites (both directions pass absenceIsNormal:true alongside a
+        // reason), but it is the rule that keeps the restore-side wording safe, and nothing
+        // stated it.
+        [Fact]
+        public void ToFileStep_AbsentAndNotNormal_IgnoresTheCallersReason()
+        {
+            StepResult s = new CopyResult { SourceMissing = true }
+                .ToFileStep("hosts", false, "nothing was backed up for this item");
+
+            Assert.Equal(ResultState.Failed, s.State);
+            Assert.Contains("expected file", s.Reason);
+            Assert.DoesNotContain("nothing was backed up", s.Reason);
         }
 
         [Fact]

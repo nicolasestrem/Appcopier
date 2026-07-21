@@ -313,14 +313,55 @@ namespace Appcopier.Tests
             Assert.True(RestoreTarget.Undeclared("SomeModule").Single().IsUndeclared);
         }
 
-        // Every module that closes something must be able to say whether the backup holds anything
-        // for it, because closing is what costs the user work. Answering against a real folder
-        // rather than a fake: the whole point is the on-disk layout the module's own restore reads.
-        [Theory]
-        [InlineData(typeof(Conf.APinnedApps))]
-        public void ModulesThatCloseSomething_KnowWhetherTheBackupHoldsAnythingForThem(Type type)
+        // Every module that closes something must say NO to an empty backup, because closing is
+        // what costs the user work - shell sessions, unsaved editor buffers - and a restore with
+        // nothing to copy must never be worth that.
+        //
+        // Reflection-driven rather than an [InlineData] roster. It was a Theory with a single
+        // APinnedApps row through Phase 3a, when APinnedApps was the only module closing anything;
+        // 3b added two more and the roster did not follow, which left ETerminal with no direct
+        // coverage at all. That is the "hand-written list a forgetful author also forgets to
+        // extend" this file warns about at the top, having happened to this file.
+        //
+        // Only the negative direction is swept, and deliberately: what counts as "something to
+        // restore" differs by shape - a directory for a FolderModule, a named artifact inside it
+        // for a FileModule - so the positive case is asserted per shape in FolderModuleTests,
+        // FileModuleTests and VSCodeModuleTests. An empty backup meaning "no" is the invariant
+        // they all genuinely share.
+        [Fact]
+        public void EveryModuleThatClosesSomething_SaysNoToAnEmptyBackup()
         {
-            BackupBase module = (BackupBase)Activator.CreateInstance(type);
+            List<BackupBase> closing = Modules()
+                .Where(m => m.ProcessesToCloseBeforeRestore.Count > 0)
+                .ToList();
+
+            // If this trips, the sweep found nothing and is no longer protecting anything.
+            Assert.NotEmpty(closing);
+
+            string root = Path.Combine(Path.GetTempPath(), "achas_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+
+            try
+            {
+                foreach (BackupBase module in closing)
+                {
+                    Assert.False(module.HasBackupIn(root),
+                        module.GetType().Name + " would close its process for an empty backup");
+                }
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
+        // APinnedApps is a FolderModule, so for it the directory IS the artifact - its restore
+        // copies the folder wholesale. Kept as its own case now that the sweep above covers only
+        // the shared negative direction.
+        [Fact]
+        public void PinnedApps_TreatsItsBackupDirectoryAsSomethingToRestore()
+        {
+            BackupBase module = new APinnedApps();
 
             string root = Path.Combine(Path.GetTempPath(), "achas_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -335,6 +376,19 @@ namespace Appcopier.Tests
             finally
             {
                 Directory.Delete(root, recursive: true);
+            }
+        }
+
+        // A null entry in a close declaration reaches the consent dialog's rendering, which is
+        // user-facing text at a consent boundary. RestoreTargets gets this assertion; close
+        // requirements did not.
+        [Fact]
+        public void NoShippedModuleDeclaresANullCloseRequirement()
+        {
+            foreach (BackupBase m in Modules())
+            {
+                Assert.NotNull(m.ProcessesToCloseBeforeRestore);
+                Assert.DoesNotContain(m.ProcessesToCloseBeforeRestore, r => r == null);
             }
         }
 

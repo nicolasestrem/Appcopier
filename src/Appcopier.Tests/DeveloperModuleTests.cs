@@ -108,8 +108,17 @@ namespace Appcopier.Tests
 
         // --- ETerminal ---
 
-        // Three installs, three files that are ALL called settings.json. Without the naming
-        // override the second export would overwrite the first while both steps reported success.
+        // Three installs, three files that are ALL called settings.json - so this module is the
+        // reason the file-side naming seam exists.
+        //
+        // Read this as a SEAM test and nothing more: it calls BackupFileNameFor directly, so it
+        // cannot by itself prove the backup writes those names or that the restore reads them
+        // back. What closes that gap is not this assertion but two other facts, asserted rather
+        // than assumed below: FileModule's async pair is a SEALED override, so this module cannot
+        // have a divergent call site, and FileModuleTests round-trips the colliding-name case
+        // through the real pair. Repointing Files at temp paths would NOT buy a behavioural test
+        // here, because the override matches on the real install paths and synthetic files fall
+        // through to the base name and collide by design.
         [Fact]
         public void Terminal_CoversThreeInstallsWithDistinctBackupNames()
         {
@@ -122,6 +131,11 @@ namespace Appcopier.Tests
             string[] backupNames = files.Select(f => BackupFileNameFor(m, f)).ToArray();
 
             Assert.Equal(backupNames.Length, backupNames.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+            // The dependency that makes the seam test sufficient. A future conversion of this
+            // module to a hand-rolled BackupBase - the EVSCode shape - removes the sealing that
+            // guarantees the call sites, and fails here rather than silently.
+            Assert.IsAssignableFrom<FileModule>(m);
         }
 
         [Fact]
@@ -173,9 +187,10 @@ namespace Appcopier.Tests
 
         // It closes VS Code, so it has to answer honestly whether the chosen backup holds anything
         // for it - the check that stops the user losing unsaved editor buffers to a restore that
-        // then copies nothing.
+        // then copies nothing. The directory is deliberately not enough; see VSCodeModuleTests for
+        // the empty-snippets-folder case that makes an empty directory easy to produce.
         [Fact]
-        public void VSCode_ChecksTheBackupFolderBeforeEarningItsClose()
+        public void VSCode_RequiresAnActualArtifactBeforeEarningItsClose()
         {
             EVSCode m = new EVSCode();
 
@@ -188,6 +203,12 @@ namespace Appcopier.Tests
                 Assert.False(m.HasBackupIn(root));
 
                 Directory.CreateDirectory(Path.Combine(root, m.Title));
+                Assert.False(m.HasBackupIn(root));
+
+                Directory.CreateDirectory(Path.Combine(root, m.Title, "snippets"));
+                Assert.False(m.HasBackupIn(root));
+
+                File.WriteAllText(Path.Combine(root, m.Title, "settings.json"), "{}");
                 Assert.True(m.HasBackupIn(root));
             }
             finally
@@ -270,6 +291,41 @@ namespace Appcopier.Tests
                 Assert.DoesNotContain(m.RestoreTargets, t => t == null);
                 Assert.DoesNotContain(m.RestoreTargets, t => t.IsUndeclared);
                 Assert.True(m.RestoreMakesChanges);
+            }
+        }
+
+        // The file-side counterpart of BackupFileNamingTests' registry sweep, which discovers
+        // multi-key modules by their Keys field and pins one file per key. Nothing did the same
+        // for FileModule, so a future module with two same-named files and no BackupFileNameFor
+        // override would ship silently - the second copy overwriting the first while both steps
+        // report success, which is precisely the WThemes defect the seam exists to prevent.
+        //
+        // Reflection over the shipped assembly rather than a hand-written list, for the reason
+        // RestoreDeclarationTests gives: a hand-written list is what a forgetful author also
+        // forgets to extend.
+        [Fact]
+        public void EveryFileModule_WritesADistinctNamePerFile()
+        {
+            List<FileModule> modules = typeof(BackupBase).Assembly
+                .GetTypes()
+                .Where(t => typeof(FileModule).IsAssignableFrom(t) && !t.IsAbstract)
+                .Select(t => (FileModule)Activator.CreateInstance(t))
+                .ToList();
+
+            // If this trips, the sweep stopped finding anything and is no longer protecting.
+            Assert.NotEmpty(modules);
+
+            foreach (FileModule m in modules)
+            {
+                List<string> files = FilesOf(m);
+                string[] names = files.Select(f => BackupFileNameFor(m, f)).ToArray();
+
+                Assert.All(names, n => Assert.False(string.IsNullOrWhiteSpace(n)));
+
+                Assert.True(
+                    names.Distinct(StringComparer.OrdinalIgnoreCase).Count() == names.Length,
+                    m.GetType().Name + " writes two files under one name: "
+                        + string.Join(", ", names));
             }
         }
 

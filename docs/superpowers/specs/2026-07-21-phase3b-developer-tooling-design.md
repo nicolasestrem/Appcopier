@@ -149,6 +149,63 @@ every module's restore writes exactly the paths its backup reads, with no legacy
 no write to a location backup does not visit. That is the asymmetry that pushed `WTelemetry`'s fallback
 out of 2c, and nothing here reintroduces it.
 
+## What the review changed
+
+A four-agent review (safety, silent-failure, code, test-coverage) ran against the first commit. Three
+findings were real defects rather than polish, and one of them is worth recording as a process note.
+
+**`CopyFile` decided absence with `FileInfo.Exists`.** That is the probe `RestAppsForm.AppExport.Read`
+already removed once, for the reason its comment gives: `Exists` folds "there is nothing here" together
+with "I was not allowed to find out". I suspected this before the review, measured it, and **cleared it
+wrongly** — my ACL denied `ListDirectory | ReadData`, which leaves Traverse and ReadAttributes intact,
+so `Exists` still answered true and the probe looked correct. Two reviewers used
+`icacls /inheritance:r /deny (RX)`, which denies those rights too, and `Exists` answers **false** for a
+file that is sitting right there. With `AbsenceIsNormal => true`, that is a green "not present on this
+system" over a file that exists and was never copied — and `icacls /inheritance:r` is the standard
+remedy for OpenSSH's "permissions are too open", applied to the very folder `ESsh` reads. Now classified
+from the exception the open raises. The test pins the discriminating ACL specifically, and was verified
+to fail against the old implementation. **The lesson is in the code comment: the measurement that
+exonerates a probe can be the one that did not deny enough.**
+
+**`HasBackupIn` probed for the directory, not an artifact.** `CopyFile` creates the destination directory
+before it knows the copy will succeed, and `CopyFolder` creates it before enumerating — so an entirely
+failed backup, or a user with an empty `snippets` folder and no customised settings, leaves a `{Title}\`
+that exists and holds nothing. A directory probe then buys a *consented process kill* for a restore that
+copies nothing: every Terminal tab, every unsaved VS Code buffer, for a no-op knowable in advance. The
+cross-machine case is worse — a Preview-only backup restored onto a Store-only machine passed the
+directory probe and then skipped all three files. Both `FileModule` and `EVSCode` now require a named
+artifact. `FolderModule` keeps the directory probe, correctly: its restore copies the directory wholesale.
+
+**The write was not atomic.** `FileMode.Create` truncates before the first byte, so a failure mid-copy
+left the destination empty or half-written — and for `EHosts` that destination is the machine-wide
+`hosts` file. Now written to a temp file and renamed. Honest limit, stated in the test: the induced
+failure happens at the source open, which is before the destination is touched, so that test passes
+against a direct write too; a genuine mid-`CopyToAsync` failure is not reachable from this suite.
+
+Also from review: `EVSCode` gained a named `BackupNameFor` seam (two inline `Path.GetFileName` call sites
+could drift apart — the WThemes shape), an internal setter on `SnippetsFolder` so its hand-rolled async
+pair could finally be tested at all, and a full behavioural test file. `RestoreDeclarationTests`'
+close-requirement theory was a single hand-written `[InlineData(APinnedApps)]` row that Phase 3b never
+extended, leaving `ETerminal` with no direct coverage — the exact failure mode that file's own header
+warns about, now a reflection sweep. A `FileModule` filename-distinctness sweep was added to match the
+registry side's.
+
+Three wording corrections, each a claim the code did not support: `ETerminal`'s warning said Terminal
+"rewrites settings.json when it exits", but `Utils.CloseProcess` force-kills, so that exit never happens;
+`RestoreTarget.File`'s comment justified itself by asserting the folder label means "everything under
+here is replaced", when `CopyFolder` merges; and `EVSCode` disclosed neither that its two files are
+replaced wholesale while snippets merge, nor that the snippets merge makes that half of the restore
+un-undoable while `SnapshotGate` still reports it undoable.
+
+One disclosure was added on a risk nobody had noticed: **`EEnvironment` exports every environment
+variable, in plaintext**, which routinely includes `GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY`. That is
+word for word the hazard `ESsh` refuses to carry private keys over — two modules in one category taking
+opposite stances. Defensible, because a private key is *always* a credential and excluding it loses
+nothing, whereas filtering variables by name guesswork would drop real settings while still missing
+secrets named differently. Disclosed rather than filtered, and the reasoning is in the class remarks.
+`ESsh` also gained a warning: `known_hosts` is a man-in-the-middle defence, and overwriting it deserves
+a line in the text the user consents against.
+
 ## Deferred, with reasons
 
 - **WSL configuration.** The state that matters lives inside distro filesystems; `%USERPROFILE%\.wslconfig`

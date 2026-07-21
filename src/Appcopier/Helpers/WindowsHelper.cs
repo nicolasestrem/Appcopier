@@ -51,16 +51,24 @@ namespace Appcopier
             //   existing dir + missing file             -> FileNotFoundException
             //   missing dir                             -> DirectoryNotFoundException
             //   file used as a directory component      -> DirectoryNotFoundException
-            //   file whose parent denies read/list      -> File.Exists TRUE, open throws
+            //   source path that is a directory         -> UnauthorizedAccessException
+            //   parent denied ListDirectory+ReadData    -> File.Exists TRUE, open throws
+            //   parent icacls /inheritance:r /deny (RX) -> File.Exists FALSE, open throws
             //                                              UnauthorizedAccessException
-            // Note what the last line actually says: on these measurements the dangerous case
-            // does NOT reach the absence branch even with an Exists probe - Exists answers true
-            // and the open fails loudly. So this is not repairing a demonstrated defect, and it
-            // is not written here as if it were. It is the house rule applied for its own sake:
-            // classifying on the exception cannot fold "not allowed to look" into "not there" for
-            // ANY access shape, including ones not measured above, whereas an Exists probe is
-            // only correct for as long as its answers keep lining up. Cheap insurance on the
-            // silent-wrong-data direction, in a module whose absence branch reports Skipped.
+            //
+            // The last two lines are the whole reason this is not an Exists probe, and the gap
+            // between them is a trap worth naming: the first ACL leaves Traverse and
+            // ReadAttributes intact, so Exists still answers true and an Exists-based probe looks
+            // correct. Deny ReadAndExecute - which is what `icacls /inheritance:r /deny (RX)`
+            // does, and what the standard OpenSSH "permissions are too open" remedy does to
+            // %USERPROFILE%\.ssh - and Exists answers FALSE for a file that is sitting right
+            // there. An Exists probe would then set SourceMissing, and with AbsenceIsNormal true
+            // (ESsh, ETerminal, EVSCode) the user gets a green "not present on this system" over
+            // a file that exists and was never copied, with no backup directory written at all.
+            //
+            // That was this method's behaviour as first written, and the first measurement taken
+            // here used the narrower ACL and wrongly cleared it. Recorded because the measurement
+            // that exonerates a probe can be the one that did not deny enough.
             try
             {
                 sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true);
@@ -94,6 +102,24 @@ namespace Appcopier
 
             using (sourceStream)
             {
+                // Written to a temporary file beside the destination and moved into place, rather
+                // than straight into the destination with FileMode.Create.
+                //
+                // Create TRUNCATES before a single byte is written, so a copy that fails part-way
+                // - source read error, disk full, the app killed mid-restore - leaves the
+                // destination empty or half-written. On the restore path the destination is the
+                // user's live file, and for EHosts that file is %WINDIR%\System32\drivers\etc\hosts:
+                // machine-wide, read by every program that resolves a name, and a truncated one
+                // silently changes name resolution for every account on the PC. The step reports
+                // Failed either way and the pre-restore snapshot holds a copy, so this was never
+                // silent - but recovery was manual, and the same non-atomic path was the only way
+                // back. A rename on one volume is atomic, so the live file is either the old
+                // contents or the new ones and never a prefix of the new ones.
+                //
+                // Applied to every copy, not just EHosts: a per-caller flag is one more thing to
+                // get wrong, and a torn settings.json is not worth defending either.
+                string temporary = destination + ".appcopier-tmp";
+
                 try
                 {
                     string destinationDir = Path.GetDirectoryName(destination);
@@ -103,10 +129,12 @@ namespace Appcopier
 
                     long length = sourceStream.Length;
 
-                    using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                    using (FileStream destinationStream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
                     {
                         await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
                     }
+
+                    File.Move(temporary, destination, overwrite: true);
 
                     result.FilesCopied++;
                     result.BytesCopied += length;
@@ -118,6 +146,21 @@ namespace Appcopier
                         result.FirstError = source + ": " + ex.Message;
 
                     logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
+                }
+                finally
+                {
+                    // The half-written temp file, if the copy died before the move. Best effort:
+                    // failing to clean it up must not turn a reported failure into a different
+                    // reported failure, and the step already carries the real reason.
+                    try
+                    {
+                        if (File.Exists(temporary))
+                            File.Delete(temporary);
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        logger.LogMessage("Could not remove the temporary file " + temporary + ": " + cleanupError.Message);
+                    }
                 }
             }
 

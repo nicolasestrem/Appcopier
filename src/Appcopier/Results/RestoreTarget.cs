@@ -68,11 +68,18 @@ namespace Appcopier
 
         /// <summary>One file this module's restore overwrites.</summary>
         /// <remarks>
-        /// Separate from <see cref="Folder"/> because the two are different promises to the user.
-        /// "folder: C:\Users\me\.ssh" reads as "everything under here is replaced"; the developer
-        /// modules replace named files inside directories they otherwise leave alone, and a
-        /// restore that overstates its scope is the same defect as one that understates it - the
-        /// user is consenting against this text.
+        /// Separate from <see cref="Folder"/> because the two name different things: a directory
+        /// the restore writes into, versus one file it replaces. Naming
+        /// "folder: C:\Users\me\.ssh" for a restore that only ever touches two files inside it
+        /// invites the reader to picture the folder as the unit at risk, and the folder is where
+        /// their private keys are.
+        ///
+        /// Careful about what the folder label does NOT mean: Utils.CopyFolder MERGES - it
+        /// overwrites the files the backup contains and leaves everything else in place. An
+        /// earlier draft of this comment justified the File kind by claiming the folder label
+        /// reads as "everything under here is replaced", which would have been this file asserting
+        /// a property of folder restores that the code does not have. The distinction is worth
+        /// drawing on precision, not on a scariness the implementation cannot back.
         /// </remarks>
         public static RestoreTarget File(string path)
             => new RestoreTarget(RestoreTargetKind.File, path);

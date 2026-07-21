@@ -399,24 +399,61 @@ namespace Appcopier.Tests
             Assert.True(m.HasBackupIn(null));
         }
 
+        // It asks for an ARTIFACT, not for the directory. Utils.CopyFile creates the destination
+        // directory before it knows the copy will succeed, so a backup where every file failed
+        // leaves an empty {Title}\ behind - and a directory-level probe would let that empty
+        // folder buy a process kill for a restore with nothing to copy.
         [Fact]
-        public void HasBackupIn_ModuleThatClosesSomething_ChecksTheBackupFolder()
+        public void HasBackupIn_ModuleThatClosesSomething_RequiresAnActualArtifact()
         {
-            ClosingFileModule m = new ClosingFileModule(MissingFile());
-
             string root = NewTempDir();
+            string source = NewTempDir();
 
             try
             {
+                string live = Path.Combine(source, "config");
+                ClosingFileModule m = new ClosingFileModule(live);
+
                 Assert.False(m.HasBackupIn(null));
                 Assert.False(m.HasBackupIn(root));
 
+                // The directory alone is NOT enough.
                 Directory.CreateDirectory(Path.Combine(root, m.Title));
+                Assert.False(m.HasBackupIn(root));
+
+                // The artifact under the name the restore will look for IS.
+                File.WriteAllText(Path.Combine(root, m.Title, "config"), "Host example");
                 Assert.True(m.HasBackupIn(root));
             }
             finally
             {
                 Directory.Delete(root, recursive: true);
+                Directory.Delete(source, recursive: true);
+            }
+        }
+
+        // The cross-machine case: the backup holds an artifact, but not one THIS machine's file
+        // list asks for. Closing the app would cost the user their tabs for a restore that then
+        // reports "nothing was backed up" for every file.
+        [Fact]
+        public void HasBackupIn_IsFalseWhenTheBackupHoldsSomeoneElsesArtifact()
+        {
+            string root = NewTempDir();
+            string source = NewTempDir();
+
+            try
+            {
+                ClosingFileModule m = new ClosingFileModule(Path.Combine(source, "settings.json"));
+
+                Directory.CreateDirectory(Path.Combine(root, m.Title));
+                File.WriteAllText(Path.Combine(root, m.Title, "settings (preview).json"), "{}");
+
+                Assert.False(m.HasBackupIn(root));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+                Directory.Delete(source, recursive: true);
             }
         }
 

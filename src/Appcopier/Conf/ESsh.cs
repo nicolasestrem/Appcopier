@@ -30,6 +30,12 @@ namespace Conf
             Title = "SSH client configuration";
             Info = "This will back up your SSH client settings: the host aliases and per-host options in .ssh\\config, and the recorded server fingerprints in .ssh\\known_hosts.\n\nYour private keys are deliberately NOT backed up. They would be stored unencrypted in the backup folder, which is not a safe place for them - generate new keys on a new PC instead.";
 
+            // known_hosts is a security control, not a convenience file: it is what makes ssh warn
+            // you that a server's identity changed. Overwriting it is therefore worth a line in
+            // the text the user consents against, even though nothing is destroyed that a fresh
+            // connection would not rebuild.
+            WarningMessage = "Restoring replaces your record of known SSH server fingerprints (known_hosts) with the one from the backup. That record is what warns you if a server's identity changes, so any server you have connected to since the backup goes back to being unrecognised, and you will be asked to confirm its fingerprint again the next time you connect.";
+
             Files.Add(Data.UserProfile + "\\.ssh\\config");
             Files.Add(Data.UserProfile + "\\.ssh\\known_hosts");
         }

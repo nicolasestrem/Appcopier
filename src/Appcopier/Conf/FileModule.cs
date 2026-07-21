@@ -109,14 +109,44 @@ namespace Conf
         /// and the reasoning is the same: answering honestly here is what stops the orchestrator
         /// closing Windows Terminal, and every shell session running in it, for a restore that had
         /// nothing to copy. A module that closes nothing keeps the base default of true.
+        ///
+        /// It asks for an ARTIFACT, not for the directory. FolderModule probes the directory and
+        /// that is right for it, because its restore copies the directory wholesale - if it is
+        /// there, there is something to do. Here the restore resolves each file by name, so the
+        /// directory existing proves nothing about whether any of THIS machine's files are in it.
+        /// Two ways that goes wrong, both found in review rather than in use:
+        ///
+        ///  - Utils.CopyFile creates the destination directory before it knows the copy will
+        ///    succeed, so a backup where every file failed still leaves an empty {Title}\ behind.
+        ///  - A backup taken on a machine with only Windows Terminal Preview holds only
+        ///    "settings (preview).json". Restored onto a machine with only the Store build, a
+        ///    directory probe says yes, Terminal is closed - ending every tab and every command
+        ///    running in them - and then all three files report "nothing was backed up".
+        ///
+        /// Both spend the thing the check exists to protect. Note this can only ever say no when
+        /// the module names every file it would read, which is the shape of every FileModule.
         /// </remarks>
         public override bool HasBackupIn(string restorePath)
         {
             if (ProcessesToCloseBeforeRestore.Count == 0)
                 return true;
 
-            return !string.IsNullOrWhiteSpace(restorePath)
-                   && Directory.Exists(BackupDirFor(restorePath));
+            if (string.IsNullOrWhiteSpace(restorePath))
+                return false;
+
+            string backupDir = BackupDirFor(restorePath);
+
+            foreach (string f in Files)
+            {
+                // File.Exists, not an open: this is a cheap "is there anything for me" probe on a
+                // folder this app wrote, and a false here costs an unnecessary close rather than a
+                // silent data loss - the opposite balance from Utils.CopyFile, where the same
+                // question decides whether a real file is reported as absent.
+                if (File.Exists(Path.Combine(backupDir, BackupFileNameFor(f))))
+                    return true;
+            }
+
+            return false;
         }
 
         public sealed override async Task<ModuleResult> BackupAsync(string path)

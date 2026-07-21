@@ -27,7 +27,13 @@ namespace Conf
         {
             Title = "Windows Terminal settings";
             Info = "This will back up your Windows Terminal settings.json: your profiles, colour schemes, key bindings, startup behaviour and appearance. The Store, Preview and portable installations keep separate settings files, and whichever of them exist on this PC are all backed up.";
-            WarningMessage = "Windows Terminal must be closed before restoring, because it rewrites settings.json when it exits and would overwrite the restored file. Closing it ends every open tab and any command still running in them.";
+            // Deliberately does NOT say "because it rewrites settings.json when it exits". Appcopier
+            // force-terminates the process (Utils.CloseProcess calls Process.Kill), so the graceful
+            // exit that rationale describes never happens - the sentence would be describing a
+            // mechanism the app removes. The real hazard is a Terminal left running, whether the
+            // user declined the close or reopened it, flushing its in-memory settings over the
+            // restored file some minutes later.
+            WarningMessage = "Windows Terminal must be closed before restoring. It holds its settings in memory while running and writes them back on its own schedule, so a Terminal still open after the restore can overwrite the restored file later. Note that Appcopier force-closes it rather than asking it to exit: every open tab, and any command still running in one, ends immediately and without prompting.";
 
             Files.Add(StablePath);
             Files.Add(PreviewPath);
@@ -69,10 +75,10 @@ namespace Conf
         /// closes both. The unpackaged build uses the same image name.
         ///
         /// NeedsConsent because the cost is visible and unrecoverable: Terminal hosts shells, and
-        /// closing it ends whatever is running in every tab. It also rewrites settings.json on exit
-        /// and on any settings change, so leaving it open is not a cosmetic risk - a Terminal still
-        /// running when the restore finishes can flush its in-memory settings over the restored
-        /// file minutes later, and nothing in this app would report that.
+        /// Utils.CloseProcess KILLS rather than asking politely, so whatever is running in every
+        /// tab dies without a save prompt. Leaving it open is not a cosmetic alternative either -
+        /// a Terminal still running when the restore finishes can flush its in-memory settings
+        /// over the restored file minutes later, and nothing in this app would report that.
         /// </remarks>
         public override IReadOnlyList<RestoreCloseRequirement> ProcessesToCloseBeforeRestore
             => new[]
