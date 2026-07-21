@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Views;
 
 namespace Appcopier
 {
@@ -105,6 +106,10 @@ namespace Appcopier
                     "Unable to open link",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
+
+            // AppStoreApps.RestoreAsync deliberately returns a completed Task so this runs on the
+            // caller's STA thread rather than an MTA pool thread - see the remarks there.
+            Conf.AppStoreApps.RestoreDialog = () => new RestAppsForm().ShowDialog();
         }
 
         /// <summary>

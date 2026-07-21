@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Views;
 
 namespace Conf
 {
@@ -188,18 +187,52 @@ namespace Conf
         public override Task<ModuleResult> RestoreAsync(string path)
             => Task.FromResult(Restore(path));
 
+        /// <summary>
+        /// Opens the app reinstall dialog. Registered by the app at startup; null in any process
+        /// that has no UI to open it with.
+        /// </summary>
         /// <remarks>
-        /// This module restores nothing itself. It opens RestAppsForm, and the installs happen
-        /// later from inside that dialog, so Skipped is the only honest answer available here -
+        /// A delegate rather than a constructor argument because this module is constructed by
+        /// Activator.CreateInstance(type) with no arguments in nine test sites, and every module in
+        /// the app is enumerated that way. A parameterless constructor is not negotiable here.
+        ///
+        /// Registration happens in Program.Main before the message pump starts, so the unregistered
+        /// path below is not reachable from the running app - it exists for the test suite and for
+        /// any future headless host, where failing closed is the point.
+        /// </remarks>
+        internal static Action RestoreDialog;
+
+        /// <remarks>
+        /// This module restores nothing itself. It opens the app restore dialog, and the installs
+        /// happen later from inside it, so Skipped is the only honest answer available here -
         /// claiming a result it does not have would be a new lie in a phase built to remove them.
+        ///
+        /// When no dialog is registered the answer is Failed, NOT Skipped, and the distinction is
+        /// the whole reason this seam is written out longhand. Skipped already means something
+        /// specific and true on this module - "the dialog took it from here" - so reusing it for
+        /// "there was no dialog and nothing was offered" would make a total no-op indistinguishable
+        /// from the ordinary success path, in the one module whose success is defined by a window
+        /// having opened. That is the unverified-success claim this architecture exists to prevent.
         ///
         /// Call this only from the UI thread - see RestoreAsync above.
         /// </remarks>
         public override ModuleResult Restore(string path)
         {
-            // Switch to instance of RestoreAppsForm
-            RestAppsForm restoreApps = new RestAppsForm();
-            restoreApps.ShowDialog();
+            // Read the delegate once: it is static and mutable, and a null check against one read
+            // followed by an invoke of another is a race with whatever cleared it.
+            Action dialog = RestoreDialog;
+
+            if (dialog == null)
+            {
+                return ModuleResult.Aggregate(new[]
+                {
+                    StepResult.Failed(Title,
+                        "the app restore dialog is not available in this process, so nothing " +
+                        "could be offered for reinstall")
+                });
+            }
+
+            dialog();
 
             return ModuleResult.Aggregate(new[]
             {
