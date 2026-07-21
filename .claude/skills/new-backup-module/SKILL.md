@@ -166,7 +166,11 @@ Conventions the bases imply:
 - Keyless artifacts (a `.json`, a `.pow`) are named by a `const` on the class that writes them (`AppStoreApps.ExportFileName` is the pattern); `.reg` names come from `RegFileNameFor`.
 - **Never show a dialog from module code on the restore path.** Modules run on thread-pool threads. Restore consent is gathered by `ConfPageView` before dispatch. There is no backup-time prompt mechanism anymore either (`AllowPrompts` was removed in 3a); if a module ever truly needs one, it takes the permission as a call parameter, never as instance state.
 
-Do **not** add a `<Compile Include>` entry to `Appcopier.csproj` — the SDK project globs `**/*.cs`.
+The file goes in **`src/Appcopier.Core/Conf/`** — the engine library, not the app project. Since Phase 4 PR 2 the module tests enumerate `typeof(BackupBase).Assembly`, which resolves to `Appcopier.Core.dll`; a module created in the app project is invisible to every one of those sweeps, and `RestoreDeclarationTests.NoModuleIsLeftBehindInTheAppAssembly` is what will tell you so.
+
+`Appcopier.Core` deliberately does not reference WinForms. If your module seems to need a dialog, it does not: see `AppStoreApps.RestoreDialog` for the registered-seam pattern, and remember that module code must never show a dialog from a thread-pool thread anyway.
+
+Do **not** add a `<Compile Include>` entry to any csproj — the SDK projects glob `**/*.cs`.
 
 ## Step 2 — Register in the UI tree
 
