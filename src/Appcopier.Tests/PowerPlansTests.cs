@@ -178,6 +178,66 @@ namespace Appcopier.Tests
             }
         }
 
+        // The other route to a junk .pow: powercfg exits 0 and the artifact check rejects what it
+        // wrote. Not hypothetical - the measurement that made ValidateExportArtifact mandatory at
+        // all was netsh wlan export printing "saved successfully" with exit code 0 while writing
+        // nothing. An empty .pow surviving that would be offered to the user as the file to import
+        // by hand, which is the same dishonesty as the zero-byte case above by a different door.
+        [Fact]
+        public void AnExportRejectedByTheArtifactCheck_IsAlsoRemoved()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string file = Path.Combine(dir, WPowerPlans.PowFileNameFor(BalancedGuid));
+                File.WriteAllText(file, "");
+
+                StepResult rejected = Utils.ValidateExportArtifact(file, "Balanced", "powercfg", "exported it");
+
+                // Guards the premise: if this ever stops being Failed, the test below is vacuous.
+                Assert.Equal(ResultState.Failed, rejected.State);
+
+                StepResult step = WPowerPlans.AbandonIfFailed(file, rejected);
+
+                Assert.False(File.Exists(file));
+                Assert.Equal(ResultState.Failed, step.State);
+                Assert.Equal(rejected.Reason, step.Reason);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        // The other direction, which matters just as much: a successful export must survive. A
+        // cleanup rule that deleted unconditionally would pass every failure test above and destroy
+        // every backup this module takes.
+        [Fact]
+        public void AnExportThatPassedTheArtifactCheck_IsKept()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string file = Path.Combine(dir, WPowerPlans.PowFileNameFor(BalancedGuid));
+                File.WriteAllText(file, "a real .pow would have bytes in it");
+
+                StepResult accepted = Utils.ValidateExportArtifact(file, "Balanced", "powercfg", "exported it");
+
+                Assert.Equal(ResultState.Succeeded, accepted.State);
+
+                StepResult step = WPowerPlans.AbandonIfFailed(file, accepted);
+
+                Assert.True(File.Exists(file));
+                Assert.Same(accepted, step);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
         // --- the manifest name -----------------------------------------------------------
 
         [Fact]

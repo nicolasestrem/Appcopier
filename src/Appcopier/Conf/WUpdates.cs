@@ -56,11 +56,23 @@ namespace Conf
             // carries this PC's Windows Update identity. Both facts are things a user has to know
             // BEFORE consenting to a restore, not after, so they are stated here rather than in a
             // step reason nobody reads until it is too late.
+            // The second sentence of this warning is the one the Phase 3c review corrected, and the
+            // correction is worth keeping visible. The first draft closed with "restoring it onto the
+            // same PC it came from is what this item is for", which reads as reassurance for the
+            // app's HEADLINE use case: back up, reinstall Windows, restore. But a reinstalled Windows
+            // issues a NEW SusClientId, so putting the old one back re-points the fresh install at an
+            // identity already registered with Windows Update - the exact confusion the warning
+            // describes for a different PC, arriving on the same physical machine. Naming only the
+            // different-PC case would have told users the risky scenario was the safe one.
             WarningMessage = "The Windows Update settings saved here include the ID numbers Windows Update "
-                           + "uses to recognise this particular PC. Restoring this backup onto a DIFFERENT PC "
-                           + "copies that identity across, which can confuse Windows Update - or a company "
-                           + "update server - about which machine is which, for both PCs. Restoring it onto "
-                           + "the same PC it came from is what this item is for.\n\n"
+                           + "uses to recognise this particular installation of Windows. Restoring them "
+                           + "onto a DIFFERENT PC - or onto the same PC after reinstalling Windows, which "
+                           + "gives it new ID numbers - puts the old identity back, and that can confuse "
+                           + "Windows Update, or a company update server, about which machine is which.\n\n"
+                           + "Nothing here is needed to make Windows Update work: a fresh install sorts "
+                           + "its own settings out. Restore this item when you want your update "
+                           + "preferences back on a machine you have not reinstalled, and leave it "
+                           + "unticked after a reinstall.\n\n"
                            + "Delivery Optimization is only saved when someone has configured it. On a PC "
                            + "where nobody changed it, this item reports that it is not present - that is "
                            + "normal and not an error.";

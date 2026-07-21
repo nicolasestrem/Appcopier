@@ -162,6 +162,43 @@ namespace Appcopier.Tests
         }
 
         /// <summary>
+        /// The pins only come back on the account they were saved from, and a wrong one looks fine.
+        /// </summary>
+        /// <remarks>
+        /// Added by the Phase 3c review, which dumped the live Favorites blob this module captures
+        /// (29,531 bytes, measured 2026-07-21) and found it is a shell ItemID list carrying
+        /// account-bearing absolute paths - AppData\Roaming\...\Quick Launch\TaskBar\&lt;App&gt;.lnk -
+        /// along with the profile display name.
+        ///
+        /// The failure it produces is the shape this whole project exists to remove. Restore onto a
+        /// different account name or a rebuilt profile: the folder copy genuinely copies 32 files,
+        /// both registry imports genuinely apply, Aggregate returns Succeeded - and Explorer cannot
+        /// resolve the blob, prunes the pins, and the taskbar comes back empty. Every row green, the
+        /// thing the user asked for gone.
+        ///
+        /// Nothing in the code can detect it, so this text is the entire mitigation, which is why it
+        /// is pinned rather than left to survive the next edit on trust. WFonts and APinnedApps
+        /// disclose the identical hazard in the same words; this module shipped without it.
+        /// </remarks>
+        [Fact]
+        public void WarningDisclosesThatPinsOnlyReturnOnTheSameAccount()
+        {
+            WTaskbar m = new WTaskbar();
+
+            AssertDiscloses(m.WarningMessage, new[] { "user name", "username", "same Windows account" },
+                "that the pin list records paths containing the Windows user name");
+
+            AssertDiscloses(m.WarningMessage, new[] { "cannot detect", "still report success" },
+                "that a restore onto a differently-named account fails invisibly and still " +
+                "reports success");
+
+            // The Info text is the one a user actually reads while browsing the tree, and CLAUDE.md
+            // records a module whose Info disagreed with its own warning. Both must carry the limit.
+            AssertDiscloses(m.Info, new[] { "user name", "username", "same account" },
+                "that Info carries the same-account limitation, not only WarningMessage");
+        }
+
+        /// <summary>
         /// The declaration is read from the fields on every access, not snapshotted at construction.
         /// </summary>
         /// <remarks>

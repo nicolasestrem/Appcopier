@@ -178,6 +178,40 @@ namespace Appcopier.Tests
                 "sharing, which is most of them.");
         }
 
+        /// <summary>
+        /// The reinstall case is named, because it is this app's headline use case.
+        /// </summary>
+        /// <remarks>
+        /// Added by the Phase 3c review, which caught the first draft closing with "restoring it onto
+        /// the same PC it came from is what this item is for". That reads as reassurance for exactly
+        /// the sequence Appcopier exists to serve - back up, reinstall Windows, restore - and it is
+        /// wrong for it: a reinstalled Windows issues a NEW SusClientId, so restoring the old one
+        /// re-points the fresh install at an identity already registered with Windows Update. Same
+        /// physical machine, same confusion the warning describes for a different PC.
+        ///
+        /// Pinned because the defect was not a missing warning but a warning that named the risky
+        /// scenario as the safe one, and that is the kind of sentence a later edit restores by
+        /// accident while every other assertion here stays green.
+        /// </remarks>
+        [Fact]
+        public void Updates_DisclosesThatAReinstallIsNotTheSafeCase()
+        {
+            WUpdates m = new WUpdates();
+
+            Assert.True(
+                new[] { "reinstall", "re-install", "fresh install" }
+                    .Any(n => Mentions(m.WarningMessage, n)),
+                "WarningMessage no longer names the reinstall case. Back up, reinstall Windows, " +
+                "restore is this app's main use case, and a reinstalled Windows gets new Windows " +
+                "Update ID numbers - so restoring the old ones is the risky path, not the safe one.");
+
+            Assert.False(
+                Mentions(m.WarningMessage, "the same PC it came from is what this item is for"),
+                "WarningMessage has regained the sentence the Phase 3c review removed. It tells the " +
+                "user the same-PC case is the intended one, which is false immediately after a " +
+                "Windows reinstall - the case they are most likely to be in when using this app.");
+        }
+
         // The AU-era phrasing named policy options this module no longer captures at all. Stale
         // disclosure is worse than none: it promises settings the backup does not contain.
         [Fact]

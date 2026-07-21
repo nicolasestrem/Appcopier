@@ -409,8 +409,41 @@ namespace Conf
 
             // An exit code is not evidence. Whatever powercfg said, the file it was told to write
             // has to be there and non-empty before this claims the plan was captured.
-            return Utils.ValidateExportArtifact(filePath, label, "powercfg", "exported the power plan " + label);
+            StepResult step = Utils.ValidateExportArtifact(
+                filePath, label, "powercfg", "exported the power plan " + label);
+
+            // And a file that FAILED that check is abandoned too, not just one from a failed run.
+            // The reachable case is exit code 0 over an empty file, which is not hypothetical: the
+            // measurement that made ValidateExportArtifact mandatory in the first place was netsh
+            // wlan export printing "saved successfully" with exit code 0 while writing nothing.
+            //
+            // This is deliberately STRICTER than Utils.ExportRegistryKey, whose RegFile.Validate
+            // failure branches leave the file alone, and the difference is not an inconsistency to
+            // reconcile. A bad .reg left on disk is caught downstream - ImportRegistryKey validates
+            // before it will hand anything to regedit, so the restore refuses it. A bad .pow has no
+            // downstream at all: this restore never reads .pow files, so the only consumer is a
+            // human following this module's own instruction to import it by hand. Nothing else will
+            // ever check it, which is exactly why it must not survive the failure that produced it.
+            return AbandonIfFailed(filePath, step);
         }
+
+        /// <summary>
+        /// Removes the artifact behind a step that failed, and leaves a successful one alone.
+        /// </summary>
+        /// <remarks>
+        /// One rule - a .pow this module will not vouch for does not stay in the backup folder -
+        /// expressed once so both failure routes obey it, and internal so a test drives THIS
+        /// function rather than a copy of it.
+        ///
+        /// It cannot pin the whole path: reaching <see cref="ExportSchemeAsync"/> means running
+        /// powercfg, and coverage stops where elevation begins. What it does pin is the decision,
+        /// leaving exactly one unpinned link - that the call site routes through here - instead of
+        /// the rule itself being unwritten anywhere a test can see it.
+        /// </remarks>
+        internal static StepResult AbandonIfFailed(string filePath, StepResult step)
+            => step != null && step.State == ResultState.Failed
+                ? AbandonExport(filePath, step.Target, step.Reason)
+                : step;
 
         /// <summary>
         /// Fails an export and removes whatever powercfg left at the target path.
@@ -454,10 +487,18 @@ namespace Conf
         /// </summary>
         private async Task<StepResult> WriteManifestAsync(string path, IReadOnlyList<PowerSchemeEntry> schemes)
         {
-            // Asked of powercfg directly rather than taken from the "*" in the listing. The listing
-            // is parsed for the marker too, but /getactivescheme is the command whose entire job is
-            // this one answer, and the manifest is what restore acts on - so the stronger source
-            // wins, and disagreeing with it is not something to paper over.
+            // Asked of powercfg directly rather than taken from the "*" in the listing:
+            // /getactivescheme is the command whose entire job is this one answer, and the manifest
+            // is what restore acts on, so it gets the stronger source.
+            //
+            // To be exact about what this does NOT do, because an earlier version of this comment
+            // claimed otherwise and both Phase 3c reviewers caught it: the listing's "*" marker is
+            // parsed into PowerSchemeEntry.IsActive, and nothing here compares the two. There is no
+            // cross-check and no fallback - a disagreement between the marker and /getactivescheme
+            // would be discarded silently, and /getactivescheme would win by default rather than by
+            // decision. IsActive is kept because it makes the parse observable to the tests that
+            // pin locale-independence, not because any production decision reads it. If a
+            // cross-check is ever wanted, this is the place, and it does not exist yet.
             ToolCapture active = await CaptureAsync("/getactivescheme");
 
             string problem = ProblemWith(active.Outcome);

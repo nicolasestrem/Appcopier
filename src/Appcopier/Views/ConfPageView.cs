@@ -722,15 +722,13 @@ namespace Views
 
             LogRestoredElements(restoredModules, results, snapshot, snapshotFolderPath);
 
-            // Stage 8. Gated on a successful restore of a module that declares
-            // RequiresExplorerRestart, not merely on the declaration: a module that failed or was
-            // skipped never touched Explorer state, so offering to restart it would be a no-op
-            // dressed up as a fix.
-            bool requiresRestart = restoredModules
-                .Zip(results, (config, result) => new { config, result })
-                .Any(x => x.config.RequiresExplorerRestart && x.result.State == ResultState.Succeeded);
-
-            btnRestartExplorer.Visible = requiresRestart;
+            // Stage 8. Gated on a module that declares RequiresExplorerRestart having actually
+            // WRITTEN something, not merely on the declaration and not on its folded verdict. The
+            // decision moved to ExplorerRestartPrompt in Phase 3c, where it can be tested and where
+            // the reason the folded verdict is the wrong input is written down: Aggregate lets one
+            // failed step dominate, so a hybrid that restored the taskbar pins and then failed a
+            // later step would hide the very button its own warning tells the user to press.
+            btnRestartExplorer.Visible = ExplorerRestartPrompt.IsNeeded(restoredModules, results);
 
             ShowSummary(
                 RunSummary.For(ModuleOutcome.Pair(restoredModules, results), true, RunVerb.Restore),

@@ -33,12 +33,42 @@ namespace Conf
         public WTaskbar()
         {
             Title = "Taskbar";
-            Info = "This will back up your taskbar settings (alignment, size, layout, Widgets) and the apps pinned to your taskbar - both the list Windows keeps of them and the shortcut files it points at.";
+            Info = "This will back up your taskbar settings (alignment, size, layout, Widgets) and the "
+                 + "apps pinned to your taskbar - both the list Windows keeps of them and the shortcut "
+                 + "files it points at. That list records where each shortcut lives using a full path "
+                 + "containing your Windows user name, so it comes back correctly on the same account "
+                 + "it was saved from.";
+
             // Taskband is read by Explorer when it starts, so a restore changes nothing visible
             // until Explorer is restarted. Advanced alone did not need this, which is why the
             // module never set it.
             RequiresExplorerRestart = true;
-            WarningMessage = "After restoring the taskbar, use the Restart Explorer button BEFORE you sign out. Explorer keeps the pinned-app list in memory and writes its own copy back when it exits normally, so signing out without restarting first can overwrite what was just restored. Restoring the pinned shortcuts also MERGES rather than replaces: shortcuts you pinned since the backup stay on disk, and what actually appears on the taskbar is decided by the restored pin list, not by which shortcut files are present.";
+
+            // Three disclosures, and the third was added by the Phase 3c review rather than written
+            // with the module. The Favorites blob is a shell ItemID list, and dumping the live one
+            // (29,531 bytes, measured 2026-07-21) shows it carries account-bearing absolute paths -
+            // AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\TaskBar\<App>.lnk - plus the
+            // profile display name. Under a different account name, or a rebuilt profile, Explorer
+            // cannot resolve those entries and prunes them, so the taskbar comes back empty while
+            // every row reads Succeeded: the folder copy really did copy 32 files and both imports
+            // really were applied.
+            //
+            // That is the undetectable-failure shape this app is built to disclose, and the same
+            // commit disclosed it for WFonts ("this app cannot detect that - the row still reports
+            // success") and APinnedApps while missing it here. Same fact, same voice.
+            WarningMessage = "After restoring the taskbar, use the Restart Explorer button BEFORE you "
+                           + "sign out. Explorer keeps the pinned-app list in memory and writes its own "
+                           + "copy back when it exits normally, so signing out without restarting first "
+                           + "can overwrite what was just restored.\n\n"
+                           + "The pinned apps only come back on the same Windows account they were saved "
+                           + "from. Windows stores that list as full paths containing your user name, so "
+                           + "on a PC where your account is named differently - or on a rebuilt profile - "
+                           + "Windows cannot find the shortcuts and quietly drops the pins, leaving the "
+                           + "taskbar empty. This app cannot detect that: it will still report success.\n\n"
+                           + "Restoring the pinned shortcuts also MERGES rather than replaces: shortcuts "
+                           + "you pinned since the backup stay on disk, and what actually appears on the "
+                           + "taskbar is decided by the restored pin list, not by which shortcut files "
+                           + "are present.";
 
             LoadSettings();
         }

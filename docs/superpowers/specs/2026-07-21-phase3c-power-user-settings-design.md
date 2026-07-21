@@ -144,11 +144,12 @@ than assumed.
 `dotnet build src\Appcopier.sln` clean, 0 warnings. `dotnet test src\Appcopier.sln`:
 
 ```
-Passed!  - Failed:     0, Passed:   688, Skipped:     0, Total:   688, Duration: 175 ms
+Passed!  - Failed:     0, Passed:   700, Skipped:     0, Total:   700, Duration: 180 ms
 ```
 
-627 → 688. The new tests are `PowerPlansTests` (20), `PowerUserModuleTests` (14), `TaskbarRetargetTests`
-(9) and `UpdatesRetargetTests` (8), plus `TheTaskbarFileNameIsKeptForTheKeyThatAlreadyUsesIt` in
+627 → 688 for the implementation, then 688 → 700 for the review fixes. The new files are
+`PowerPlansTests`, `PowerUserModuleTests`, `TaskbarRetargetTests`, `UpdatesRetargetTests` and
+`ExplorerRestartPromptTests`, plus `TheTaskbarFileNameIsKeptForTheKeyThatAlreadyUsesIt` in
 `BackupFileNamingTests` and the roster updates.
 
 Hand-kept rosters updated: module count 25 → 29; `MultiKeyModules_DeclareOneTargetPerKeyInOrder` gains
@@ -179,18 +180,123 @@ remembering to add it.
 
 Two reviewers ran over the branch: the mandated `windows-safety-reviewer` and a silent-failure hunter.
 
-- **A failed `powercfg /export` left a zero-byte `.pow` in the backup folder.** Found twice
-  independently — once by measurement while validating the module's assumptions, once by the
-  silent-failure review — which is the strongest form of confirmation available here. Measured
-  unelevated: `powercfg /export` fails with `0x522` and exit code 1 **and still creates the target
-  file**, zero bytes long. The module returned `Failed` before reaching `ValidateExportArtifact`, so
-  nothing removed it. That is not untidiness: this module's `WarningMessage` and its own
-  not-on-this-PC restore failure both tell the user, by name, that the `.pow` in the backup folder is
-  what they can import by hand — so the failure path was pointing them at a junk file as their
-  recovery route. Fixed with an `AbandonExport` mirroring `Utils.AbandonExport` and the netsh rule
-  Phase 3a established: an export that fails removes what it was part-way through writing, and a
-  delete failure is logged and dropped rather than displacing the real reason. Made `internal` so the
-  test calls the production function rather than reimplementing the cleanup beside it.
+**A correction to the record first, because it is the kind of error that compounds.** An earlier draft
+of this section credited the reviewers with finding the zero-byte `.pow` defect. They did not — the
+implementing agent found it, measured it, and fixed it inside the original commit, and both reviewers
+then read code that already contained the fix and its measurement comment. The lead's own independent
+measurement of `powercfg /export` is a genuine second observation; the reviewers agreeing with a
+comment they had just read is not a third. Recorded because "found independently by N reviewers" is a
+claim about evidence strength, and inflating it is exactly the kind of unearned confidence this
+project's rules exist to prevent.
+
+### The Restart Explorer button, hidden by a partly-failed restore — the serious one
+
+`ConfPageView` gated the button on `result.State == ResultState.Succeeded`. Correct while every module
+declaring `RequiresExplorerRestart` wrote exactly one thing: `Failed` then really did mean nothing was
+written, and offering a restart would have been a no-op dressed up as a fix. `ModuleResult.Aggregate`
+lets any one failed step dominate, so once those modules became multi-step the premise was gone.
+
+The failure: restore a backup whose `Taskbar.reg` is unreadable. The pinned-shortcuts folder copies
+fine, `Taskband` imports fine — the pin list is live on disk — and the third step fails, so the module
+reports `Failed` and the button vanishes. The user has just read a `WarningMessage` telling them to
+press that button before signing out. They sign out, the running Explorer flushes its in-memory pin
+list over the restored `Taskband`, and 32 pins are gone. **The bug removed the control that makes a
+restore stick, in precisely the case where the user had been told to use it.**
+
+`WThemes` has been a folder-plus-two-keys hybrid since 2c and declares the same flag, so it carried
+this too. The rule is now "did this module write anything" — any step `Succeeded`, which includes
+`Applied` — and it moved into `ExplorerRestartPrompt` alongside `SnapshotGate` and `RestoreDispatch`,
+for the same reason those exist: while the decision lived inline in a `UserControl` the suite cannot
+instantiate, nothing could pin it. `ExplorerRestartPromptTests` now does, including the negative
+direction the old gate got right (nothing written ⇒ no button).
+
+### Taskbar pins do not survive a different account, and nothing said so
+
+The reviewer dumped the live `Favorites` blob this module now captures — 29,531 bytes — and found it is
+a shell ItemID list carrying account-bearing absolute paths
+(`AppData\Roaming\…\Quick Launch\TaskBar\<App>.lnk`) plus the profile display name. Restore onto a
+differently-named account or a rebuilt profile and the folder copy genuinely copies 32 files, both
+imports genuinely apply, `Aggregate` returns `Succeeded` — while Explorer cannot resolve the blob,
+prunes the pins, and the taskbar comes back empty.
+
+What makes it a defect rather than a limitation is that **the same commit disclosed this identical
+hazard twice and skipped it only here**: `WFonts` ("this app cannot detect that - the row still
+reports success") and `APinnedApps` both carry it. Now in `WarningMessage` and `Info`, pinned.
+
+### `WUpdates` named the risky case as the safe one
+
+The first draft closed with "restoring it onto the same PC it came from is what this item is for."
+That is reassurance for the sequence this app exists to serve — back up, reinstall Windows, restore —
+and it is wrong for it: a reinstalled Windows issues a **new** `SusClientId`, so restoring the old one
+re-points the fresh install at an identity already registered with Windows Update. Same physical
+machine, same confusion the warning describes for a different PC. The warning now names the reinstall
+case and says plainly that nothing here is needed to make Windows Update work on a fresh install. Both
+halves are pinned, including a negative assertion against the removed sentence.
+
+### A comment promising a cross-check that does not exist
+
+Both reviewers caught this independently, and it is the one place they genuinely converged.
+`WriteManifestAsync`'s comment said the listing's `*` marker is parsed too, "so the stronger source
+wins, and disagreeing with it is not something to paper over" — which reads as a promise that the two
+sources are compared. `PowerSchemeEntry.IsActive` is read by nothing in production; a disagreement is
+parsed and silently discarded. The comment now states exactly what happens, including that no
+cross-check exists and where it would go. That is what stops the next author trusting a guarantee
+nobody implemented.
+
+### The `ValidateExportArtifact` branch
+
+Both reviewers independently reached the conclusion the lead had already reached and fixed: a real
+gap, and the `Utils.ExportRegistryKey` precedent is **not** wrong. The asymmetry is justified by the
+downstream, not by inconsistency — a bad `.reg` left on disk is re-validated by `ImportRegistryKey`'s
+pre-flight before regedit ever sees it, so that path fails closed. A bad `.pow` has no downstream at
+all: restore never reads one, so its only consumer is a human following this module's own instruction
+to import it by hand. It now routes through `AbandonIfFailed`, pinned in both directions (failed ⇒
+removed, succeeded ⇒ kept — a cleanup rule that deleted unconditionally would pass every failure test
+and destroy every backup).
+
+### Verdicts recorded as clean
+
+Negative results are results, and the phase's own lesson is that a count which does not move can still
+hide a change. Both reviewers cleared, against the code rather than the comments: the snapshot-closure
+argument for `WPowerPlans` (no path found where `/setactive` succeeds and the snapshot cannot undo it;
+the `%TEMP%` scratch file does not break closure — not user state, GUID-named, deleted in a `finally`,
+and only written on exit 0); the decision not to close Explorer before a taskbar restore (the `Kill`
+claim verified at `WindowsHelper.cs:768`); the orphaned `\AU` filename, computed rather than reasoned
+about and matching character for character including the old key's mixed-case `Software`; restore
+ordering in both hybrids, folders-then-keys in `RestoreTargets` and `RestoreAsync` alike, read at
+access time so the dialog cannot describe a set the restore does not write; every `AbsenceIsNormal`
+flag against live measurement; stdout encoding (UTF-8 both sides, and GUIDs are ASCII in every OEM code
+page so identity survives even when a localized display name does not); the `EndsWith("*")` heuristic
+(a plan named with an asterisk renders as `(My Plan *)`, ending in `)`); `ConfirmActiveSchemeAsync`'s
+tri-state; `Aggregate` masking (a failed folder copy cannot be hidden by succeeding exports); zero
+`LogHelper.Log` calls on data-bearing text across all seven files; no `MessageBox` on any module
+restore path; no empty catch; no `RestoreTarget` list null or Undeclared.
+
+### Raised and deliberately not fixed
+
+- **An unelevated backup produces a false "cannot be fully undone" warning for power plans.**
+  `/export` needs elevation while `/list`, `/getactivescheme` and `/setactive` do not, so an unelevated
+  run yields N failed exports plus a successfully written manifest ⇒ `Aggregate` Failed ⇒ `SnapshotGate`
+  warns and prompts for an override. The warning is false in substance: the manifest *is* the entire
+  undo, it exists, and `/setactive` reverses unelevated. No data loss in either direction, which is why
+  it is not fixed here — the honest fix needs `SnapshotGate` to distinguish undo-critical steps from
+  the rest, and that is a Phase 2b safety mechanism that deserves its own review rather than an
+  amendment inside a coverage phase. Recorded because "trains users to click through the one prompt
+  that must stay meaningful" is a real cost, not a cosmetic one. The app ships elevated, so the normal
+  path is unaffected.
+- **`File.Exists` as the manifest gate** reports "nothing was backed up for this item" for a manifest
+  that exists but cannot be opened — a claim about the backup's contents when the truth is that it
+  could not be read. Inherited rather than introduced: `RegFile` gates identically, so every registry
+  module shares it. Fixing it in one module would make the two disagree about what absence means.
+- **A truncated-but-non-empty `.pow` passes** `ValidateExportArtifact`, which checks existence and
+  non-zero length only. There is no `.pow` equivalent of `RegFile.Validate` and writing one would mean
+  parsing an undocumented binary format.
+- **`WFonts` captures an MSIX package-scoped subkey** under the fonts key (a Windows Terminal font
+  registration pinned to an exact package version). `regedit /e` takes subtrees wholesale; restoring it
+  onto a different Terminal build re-creates an inert registration. Harmless, and narrowing the export
+  would mean per-value filtering the base does not do.
+- **A partial manifest write and a leaked `.partial` scratch file** — both fail safe (truncated JSON
+  cannot parse, so the restore fails rather than acting on it) and both are cosmetic.
 
 ## Deferred, with reasons
 
