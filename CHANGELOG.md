@@ -4,6 +4,35 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Changed — the engine moved into its own library (Phase 4, PR 2)
+
+Nothing about what the app does changed here, and nothing you can see changed either. The backup and
+restore code was moved out of the application into a separate `Appcopier.Core` library, so the interface
+can be rebuilt over the coming releases without the engine moving underneath it.
+
+Two consequences worth recording, because they touch things that are easy to break silently:
+
+- **Where backups are written is unchanged.** The path is built from a different API now, and since the
+  released app ships as a single self-contained executable — a mode neither the build nor the test suite
+  ever exercises — the replacement was measured against the old one in exactly that published form
+  before it was adopted, rather than assumed to be equivalent. Existing backup folders are found and
+  restored exactly as before.
+- **The update check is unchanged**, including the file it downloads and the exact path it downloads it
+  from. Older installed versions read that path directly, so it cannot move.
+
+The app restore item ("Remember installed apps") now reports a **failure** rather than a skip in the case
+where its dialog cannot be opened at all. Previously both outcomes looked identical, and one of them was
+a success.
+
+### Fixed — two long-standing resource leaks
+
+Both were found by review of this PR and both predate it; neither is visible in normal use.
+
+- The app reinstall dialog was never disposed after being closed, so its window handle and every
+  drawing object on it stayed allocated until the app exited. Opening it repeatedly in one session
+  leaked once per open.
+- The update check left its network client undisposed on every run.
+
 ### Planned — a rebuilt interface (Phase 4)
 
 Nothing here has shipped yet. This entry records the direction so the change is not a surprise when it

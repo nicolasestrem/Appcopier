@@ -8,20 +8,39 @@ Appcopier is a Windows Forms desktop app (.NET 8, C#) that backs up and restores
 
 ## Build
 
-SDK-style csproj targeting `net8.0-windows`. Use the dotnet CLI:
+Three SDK-style projects, all targeting `net8.0-windows`. Use the dotnet CLI:
 
 ```
 dotnet build src\Appcopier.sln
 dotnet test src\Appcopier.sln
 ```
 
+- **`src/Appcopier.Core`** — the engine: `BackupBase`, all of `Conf/`, most of `Results/`, and the
+  `Utils`/`Data`/`OsHelper`/`LogHelper` helpers. It deliberately does **not** set `UseWindowsForms`,
+  and that is load-bearing: being unable to compile against WinForms is what keeps a `MessageBox` out
+  of a backup module by construction rather than by review. Extracted in Phase 4 PR 2.
+- **`src/Appcopier`** — the WinForms app: `MainForm`, `Views/`, `Forms/`, `Program`, `RunSummary`,
+  and the three sinks/seams that hand the engine its UI (below). References Core.
+- **`src/Appcopier.Tests`** — xUnit. References the app project only; Core arrives transitively.
+
+**The engine reaches the user through three registered seams, never by referencing UI.** All three are
+filled in by `Program.RegisterUiSeams()` before the message pump starts: `LogHelper`'s `ILogSink`
+(implemented by `RichTextBoxLogSink`), `Utils.UrlFailureUi` (the could-not-open-link dialog), and
+`Conf.AppStoreApps.RestoreDialog` (opens `RestAppsForm`). Unregistered, each fails safe on purpose —
+logging goes nowhere, the link failure only logs, and the app-restore module reports **`Failed`**,
+which is deliberately not `Skipped` because `Skipped` is already that module's genuine success reason.
+
+Most engine types are `internal` and **must stay that way** — `Appcopier.Core.csproj` declares
+`InternalsVisibleTo` for both `Appcopier` and `Appcopier.Tests`. If something needs `public` to
+compile, the project reference is wrong, not the modifier.
+
 Output lands in `src\Appcopier\bin\<Configuration>\net8.0-windows\`. This dev build is framework-dependent, so running it needs the **.NET Desktop Runtime 8** (`Microsoft.WindowsDesktop.App` 8.0.x) installed.
 
 Releases are different: they ship **self-contained single-file**, so end users install nothing. The `/release` skill has the exact publish command and the flags it depends on — all of them matter, and the artifact must come out as exactly one ~69 MB `Appcopier.exe`. Never ship the framework-dependent `bin\Release\` exe; on its own it cannot start. Do not add `PublishTrimmed` — WinForms resolves types by reflection and is not trim-safe.
 
-The only runtime NuGet dependency is Newtonsoft.Json, declared as a `<PackageReference>` (`packages.config` is gone). Tests are xUnit, in `src/Appcopier.Tests`. There is no linter.
+The only runtime NuGet dependency is Newtonsoft.Json, declared as a `<PackageReference>` in both the app and Core projects at the same version (`packages.config` is gone). Tests are xUnit, in `src/Appcopier.Tests`. There is no linter.
 
-`Properties/AssemblyInfo.cs` is hand-maintained and the csproj sets `<GenerateAssemblyInfo>false</GenerateAssemblyInfo>` — this is load-bearing for the update checker (see "Data flow and paths"). Never set `Version`/`AssemblyVersion`/`FileVersion`/`InformationalVersion` in the csproj, and never add an `AssemblyInformationalVersion` attribute; both would create a second, silently diverging version source. The csproj carries comments explaining this and the DPI constraint — read them before editing it.
+`src/Appcopier/Properties/AssemblyInfo.cs` is hand-maintained and the **app** csproj sets `<GenerateAssemblyInfo>false</GenerateAssemblyInfo>` — this is load-bearing for the update checker (see "Data flow and paths"). It must not move to Core: the deployed v0.30.0 binaries fetch that exact repo path. `Appcopier.Core.csproj` leaves `GenerateAssemblyInfo` at its default on purpose, since no client fetches anything from it and the generated `SupportedOSPlatform` attribute is what keeps CA1416 honest there. Never set `Version`/`AssemblyVersion`/`FileVersion`/`InformationalVersion` in the csproj, and never add an `AssemblyInformationalVersion` attribute; both would create a second, silently diverging version source. The csproj carries comments explaining this and the DPI constraint — read them before editing it.
 
 The app declares `requestedExecutionLevel level="highestAvailable"` in `app.manifest` — registry export/import shells out to `regedit.exe`, so meaningful manual testing requires an elevated Windows session. The unit tests deliberately cover only logic that runs without elevation.
 
@@ -38,10 +57,10 @@ module bugs that are *not* regressions.
 
 ### Backup module system (the core pattern)
 
-- `src/Appcopier/BackupBase.cs` — abstract base every backup module inherits: `Title`, `Info`, `WarningMessage`, `RequiresExplorerRestart`, `IsInstalled()`, `Backup(path)`, `Restore(path)`, plus `BackupAsync`/`RestoreAsync` wrappers (Task.Run around the sync methods). `Backup`/`Restore` return a `ModuleResult`, not `void` — see "Reporting outcomes" below.
-- `src/Appcopier/Conf/*.cs` — one class per backup area. Filename prefix letter encodes the category: `A` = Apps, `C` = Credentials, `D` = Devices, `E` = Developer, `G` = Gaming, `W` = Windows settings. (There is no `B`/Browser anymore — those modules were retired in Phase 3a and the roadmap says not to add new ones.) Most modules call `Utils.ExportRegistryKey()` / `Utils.ImportRegistryKey()` (regedit `/e` and `/s`) and/or `Utils.CopyFolder()`.
-- `src/Appcopier/Conf/RegistryModule.cs` — base for the ten modules that capture exactly one registry key to `{Title}.reg`. Subclasses supply data (`Key`, `AbsenceIsNormal`) and inherit the decision logic, so the skipped-vs-failed rule is written once. **Prefer inheriting this over hand-rolling `Backup`/`Restore`** when a module is a single-key export.
-- `src/Appcopier/Conf/FileModule.cs` — base for modules that copy **named files** into `{Title}\`. It is a whitelist by construction: it copies what `Files` lists and **never enumerates a directory**, which is how `ESsh` excludes private keys structurally rather than through a filter that has to be kept correct. Use it, not `FolderModule`, whenever the containing folder holds anything that must not be captured. Its naming seam is `BackupFileNameFor`, defaulting to the file's *base name* — never the full path, which would carry the backing-up account's user name into the artifact name and stop resolving under any other account. A module with two same-named files (three Windows Terminal installs all call theirs `settings.json`) **must** override it, or the second copy overwrites the first while both steps report success.
+- `src/Appcopier.Core/BackupBase.cs` — abstract base every backup module inherits: `Title`, `Info`, `WarningMessage`, `RequiresExplorerRestart`, `IsInstalled()`, `Backup(path)`, `Restore(path)`, plus `BackupAsync`/`RestoreAsync` wrappers (Task.Run around the sync methods). `Backup`/`Restore` return a `ModuleResult`, not `void` — see "Reporting outcomes" below.
+- `src/Appcopier.Core/Conf/*.cs` — one class per backup area. Filename prefix letter encodes the category: `A` = Apps, `C` = Credentials, `D` = Devices, `E` = Developer, `G` = Gaming, `W` = Windows settings. (There is no `B`/Browser anymore — those modules were retired in Phase 3a and the roadmap says not to add new ones.) Most modules call `Utils.ExportRegistryKey()` / `Utils.ImportRegistryKey()` (regedit `/e` and `/s`) and/or `Utils.CopyFolder()`.
+- `src/Appcopier.Core/Conf/RegistryModule.cs` — base for the ten modules that capture exactly one registry key to `{Title}.reg`. Subclasses supply data (`Key`, `AbsenceIsNormal`) and inherit the decision logic, so the skipped-vs-failed rule is written once. **Prefer inheriting this over hand-rolling `Backup`/`Restore`** when a module is a single-key export.
+- `src/Appcopier.Core/Conf/FileModule.cs` — base for modules that copy **named files** into `{Title}\`. It is a whitelist by construction: it copies what `Files` lists and **never enumerates a directory**, which is how `ESsh` excludes private keys structurally rather than through a filter that has to be kept correct. Use it, not `FolderModule`, whenever the containing folder holds anything that must not be captured. Its naming seam is `BackupFileNameFor`, defaulting to the file's *base name* — never the full path, which would carry the backing-up account's user name into the artifact name and stop resolving under any other account. A module with two same-named files (three Windows Terminal installs all call theirs `settings.json`) **must** override it, or the second copy overwrites the first while both steps report success.
 - **A loop over N targets must build N distinct filenames.** Build the path with `BackupBase.RegFileNameFor(key)`; never `Title + ".reg"` inside a `foreach` over `Keys`. `WThemes` did the latter, which was harmless only while it had one key — a second export would delete the first via `TryDeleteExport` and write over it while *both* steps reported success, and the restore would import that one file once per key while the post-import probe found every key present, because the keys exist on the live machine regardless of what the file contained. Every row green, one key never captured. `BackupFileNamingTests` catches this by giving a module a synthetic extra key and observing the filename `RestoreAsync` actually computes — not by calling the seam, which a broken call site would still pass.
 - **Keyless artifacts are named by a `const` on the class that writes them**, not through that seam: it derives `.reg` names from a registry key, and something like `AStoreApps`' `.json` export has no key. `AppStoreApps.ExportFileName` is the pattern. The rule is the same either way — a name kept away from its producer drifts. That one was spelled four ways at once, including in the `Info` text the user reads.
 - **Changing a module's registry key changes its backup filename**, because the name is derived from the key. That orphans the file in every existing backup, which then restores as `Skipped("nothing was backed up for this item")`. Decide deliberately and disclose it; do not reach for a filename fallback without checking what the old file *contains*, since a `.reg` written for the old key applies to the old key no matter which key you pass `regedit`.
@@ -125,14 +144,16 @@ The csproj no longer needs a `<Compile Include>` entry — the SDK project globs
 
 ### Data flow and paths
 
-- `DataHelper.Data` (`Helpers/DataHelper.cs`) centralizes paths and URLs. Backups go to `<exe dir>\app\<yyyy-MM-dd - HH.mm>\` (`Data.DataRootDir`); each backup folder gets a `backup_log.txt` listing what was backed up, which `RestPageView` reads to describe backups.
-- `LogHelper` (singleton) logs directly into a `RichTextBox` set via `SetTarget()` — UI-bound logging, invoke-safe.
+- `DataHelper.Data` (`src/Appcopier.Core/Helpers/DataHelper.cs`) centralizes paths and URLs. Backups go to `<exe dir>\app\<yyyy-MM-dd - HH.mm>\` (`Data.DataRootDir`); each backup folder gets a `backup_log.txt` listing what was backed up, which `RestPageView` reads to describe backups. `DataRootDir` resolves the exe directory from `AppContext.BaseDirectory` — **measured** against `Application.StartupPath` under a real single-file self-contained publish before it was changed, because the two need not agree in that mode and nothing in build or test exercises it. The trailing separator is part of the field's contract. Read the comment there before touching the line.
+- `LogHelper` (singleton) composes the line and hands the text to an `ILogSink`; the app registers `RichTextBoxLogSink`, which owns the `InvokeRequired`/`Invoke` marshaling. `SetTarget(richTextBox)` still exists as an app-side extension, so call sites read as before. With no sink registered, logging is silent rather than fatal — every test class outside `LogHelperTests` runs that way while product code logs freely.
 - Open web links with `Utils.OpenUrl`, never `Process.Start` directly. The app runs elevated, and `ShellExecute` passes that elevated token to the browser it launches; `OpenUrl` goes through `explorer.exe` so the browser runs as the user, rejects anything that is not an `http`/`https` URL (a shell launch would otherwise execute it), and cannot throw — it is called from a timer thread where .NET 8 turns an escaping exception into process termination.
-- Update check (`Data.CheckForUpdates`) downloads `AssemblyInfo.cs` from the GitHub repo raw URL and string-parses the `[assembly: AssemblyFileVersion("x.y.z")]` line out of it. `Program.GetCurrentVersionTostring()` reads that same attribute off the running assembly by reflection, so both sides of the comparison resolve to one source of truth and cannot diverge. Both sides then go through `Program.NormalizeVersion` before being compared with `==` — keep it that way, since normalizing only one side makes an up-to-date client report a phantom update on every check. Version bumps happen in `src/Appcopier/Properties/AssemblyInfo.cs`, must stay three-part (`0.31.0`, never `0.31.0.0`), and must keep that exact line format — the already-deployed v0.30.0 checker parses it with raw substring math, so a reformat silently disables update checks for existing users.
+- Update check (`UpdateCheck.CheckForUpdates`, app-side since Phase 4 PR 2 — it is almost all MessageBoxes and it calls `Program`) downloads `AssemblyInfo.cs` from the GitHub repo raw URL and string-parses the `[assembly: AssemblyFileVersion("x.y.z")]` line out of it. `Program.GetCurrentVersionTostring()` reads that same attribute off the running assembly by reflection, so both sides of the comparison resolve to one source of truth and cannot diverge. Both sides then go through `Program.NormalizeVersion` before being compared with `==` — keep it that way, since normalizing only one side makes an up-to-date client report a phantom update on every check. Version bumps happen in `src/Appcopier/Properties/AssemblyInfo.cs`, must stay three-part (`0.31.0`, never `0.31.0.0`), and must keep that exact line format — the already-deployed v0.30.0 checker parses it with raw substring math, so a reformat silently disables update checks for existing users.
 
 ### Namespace quirk
 
 Namespaces do not follow folder structure and are flat: `Appcopier` (core + helpers like `Utils`, `LogHelper`), `Conf` (all backup modules), `Views`, `DataHelper`, `ViewHelper`. Match the existing namespace of the folder you're working in.
+
+They also **straddle the two assemblies** since the Core extraction — `Appcopier` and `DataHelper` each have types in both `Appcopier.Core.dll` and `Appcopier.dll` (e.g. `Utils` in Core, `RunSummary` in the app, both in namespace `Appcopier`). That is legal and deliberate: renaming namespaces to match the split would have made a rename-only refactor into a whole-tree edit. It is also why the `InternalsVisibleTo` pair is mandatory rather than a convenience.
 
 ## Project automation (`.claude/`)
 

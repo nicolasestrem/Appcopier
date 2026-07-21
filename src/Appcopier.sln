@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Appcopier", "Appcopier\Appc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Appcopier.Tests", "Appcopier.Tests\Appcopier.Tests.csproj", "{6192F8A5-9427-4CD7-8716-5328ED8C142E}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Appcopier.Core", "Appcopier.Core\Appcopier.Core.csproj", "{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -61,6 +63,26 @@ Global
 		{6192F8A5-9427-4CD7-8716-5328ED8C142E}.Release|x64.Build.0 = Release|Any CPU
 		{6192F8A5-9427-4CD7-8716-5328ED8C142E}.Release|x86.ActiveCfg = Release|Any CPU
 		{6192F8A5-9427-4CD7-8716-5328ED8C142E}.Release|x86.Build.0 = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|ARM.ActiveCfg = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|ARM.Build.0 = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|ARM64.ActiveCfg = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|ARM64.Build.0 = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|x64.Build.0 = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Debug|x86.Build.0 = Debug|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|ARM.ActiveCfg = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|ARM.Build.0 = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|ARM64.ActiveCfg = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|ARM64.Build.0 = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|x64.ActiveCfg = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|x64.Build.0 = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|x86.ActiveCfg = Release|Any CPU
+		{1FAD4433-713A-4A94-83F1-3D4715A7CFAF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

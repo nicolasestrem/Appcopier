@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Views;
 
 namespace Appcopier
 {
@@ -84,11 +85,54 @@ namespace Appcopier
         }
 
         /// <summary>
+        /// Hands the engine the UI it cannot reference itself.
+        /// </summary>
+        /// <remarks>
+        /// Engine code does not depend on WinForms; the few places where it genuinely needs to reach
+        /// a human do it through a delegate the app fills in here. This runs as the first statement
+        /// of Main, before any form, timer or worker thread exists, because an unregistered seam is
+        /// silent (a link failure logs but shows nothing) or fails closed (the app restore dialog
+        /// reports Failed) - both correct in a headless process, both wrong in this one.
+        ///
+        /// Neither delegate may throw: the callers are a timer thread and a thread-pool restore.
+        /// MessageBox.Show can fail on locked-down machines, so both call sites keep their own
+        /// catch-all around this.
+        /// </remarks>
+        private static void RegisterUiSeams()
+        {
+            Utils.UrlFailureUi = (url, ex) =>
+                MessageBox.Show(
+                    $"Could not open this link in your browser:\n\n{url}\n\n{ex.Message}",
+                    "Unable to open link",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+
+            // AppStoreApps.RestoreAsync deliberately returns a completed Task so this runs on the
+            // caller's STA thread rather than an MTA pool thread - see the remarks there.
+            //
+            // ShowDialog, unlike Show, does NOT dispose the form when it closes - it keeps the
+            // instance alive so the caller can still read its state, which is why this one needs
+            // disposing by hand. The old call site (AppStoreApps.Restore before Phase 4 PR 2)
+            // never did, so every restore of that module leaked the form's window handle and
+            // every GDI object on it for the life of the process. Reaching the same dialog again
+            // from a later restore in the same session leaked another.
+            Conf.AppStoreApps.RestoreDialog = () =>
+            {
+                using (RestAppsForm restoreApps = new RestAppsForm())
+                {
+                    restoreApps.ShowDialog();
+                }
+            };
+        }
+
+        /// <summary>
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
         static void Main()
         {
+            RegisterUiSeams();
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 

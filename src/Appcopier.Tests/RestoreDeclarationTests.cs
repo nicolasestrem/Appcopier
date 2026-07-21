@@ -42,6 +42,36 @@ namespace Appcopier.Tests
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
+        /// <summary>
+        /// No backup module lives in the app assembly. They all belong to Appcopier.Core.
+        /// </summary>
+        /// <remarks>
+        /// Phase 4 PR 2 split the engine into Appcopier.Core, and five test sites - the ModuleTypes
+        /// sweep above, ModuleTargetTests, DeveloperModuleTests and two in BackupFileNamingTests -
+        /// enumerate modules through typeof(BackupBase).Assembly. That expression now resolves to
+        /// Core, so a module accidentally left behind in, or later added to, the app project is
+        /// invisible to every one of them: a suite that stays green while covering less, which is
+        /// this codebase's signature failure.
+        ///
+        /// The Assert.Equal(29, ...) above catches that today, and it is the only thing that does -
+        /// the other three sweeps filter to subsets where a fixed count would be brittle churn on
+        /// every module addition. This asserts the membership rule directly instead of by counting,
+        /// so it never needs renumbering and does not depend on the 29 surviving a future edit.
+        /// </remarks>
+        [Fact]
+        public void NoModuleIsLeftBehindInTheAppAssembly()
+        {
+            Assembly app = typeof(MainForm).Assembly;
+
+            Assert.NotEqual(app, typeof(BackupBase).Assembly);
+
+            Type[] strays = app.GetTypes()
+                .Where(t => typeof(BackupBase).IsAssignableFrom(t) && !t.IsAbstract)
+                .ToArray();
+
+            Assert.Empty(strays);
+        }
+
         [Fact]
         public void NoShippedModuleReturnsTheUndeclaredMarker()
         {

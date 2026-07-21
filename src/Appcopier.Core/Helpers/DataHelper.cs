@@ -1,9 +1,7 @@
-﻿using Appcopier;
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Windows.Forms;
 
 namespace DataHelper
 {
@@ -22,7 +20,39 @@ namespace DataHelper
         // Application.StartupPath has no trailing separator on .NET Framework but does on .NET 5+,
         // so plain concatenation would yield "...\\app\". Path.Combine normalizes both cases.
         // The trailing separator is part of this field's contract - callers concatenate onto it.
-        public static string DataRootDir = Path.Combine(Application.StartupPath, "app") +
+        //
+        // AppContext.BaseDirectory replaced Application.StartupPath in Phase 4 PR 2, when this file
+        // moved to Appcopier.Core and lost its WinForms reference. This is the root path of every
+        // backup the app has ever written, and the two do NOT necessarily agree under
+        // PublishSingleFile with IncludeNativeLibrariesForSelfExtract - which is exactly how this
+        // app ships and is a mode neither `dotnet build` nor `dotnet test` ever exercises. So it was
+        // measured rather than reasoned about, on 2026-07-21, with a probe carrying identical csproj
+        // properties published under the exact /release flags and run from an unrelated working
+        // directory:
+        //
+        //   Application.StartupPath       = ...\publish\
+        //   AppContext.BaseDirectory      = ...\publish\
+        //   GetDirectoryName(ProcessPath) = ...\publish        (no trailing separator)
+        //   composed DataRootDir, all three = ...\publish\app\
+        //   SHIPPED expression below equals the StartupPath composition (ordinal) = True
+        //
+        // Environment.ProcessPath, NOT AppContext.BaseDirectory, and the difference only shows up in
+        // a mode nothing here tests. Both measured identical above, and BaseDirectory was the first
+        // choice for being non-nullable - but BaseDirectory means "where the app's content was
+        // extracted to", which equals the exe directory only while IncludeAllContentForSelfExtract
+        // is off. Turn that on for some unrelated content-file reason and BaseDirectory silently
+        // becomes a temp directory: the build succeeds, every test passes because none of them
+        // publishes single-file, and the release writes every backup under
+        // %TEMP%\.net\Appcopier\<hash>\app\ - where the next temp clean deletes them and RestPageView
+        // shows an empty list, so the user believes they have backups they do not have. ProcessPath
+        // is the path of the running executable and cannot move like that.
+        //
+        // The fallback exists because ProcessPath is documented as nullable, not because it is
+        // expected: it is null only when the OS cannot report the process path at all.
+        public static string DataRootDir = Path.Combine(
+                                                Path.GetDirectoryName(Environment.ProcessPath) ??
+                                                    AppContext.BaseDirectory,
+                                                "app") +
                                             @"\";
 
         // winget. Same App Execution Alias directory Windows Terminal lives in.
@@ -51,8 +81,9 @@ namespace DataHelper
         /// Extracts the AssemblyFileVersion value out of the raw text of a Properties/AssemblyInfo.cs.
         /// </summary>
         /// <remarks>
-        /// Pulled verbatim out of <see cref="CheckForUpdates"/> so the parse can be unit tested without
-        /// network I/O or MessageBoxes. The logic is intentionally byte-for-byte identical to what the
+        /// Pulled verbatim out of <see cref="Appcopier.UpdateCheck.CheckForUpdates"/> so the parse can
+        /// be unit tested without network I/O or MessageBoxes. The logic is intentionally
+        /// byte-for-byte identical to what the
         /// deployed v0.30.0 client does, including its quirks: only lines containing the literal
         /// "[assembly: AssemblyFileVersion" are considered (so AssemblyVersion is correctly ignored),
         /// the LAST such line wins, no match yields an empty string, and malformed lines throw.
@@ -69,55 +100,6 @@ namespace DataHelper
             }
 
             return latestVersion;
-        }
-
-        public static void CheckForUpdates()
-        {
-            if (IsInet() == true)
-            {
-                try
-                {
-                    string assemblyInfo = new WebClient().DownloadString(Data.Uri.URL_ASSEMBLY);
-
-                    string parsed = ParseLatestVersion(assemblyInfo);
-
-                    if (string.IsNullOrWhiteSpace(parsed))
-                    {
-                        // The file downloaded but held no AssemblyFileVersion we could read. Saying
-                        // so beats the old behavior, which compared "" against the current version,
-                        // found them unequal, and offered a download for a nonexistent release.
-                        MessageBox.Show(
-                            "Could not read the latest version number from the update file.",
-                            "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
-
-                    // Both sides go through the same normalization. Comparing a raw remote string
-                    // against a normalized local one means a four-part or suffixed version upstream
-                    // would never match, and every up-to-date user would be offered a phantom
-                    // update on every check, forever.
-                    string latestVersion = Program.NormalizeVersion(parsed);
-                    string currentVersion = Program.GetCurrentVersionTostring();
-
-                    if (latestVersion == currentVersion)                          // Up-to-date
-                    {
-                        MessageBox.Show($"No new updates available.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    else                                                          // Update available
-                    {
-                        if (MessageBox.Show($"App version {latestVersion} available.\nDo you want to open the Download page?", "App update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1) == DialogResult.Yes)
-                            Utils.OpenUrl(Data.Uri.URL_GITLATEST);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
-                }
-            }
-            else if (IsInet() == false)
-            {
-                MessageBox.Show($"Problem on Internet connection: Checking for App updates failed");
-            }
         }
 
         // Check Inet

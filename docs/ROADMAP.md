@@ -394,6 +394,20 @@ WPF direction was rejected for the UI stack but **its Core-extraction milestone 
 engine moves into a UI-free `Appcopier.Core` class library early, which is worth doing under any
 direction and keeps a future framework move cheap.
 
+**PR 2 (Core extraction) shipped 2026-07-21.** `Appcopier.Core` holds `BackupBase`, `Conf/`, most of
+`Results/` and the `Utils`/`Data`/`OsHelper`/`LogHelper` helpers, and it does not reference WinForms —
+so the UI-freeness is enforced by the compiler rather than by review. What the spec called "not a pure
+refactor" was accurate: five UI dependencies had to be inverted first, and a sixth the spec had missed
+turned up in the process — `Data.CheckForUpdates` called back into `Program`, which is a library
+depending on its own application. It moved app-side with the MessageBoxes. `RunSummary` stayed app-side
+as planned. The `Application.StartupPath` → `AppContext.BaseDirectory` change in `DataRootDir` was
+measured under a real single-file publish rather than reasoned about, per the spec's instruction.
+
+The open question the spec deferred to this PR — whether the three unpinned reflection sweeps needed
+count pins — was answered differently: a single test asserting the app assembly contains no concrete
+`BackupBase` subclass pins the membership rule directly, never needs renumbering, and does not depend on
+`RestoreDeclarationTests`' `Assert.Equal(29, …)` surviving a future edit.
+
 Two constraints worth restating here because they bind everything else:
 
 - **Informed consent does not move.** `RestoreConfirmForm` stays modal, Cancel-defaulted, with unchecked

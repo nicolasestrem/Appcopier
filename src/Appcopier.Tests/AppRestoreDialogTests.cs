@@ -46,6 +46,78 @@ namespace Appcopier.Tests
             return "{\"Sources\":[{\"Packages\":[" + packages + "]}]}";
         }
 
+        // ---- the dialog seam -------------------------------------------------------------
+
+        /// <summary>
+        /// Swaps AppStoreApps.RestoreDialog for the duration of a test and puts it back.
+        /// </summary>
+        /// <remarks>
+        /// The hook is static, exactly like LogHelper's sink, and the same hazard applies: one left
+        /// behind here outlives the test that set it. A leaked hook would make every later test that
+        /// restores this module run someone else's lambda.
+        /// </remarks>
+        private sealed class DialogHook : IDisposable
+        {
+            private readonly Action previous;
+
+            public DialogHook(Action replacement)
+            {
+                previous = AppStoreApps.RestoreDialog;
+                AppStoreApps.RestoreDialog = replacement;
+            }
+
+            public void Dispose() => AppStoreApps.RestoreDialog = previous;
+        }
+
+        // The judgement call this module's restore turns on. Skipped is already TRUE here when a
+        // dialog ran - "the dialog took it from here" - so reusing it when no dialog exists would
+        // make a total no-op read exactly like the ordinary success path.
+        [Fact]
+        public void Restore_WithNoDialogRegistered_FailsRatherThanClaimingSkipped()
+        {
+            using (new DialogHook(null))
+            {
+                ModuleResult result = new AppStoreApps().Restore(NewTempDir());
+
+                Assert.Equal(ResultState.Failed, result.State);
+                Assert.Contains("restore dialog", result.Reason, StringComparison.Ordinal);
+            }
+        }
+
+        [Fact]
+        public void Restore_WithADialogRegistered_OpensItOnceAndReportsSkipped()
+        {
+            int opened = 0;
+
+            using (new DialogHook(() => opened++))
+            {
+                ModuleResult result = new AppStoreApps().Restore(NewTempDir());
+
+                Assert.Equal(1, opened);
+                Assert.Equal(ResultState.Skipped, result.State);
+                Assert.Equal("handled interactively in the app restore dialog",
+                    result.Steps[0].Reason, StringComparer.Ordinal);
+            }
+        }
+
+        // RestoreAsync returns a completed Task on purpose so the dialog opens on the caller's STA
+        // thread rather than an MTA pool thread. Nothing pinned that until now, and the seam made it
+        // observable without constructing a window.
+        [Fact]
+        public void RestoreAsync_RunsTheDialogOnTheCallersThread()
+        {
+            int dialogThread = 0;
+
+            using (new DialogHook(() => dialogThread = Environment.CurrentManagedThreadId))
+            {
+                System.Threading.Tasks.Task<ModuleResult> task =
+                    new AppStoreApps().RestoreAsync(NewTempDir());
+
+                Assert.True(task.IsCompleted);
+                Assert.Equal(Environment.CurrentManagedThreadId, dialogThread);
+            }
+        }
+
         // ---- the filename ----------------------------------------------------------------
 
         // Ordinal on purpose. This name existed in four spellings at once, three of which differed

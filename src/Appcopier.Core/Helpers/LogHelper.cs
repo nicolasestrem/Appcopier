@@ -1,20 +1,20 @@
-﻿using System;
-using System.Windows.Forms;
+using System;
 
 namespace Appcopier
 {
     internal class LogHelper
     {
         private static readonly LogHelper instance = new LogHelper();
-        private static RichTextBox target = null;
+        private static ILogSink sink = null;
 
         private LogHelper()
         { }  // Private constructor to prevent external instantiation
 
-        // Logger to target rtbLog
-        public void SetTarget(RichTextBox richText)
+        // Logger to the sink that renders it - see ILogSink. The app registers a RichTextBox-backed
+        // sink; everything else in the process logs into nothing, silently and on purpose.
+        public void SetSink(ILogSink logSink)
         {
-            target = richText;
+            sink = logSink;
         }
 
         public void Log(string format, params object[] args)
@@ -23,16 +23,16 @@ namespace Appcopier
 
             try
             {
-                if (target != null)
+                // Read the field once. Modules log from thread-pool threads while the UI can clear
+                // the sink underneath them, and a null check against one read followed by a
+                // dereference of another loses the line to an NRE that AppendLog's catch routes to
+                // Console.WriteLine - invisible in a WinForms app, which is the silent loss the
+                // LogMessage discipline exists to prevent.
+                ILogSink current = sink;
+
+                if (current != null)
                 {
-                    if (target.InvokeRequired)
-                    {
-                        target.Invoke(new Action(() => AppendLog(format, args)));
-                    }
-                    else
-                    {
-                        AppendLog(format, args);
-                    }
+                    AppendLog(current, format, args);
                 }
             }
             catch (Exception ex)
@@ -58,11 +58,11 @@ namespace Appcopier
             Log("{0}", message ?? string.Empty);
         }
 
-        private void AppendLog(string format, params object[] args)
+        private void AppendLog(ILogSink target, string format, params object[] args)
         {
             try
             {
-                target.AppendText(string.Format(format, args));
+                target.Append(string.Format(format, args));
             }
             catch (FormatException ex)
             {
@@ -82,16 +82,18 @@ namespace Appcopier
 
         public void ClearLog()
         {
+            // Same read-once rule as Log, and the same explicit null check rather than letting the
+            // catch below absorb an NRE. Both methods document "silent when no sink is registered";
+            // spelling one of them with an empty catch made an unregistered sink indistinguishable
+            // from a sink that genuinely failed.
+            ILogSink current = sink;
+
+            if (current == null)
+                return;
+
             try
             {
-                if (target.InvokeRequired)
-                {
-                    target.Invoke(new Action(() => target.Clear()));
-                }
-                else
-                {
-                    target.Clear();
-                }
+                current.Clear();
             }
             catch { }
         }
