@@ -617,5 +617,52 @@ namespace Appcopier.Tests
             Assert.Equal(RestoreBlock.None, entry.Block);
             Assert.True(entry.NeedsSnapshot);
         }
+
+        // --- The shared HasBackupIn guard ---
+
+        /// <summary>A module whose probe throws, i.e. one that has told us nothing.</summary>
+        private sealed class ThrowingProbeModule : BackupBase
+        {
+            public ThrowingProbeModule() { Title = "Throws"; }
+
+            public override bool HasBackupIn(string restorePath)
+                => throw new UnauthorizedAccessException("cannot read the backup folder");
+        }
+
+        // The fallback direction, which is the whole content of this guard: an unreliable answer
+        // falls TOWARDS restoring. Silently skipping a restore the user asked for loses their
+        // intent; an unnecessary close loses their tabs, and only one of those is recoverable.
+        [Fact]
+        public void HasBackup_TreatsAModuleWhoseProbeThrowsAsHavingSomething()
+        {
+            Assert.True(RestoreScope.HasBackup(new ThrowingProbeModule(), @"C:\backups\whatever"));
+        }
+
+        [Fact]
+        public void HasBackup_OtherwiseReportsWhatTheModuleSaid()
+        {
+            // BareModule inherits the BackupBase default, which is "assume there is something".
+            Assert.True(RestoreScope.HasBackup(new BareModule(), @"C:\backups\whatever"));
+        }
+
+        // It is internal rather than private so ConfPageView.ProcessesWorthClosing can call it
+        // instead of carrying its own copy. Two implementations of one rule is the drift this type
+        // exists to remove: if the copies diverged, ProcessesWorthClosing would close an app that
+        // Evaluate then blocks as NothingToRestore, spending the user's open tabs on a module that
+        // is never restored. This asserts the seam stays reachable from outside the type.
+        [Fact]
+        public void HasBackup_IsReachableByBothCallers()
+        {
+            System.Reflection.MethodInfo m = typeof(RestoreScope).GetMethod(
+                "HasBackup",
+                System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.Public);
+
+            Assert.NotNull(m);
+            Assert.True(m.IsAssembly || m.IsPublic,
+                "RestoreScope.HasBackup must stay callable from ConfPageView, or that call site "
+                + "grows a second copy of the rule again.");
+        }
     }
 }

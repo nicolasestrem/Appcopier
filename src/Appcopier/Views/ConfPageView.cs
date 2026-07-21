@@ -406,7 +406,10 @@ namespace Views
 
             foreach (BackupBase module in modules)
             {
-                if (!HasBackupSafely(module))
+                // RestoreScope's, deliberately not a second copy: this asks the same question of
+                // the same modules that Evaluate asks moments later, and the two must not be able
+                // to disagree. See the remarks on RestoreScope.HasBackup.
+                if (!RestoreScope.HasBackup(module, CurrentRestorePath))
                     continue;
 
                 foreach (RestoreCloseRequirement requirement in
@@ -418,36 +421,6 @@ namespace Views
             }
 
             return consented.Where(worth.Contains);
-        }
-
-        /// <summary>
-        /// <see cref="BackupBase.HasBackupIn"/>, treating a module that throws as having something.
-        /// </summary>
-        /// <remarks>
-        /// The same rule and the same fallback direction as <see cref="RestoreScope"/>'s private
-        /// copy, which is the other caller: an unreliable answer falls towards restoring, because
-        /// silently skipping a restore the user asked for is worse than an unnecessary close.
-        ///
-        /// It is HERE because this call site had no guard at all while the other did, and the
-        /// probes stopped being incapable of throwing. They were Directory.Exists until Phase 3b
-        /// made them artifact-aware; EVSCode's now enumerates the snippets tree, which throws if a
-        /// subdirectory denies access. This method runs after consent and before anything is
-        /// closed, from an async void handler whose only try has no catch - so an escaping
-        /// exception surfaces as WinForms' unhandled-exception dialog mid-restore, which is
-        /// exactly what wrapping the plan composition was meant to prevent.
-        /// </remarks>
-        private bool HasBackupSafely(BackupBase module)
-        {
-            try
-            {
-                return module.HasBackupIn(CurrentRestorePath);
-            }
-            catch (Exception ex)
-            {
-                logger.LogMessage("Could not tell whether the backup holds anything for "
-                                  + module.Title + ", so assuming it does: " + ex.Message);
-                return true;
-            }
         }
 
         /// <summary>
