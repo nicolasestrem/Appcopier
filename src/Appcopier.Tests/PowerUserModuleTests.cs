@@ -206,6 +206,55 @@ namespace Appcopier.Tests
         // to a FolderModule would drop the pointers, and either change would leave a module that
         // still backs something up and still reports success - so the shape is asserted rather
         // than left to review.
+        /// <summary>
+        /// "Is this installed" is answered by the font folder, never by the registry key.
+        /// </summary>
+        /// <remarks>
+        /// Caught by the PR review. The key is measured PRESENT with zero values on an account that
+        /// has never installed a per-user font, so consulting it would make IsInstalled a constant
+        /// true on essentially every profile - and IsInstalled is what "select installed" uses to
+        /// tell machines that have something here from machines that do not. Always answering yes
+        /// makes the convenience meaningless and pads every such backup with an empty item.
+        ///
+        /// Pinned by construction rather than by observation, because the honest assertion depends
+        /// on whether the machine running the test happens to have per-user fonts: point Folders at
+        /// a directory that certainly does not exist, leave the real key in place, and the answer
+        /// must still be false. It could only be true if the key were being consulted.
+        /// </remarks>
+        [Fact]
+        public void Fonts_IsInstalled_IgnoresTheKeyThatEveryProfileHas()
+        {
+            WFonts m = new WFonts();
+
+            // The real key stays in Keys and really does exist on this machine - so if IsInstalled
+            // consulted it, the assertion below would fail.
+            Assert.NotEmpty(m.Keys);
+
+            m.Folders.Clear();
+            m.Folders.Add(Path.Combine(Path.GetTempPath(), "appcopier-no-such-fonts-" + Guid.NewGuid().ToString("N")));
+
+            Assert.False(m.IsInstalled(),
+                "WFonts reported itself installed with no font folder present. The HKCU fonts key " +
+                "exists with zero values on every profile, so consulting it makes IsInstalled a " +
+                "constant true and 'select installed' stops meaning anything.");
+
+            // And the other direction: a real folder is what makes the answer yes.
+            string real = Path.Combine(Path.GetTempPath(), "appcopier-fonts-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(real);
+
+            try
+            {
+                m.Folders.Clear();
+                m.Folders.Add(real);
+
+                Assert.True(m.IsInstalled());
+            }
+            finally
+            {
+                Directory.Delete(real, recursive: true);
+            }
+        }
+
         [Fact]
         public void Fonts_IsAHybridAndNotASingleShapeModule()
         {

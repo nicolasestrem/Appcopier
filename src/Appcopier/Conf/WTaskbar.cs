@@ -172,9 +172,23 @@ namespace Conf
         {
             List<StepResult> steps = new List<StepResult>();
 
-            // Folders first: the shortcuts must exist before the Taskband blob that names them is
-            // imported. The reverse order leaves Explorer resolving pins to files that are not there
-            // yet, and Explorer prunes what it cannot resolve.
+            // Folders first, and this ordering is DEFENSIVE rather than causal - the PR review
+            // corrected an earlier version of this comment that claimed otherwise, and the claim is
+            // worth getting right because a false mechanism is what stops the next author reasoning
+            // about the real one.
+            //
+            // What the earlier comment said: the shortcuts must exist before the Taskband blob that
+            // names them, or Explorer resolves pins to missing files and prunes them. That mechanism
+            // does not operate here. Explorer reads Taskband at STARTUP (which is why this module
+            // sets RequiresExplorerRestart), and this restore deliberately does not restart it - the
+            // user does, afterwards, via the button. So within one RestoreAsync nothing is reading
+            // either half while the other is written, and on a normal run the order has no
+            // functional effect at all.
+            //
+            // It is kept because the case where it DOES matter is real if rare: Explorer crashing
+            // and AutoRestartShell relaunching it between the two steps, which would have it read a
+            // Taskband naming shortcuts not yet on disk. Free insurance against a genuine
+            // interleaving, not the reason the pins work.
             foreach (string folder in Folders)
             {
                 // absenceIsNormal is true on this side whatever the backup-side flag says: the source

@@ -314,6 +314,33 @@ namespace Conf
             => string.IsNullOrWhiteSpace(scheme.Name) ? scheme.Guid : scheme.Name;
 
         /// <summary>
+        /// How to put a missing plan back by hand, for the restore that could not find it.
+        /// </summary>
+        /// <remarks>
+        /// THE GUID IN THIS COMMAND IS LOAD-BEARING, and the PR review caught its absence. Measured
+        /// from powercfg's own help, 2026-07-21:
+        ///
+        ///     POWERCFG /IMPORT &lt;FILENAME&gt; [&lt;GUID&gt;]
+        ///     &lt;GUID&gt;  Specifies the GUID for the imported scheme. If no GUID is specified,
+        ///             a new GUID will be created.
+        ///
+        /// The earlier wording said `powercfg /import "&lt;file&gt;"` with no GUID. A user following it
+        /// would get the plan back under a NEW identity the manifest does not name, so the very next
+        /// restore would fail in the same branch and hand them the same non-working instruction.
+        /// Advice that silently fails to fix the thing it is offered for is this project's failure
+        /// mode arriving through text instead of through code.
+        ///
+        /// Separated from the step that reports it so a test can read the sentence without launching
+        /// powercfg - this suite deliberately shells out to nothing, and driving RestoreAsync to
+        /// reach this text would have broken that.
+        /// </remarks>
+        internal static string ImportByHandAdvice(string guid)
+            => "the backed-up power plan is probably not on this PC. The exported "
+             + PowFileNameFor(guid) + " in this backup folder can be added by hand with: "
+             + "powercfg /import \"<file>\" " + guid + " - include that GUID, or Windows imports the "
+             + "plan under a new one and this item will not find it next time either";
+
+        /// <summary>
         /// Removes a file if it is there, returning why it could not. Never throws.
         /// </summary>
         private static string TryClear(string filePath)
@@ -650,10 +677,21 @@ namespace Conf
                 // cross-machine case. The .pow files are named because importing one by hand is the
                 // user's route out, and this restore deliberately will not do it for them - see the
                 // snapshot-closure note on this class.
+                //
+                // THE GUID IN THAT COMMAND IS LOAD-BEARING, and the PR review caught its absence.
+                // Measured from powercfg's own help, 2026-07-21:
+                //
+                //     POWERCFG /IMPORT <FILENAME> [<GUID>]
+                //     <GUID>  Specifies the GUID for the imported scheme. If no GUID is specified,
+                //             a new GUID will be created.
+                //
+                // So the advice this message used to give - import the file, no GUID - would have
+                // created the plan under a NEW identity that the manifest does not name, and the
+                // very next restore would fail in exactly this branch again. Advice that quietly
+                // does not fix the thing it is offered to fix is the failure mode this project is
+                // organised against, arriving through the text rather than through the code.
                 return StepResult.Failed(Title,
-                    "powercfg exited with code " + outcome.ExitCode + "; the backed-up power plan is " +
-                    "probably not on this PC. The exported " + PowFileNameFor(guid) + " in this backup " +
-                    "folder can be added by hand with: powercfg /import \"<file>\"");
+                    "powercfg exited with code " + outcome.ExitCode + "; " + ImportByHandAdvice(guid));
             }
 
             return await ConfirmActiveSchemeAsync(guid);

@@ -43,11 +43,12 @@ namespace Appcopier
         /// </remarks>
         internal static bool IsNeeded(IReadOnlyList<BackupBase> modules, IReadOnlyList<ModuleResult> results)
         {
-            int count = modules == null ? 0 : modules.Count;
+            if (modules == null || results == null)
+                return false;
 
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < modules.Count && i < results.Count; i++)
             {
-                if (modules[i] == null || results == null || i >= results.Count || results[i] == null)
+                if (modules[i] == null || results[i] == null)
                     continue;
 
                 if (modules[i].RequiresExplorerRestart && WroteSomething(results[i]))

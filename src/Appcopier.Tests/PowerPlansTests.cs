@@ -238,6 +238,45 @@ namespace Appcopier.Tests
             }
         }
 
+        /// <summary>
+        /// The import advice names the GUID, because without it the advice does not work.
+        /// </summary>
+        /// <remarks>
+        /// Caught by the PR review. Measured from powercfg's own help, 2026-07-21:
+        ///
+        ///     POWERCFG /IMPORT &lt;FILENAME&gt; [&lt;GUID&gt;]
+        ///     &lt;GUID&gt;  Specifies the GUID for the imported scheme. If no GUID is specified,
+        ///             a new GUID will be created.
+        ///
+        /// The message used to say `powercfg /import "&lt;file&gt;"`. A user following it would get the
+        /// plan back under a NEW GUID that the manifest does not name, so the very next restore
+        /// would fail in the same branch and hand them the same non-working instruction. Advice that
+        /// silently fails to fix the thing it is offered for is this project's failure mode arriving
+        /// through text rather than through code, which is why it is pinned.
+        /// </remarks>
+        [Fact]
+        public void TheImportByHandAdvice_KeepsTheGuid()
+        {
+            const string absent = "0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f";
+
+            string advice = WPowerPlans.ImportByHandAdvice(absent);
+
+            Assert.Contains("powercfg /import", advice);
+
+            // The GUID must follow the filename placeholder, not merely appear somewhere in the
+            // sentence - the whole defect was a command that omitted it in that position.
+            Assert.Contains("\"<file>\" " + absent, advice);
+
+            // Naming the file is the other half: the advice is useless if the user cannot tell
+            // which of several .pow exports in the folder is the one being talked about.
+            Assert.Contains(WPowerPlans.PowFileNameFor(absent), advice);
+
+            Assert.True(
+                advice.Contains("new one") || advice.Contains("new GUID"),
+                "The advice no longer explains WHY the GUID matters. Without it Windows imports the " +
+                "plan under a fresh GUID and this item fails again next time. Actual: " + advice);
+        }
+
         // --- the manifest name -----------------------------------------------------------
 
         [Fact]

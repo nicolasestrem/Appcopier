@@ -53,17 +53,28 @@ namespace Conf
             Keys.Add(@"HKEY_CURRENT_USER\Software\Microsoft\Windows NT\CurrentVersion\Fonts");
         }
 
+        /// <remarks>
+        /// The FOLDER alone, deliberately - not the folder or the key, which is the shape WThemes
+        /// uses and which the PR review caught being wrong here.
+        ///
+        /// The key is measured present with zero values on an account that has never installed a
+        /// per-user font, so <c>Utils.KeyExists</c> returns true on essentially every profile. Asking
+        /// it would make this method a constant `true`, and IsInstalled drives "select installed" -
+        /// a convenience whose only job is to distinguish machines that have something here from
+        /// machines that do not. A module that always answers yes tells the user nothing and quietly
+        /// widens every "select installed" backup by an item with nothing in it.
+        ///
+        /// The folder is the honest signal: Windows creates it with the first per-user font install,
+        /// so its presence means this account actually used the feature. This deliberately does NOT
+        /// mirror the AbsenceIsNormal flags, and the difference is the point - those answer "is a
+        /// missing target a fault while backing up", which the key answers differently from the
+        /// folder. This answers "is there anything here worth offering", which only the folder knows.
+        /// </remarks>
         public override bool IsInstalled()
         {
             foreach (string f in Folders)
             {
                 if (Directory.Exists(f))
-                    return true;
-            }
-
-            foreach (string k in Keys)
-            {
-                if (Utils.KeyExists(k))
                     return true;
             }
 

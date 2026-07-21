@@ -29,7 +29,7 @@ Four new items in the **Settings** section, covering state the app could not pre
 
 - **The Restart Explorer button no longer disappears when part of a restore fails.** It was shown only when a restore succeeded *completely*. That was right while the items needing it wrote a single thing — a failure then really did mean nothing had changed, so offering a restart would have been a button that did nothing. It stopped being right once those items began restoring several things at once: one failed piece makes the whole row report failure, so a restore that successfully put back all 32 of your pinned taskbar apps and then failed on a later step would hide the button — **immediately after telling you to press it before signing out.** Sign out instead, and the still-running Explorer writes its own copy of the pin list back over the restored one, and the pins are gone. The button now appears whenever the restore actually wrote something, and still stays hidden when nothing was written. This also affected **Themes**, which has restored a folder plus two registry keys since the previous release.
 
-### Added — power-user settings (Phase 3c)
+### Added — developer tooling (Phase 3b)
 
 A new **Developer** section in the list, with the things a developer would miss after moving to a new PC.
 

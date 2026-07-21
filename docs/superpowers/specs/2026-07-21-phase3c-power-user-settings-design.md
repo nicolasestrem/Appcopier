@@ -144,7 +144,7 @@ than assumed.
 `dotnet build src\Appcopier.sln` clean, 0 warnings. `dotnet test src\Appcopier.sln`:
 
 ```
-Passed!  - Failed:     0, Passed:   700, Skipped:     0, Total:   700, Duration: 180 ms
+Passed!  - Failed:     0, Passed:   702, Skipped:     0, Total:   702, Duration: 174 ms
 ```
 
 627 → 688 for the implementation, then 688 → 700 for the review fixes. The new files are
@@ -297,6 +297,52 @@ restore path; no empty catch; no `RestoreTarget` list null or Undeclared.
   would mean per-value filtering the base does not do.
 - **A partial manifest write and a leaked `.partial` scratch file** — both fail safe (truncated JSON
   cannot parse, so the restore fails rather than acting on it) and both are cosmetic.
+
+## What PR #9 review changed
+
+A third round, from the two bots on the open PR. Both independently caught the same documentation
+defect, and it was mine.
+
+- **`CHANGELOG.md` had two identical `### Added — power-user settings (Phase 3c)` headers**, and
+  Phase 3b's entire Developer-tooling body was sitting under the second one — attributed to the wrong
+  phase, with the Phase 3b header gone. Self-inflicted, and worth recording how: the section was
+  inserted with two successive edits, and the second anchored on the Phase 3b header string that the
+  first had deliberately left in place, so it consumed the header it was only meant to insert above.
+  A `grep -n "^### "` over the file would have shown it immediately; reading the diff hunk did not,
+  because each hunk was locally correct. In a repo whose roadmap process is built on phase labels,
+  this is the same class as a stale comment in the document whose whole job is being the accurate
+  record — which Phase 2b's own notes call out.
+- **The `WTaskbar` restore-ordering comment asserted a mechanism that does not operate.** It claimed
+  the shortcuts must land before the `Taskband` blob or Explorer would prune unresolvable pins.
+  Explorer reads `Taskband` at startup — which is why the module sets `RequiresExplorerRestart` — and
+  this restore deliberately does not restart it, so within one `RestoreAsync` nothing reads either
+  half while the other is written and the order has no functional effect on a normal run. The
+  ordering is kept as genuine insurance against `AutoRestartShell` firing between the two steps, and
+  the comment now says *defensive* rather than *causal*. A false mechanism in a comment is worse than
+  no comment: it stops the next author working out the real one.
+- **`WFonts.IsInstalled()` consulted the registry key**, which is measured present with zero values on
+  every profile — so it was a constant `true`. `IsInstalled` drives "select installed", whose only job
+  is to tell machines that have something here from machines that do not, so always answering yes made
+  the convenience meaningless and padded every such backup with an empty item. Now the folder alone,
+  which is the honest signal. Deliberately *not* mirroring the `AbsenceIsNormal` flags: those answer
+  "is a missing target a fault while backing up", which the key and folder answer differently; this
+  answers "is there anything here worth offering", which only the folder knows.
+- **The import-by-hand advice omitted the GUID.** Verified against powercfg's own help rather than
+  assumed: `POWERCFG /IMPORT <FILENAME> [<GUID>]` — "If no GUID is specified, a new GUID will be
+  created." So a user following the old message would have imported the plan under an identity the
+  manifest does not name, and the very next restore would fail in the same branch and hand them the
+  same non-working instruction. Advice that silently fails to fix the thing it is offered for is this
+  project's failure mode arriving through text instead of code. Extracted to `ImportByHandAdvice` so a
+  test can read the sentence **without launching powercfg** — the first draft of that test drove
+  `RestoreAsync` and did shell out, which would have broken this suite's standing rule that it invokes
+  no external tool. Caught by the test duration moving, and reverted.
+- Accepted: hoisting the null checks in `ExplorerRestartPrompt.IsNeeded` out of the loop.
+
+One reviewer also confirmed the snapshot-closure argument from an angle the class doc did not state:
+`WPowerPlans`' backup path emits only `Succeeded` or `Failed` steps — never `Skipped` — so
+`Aggregate`'s any-failure-dominates rule means the module can report `Succeeded` **only** when every
+`.pow` export *and* the manifest write succeeded. There is therefore no path where `SnapshotGate` calls
+the snapshot captured while the manifest is silently absent.
 
 ## Deferred, with reasons
 
