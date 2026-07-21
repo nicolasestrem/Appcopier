@@ -177,6 +177,47 @@ namespace Appcopier.Tests
         }
 
         /// <summary>
+        /// The same compatibility promise, for the key Phase 3c's Taskbar retarget kept.
+        /// </summary>
+        /// <remarks>
+        /// WTaskbar was a single-key RegistryModule, and RegistryModule names its export
+        /// <c>Title + ".reg"</c> - so every backup on disk holds that key's export as Taskbar.reg.
+        /// Phase 3c turned the module into a WThemes-style hybrid to capture pinned apps as well,
+        /// which moved it onto the key-derived default name. Without the override this pins, the
+        /// retarget would have silently orphaned the Advanced export in every existing backup: it
+        /// would restore as "nothing was backed up for this item", with no error anywhere, because
+        /// the restore would be looking for a filename no previous version ever wrote.
+        ///
+        /// Taskband is new and takes the derived name, which is what stops the two exports from
+        /// colliding onto one file - the WThemes defect this whole file was written for.
+        /// </remarks>
+        [Fact]
+        public void TheTaskbarFileNameIsKeptForTheKeyThatAlreadyUsesIt()
+        {
+            WTaskbar m = new WTaskbar();
+
+            const string advanced =
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+            const string taskband =
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband";
+
+            Assert.Equal("Taskbar.reg", FileNameFor(m, advanced));
+
+            // Registry key paths are case-insensitive, so the legacy name must survive a differently
+            // cased spelling. Matching case-sensitively would send that spelling to a second file
+            // while both spellings kept exporting the one live key.
+            Assert.Equal("Taskbar.reg", FileNameFor(m, advanced.ToLowerInvariant()));
+
+            // The new key is named after itself, so the two cannot collide - which is the defect
+            // this file exists to catch, in the module that would have introduced it.
+            string taskbandName = FileNameFor(m, taskband);
+
+            Assert.NotEqual("Taskbar.reg", taskbandName);
+            Assert.Contains("Taskband", taskbandName, StringComparison.Ordinal);
+            Assert.EndsWith(".reg", taskbandName, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Every character Windows rejects in a filename is replaced, and nothing else is.
         /// </summary>
         /// <remarks>

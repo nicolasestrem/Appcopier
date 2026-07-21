@@ -32,10 +32,13 @@ namespace Appcopier.Tests
         {
             List<BackupBase> modules = Modules().ToList();
 
-            // 19 before Phase 3b, plus the six Developer-category modules it added. Six rather than
+            // 19 before Phase 3b, plus the six Developer-category modules it added (six rather than
             // five because EEnvironment ships in two variants - the plain export and the opt-in
-            // filtered one - which are separate tree entries by design, not a duplicate.
-            Assert.Equal(25, modules.Count);
+            // filtered one - which are separate tree entries by design, not a duplicate), plus the
+            // four power-user Settings modules Phase 3c added: WPowerPlans, WFonts, WMappedDrives
+            // and WRegional. 3c also retargeted WTaskbar and WUpdates, which changes what they
+            // capture but not how many modules exist.
+            Assert.Equal(29, modules.Count);
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
@@ -151,13 +154,26 @@ namespace Appcopier.Tests
                 .Where(m => m is RegistryModule)
                 .ToList();
 
-            // 9 before Phase 3b, plus EEnvironment and EEnvironmentFiltered - both plain single-key
-            // registry modules despite shipping with the file-based Developer set.
+            // Still 11 after Phase 3c, but NOT the same eleven, and the count surviving unchanged is
+            // exactly why this comment has to say so. 3c retargeted WTaskbar into a WThemes-style
+            // hybrid, so it left this family, and added WMappedDrives, which joined it. A membership
+            // change that nets to zero is invisible in the assertion and would otherwise read as
+            // "nothing happened here".
             //
-            // Those two declare the SAME key, and this test is fine with that: it asserts each
-            // module declares the key it writes, not that keys are unique across modules. Two
-            // modules over one key is this pair's whole design - they differ in what they keep.
+            // The nine before Phase 3b, plus EEnvironment and EEnvironmentFiltered - both plain
+            // single-key registry modules despite shipping with the file-based Developer set - minus
+            // WTaskbar, plus WMappedDrives.
+            //
+            // EEnvironment and EEnvironmentFiltered declare the SAME key, and this test is fine with
+            // that: it asserts each module declares the key it writes, not that keys are unique
+            // across modules. Two modules over one key is this pair's whole design - they differ in
+            // what they keep.
             Assert.Equal(11, registryModules.Count);
+
+            // Pinned as literals so the netting-to-zero above cannot happen again silently: a future
+            // retarget that moves a module in or out of this family must state which one.
+            Assert.DoesNotContain(registryModules, m => m is WTaskbar);
+            Assert.Contains(registryModules, m => m is WMappedDrives);
 
             foreach (BackupBase m in registryModules)
             {
@@ -196,6 +212,10 @@ namespace Appcopier.Tests
         [InlineData(typeof(WUpdates))]
         [InlineData(typeof(DPrinters))]
         [InlineData(typeof(GGaming))]
+        // Phase 3c. WFonts and WTaskbar are deliberately NOT here despite holding a Keys field:
+        // both are hybrids that declare folders as well, so keys alone are not all of their
+        // targets. Their ordering is pinned in PowerUserModuleTests and TaskbarRetargetTests.
+        [InlineData(typeof(WRegional))]
         public void MultiKeyModules_DeclareOneTargetPerKeyInOrder(Type type)
         {
             BackupBase m = (BackupBase)Activator.CreateInstance(type);
@@ -258,6 +278,7 @@ namespace Appcopier.Tests
         [InlineData(typeof(WNetworkConf))]
         [InlineData(typeof(CWiFiConf))]
         [InlineData(typeof(AppStoreApps))]
+        [InlineData(typeof(WPowerPlans))]
         public void CommandModules_DescribeWhatRunsInPlainLanguage(Type type)
         {
             BackupBase m = (BackupBase)Activator.CreateInstance(type);

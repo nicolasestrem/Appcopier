@@ -67,9 +67,13 @@ namespace Views
             AddConfiguration(new WAPrivacy(), "Settings");
             AddConfiguration(new WTelemetry(), "Settings");
             AddConfiguration(new WNetworkConf(), "Settings");
+            AddConfiguration(new WMappedDrives(), "Settings");
             AddConfiguration(new WUpdates(), "Settings");
+            AddConfiguration(new WPowerPlans(), "Settings");
             AddConfiguration(new WThemes(), "Settings");
+            AddConfiguration(new WFonts(), "Settings");
             AddConfiguration(new WAccessibility(), "Settings");
+            AddConfiguration(new WRegional(), "Settings");
             AddConfiguration(new WOther(), "Settings");
             AddConfiguration(new AppStoreApps(), "Apps");
             AddConfiguration(new APinnedApps(), "Apps");

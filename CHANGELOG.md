@@ -4,6 +4,27 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Added — power-user settings (Phase 3c)
+
+Four new items in the **Settings** section, covering state the app could not previously save.
+
+- **Power plans.** Every power plan on the PC is exported, and the app records which one was active. **Restoring re-activates the plan that was active when you made the backup — it does not recreate plans.** If that plan no longer exists on this PC the item reports a failure rather than pretending, and names the exported `.pow` file you can add by hand with `powercfg /import`. That limit is deliberate: importing a plan creates a new entry Appcopier has no way to remove again, so the automatic pre-restore snapshot could not undo it while still telling you the restore was reversible. Changes made to a plan's own settings since the backup are not reverted either.
+- **User fonts.** Fonts you installed for just your account — both the font files and the settings telling Windows where each one is. **Those settings are full paths containing your Windows user name**, so on a PC where your account is named differently the font files come back but Windows cannot find them, and the app cannot detect that: the row still reports success. This is the same limitation the Themes item has with the wallpaper path. Restored fonts appear in an application only after that application restarts.
+- **Mapped network drives.** Which server share each drive letter points at. **Saved passwords are not included** — those live in Windows Credential Manager, which this item does not read — so a drive needing credentials will ask for them the first time you open it. Restored mappings appear at your next sign-in, and a mapping to a server that no longer exists comes back as a disconnected drive.
+- **Regional & input settings.** Number, date, time and currency formats, your country setting, and your keyboard layouts and input languages. **Restoring lists languages and layouts by identifier; it does not install language packs**, so an entry for a language this PC does not have stays inert until that pack is installed. Most of it takes effect at your next sign-in.
+
+### Changed — taskbar, Windows Update and Start menu (Phase 3c)
+
+- **The taskbar item now includes your pinned apps.** It previously saved only the taskbar's *shape* — alignment, size, Widgets — which is not where pins live, so restoring a backup gave you the settings back and an empty taskbar, and nothing said so. It now also captures the list Windows keeps of your pinned apps and the shortcut files that list points at. **Backups made with earlier versions still restore the taskbar settings exactly as before** — that part keeps its existing filename and is not orphaned — but they contain nothing for the pins, and will report that. Re-run your backup to capture them.
+
+  Two things about restoring pins are worth knowing. **Use the Restart Explorer button before you sign out:** Explorer keeps the pin list in memory and writes its own copy back when it exits normally, so signing out without restarting first can overwrite what was just restored. And the shortcut files are **merged** rather than replaced — shortcuts you pinned since the backup stay on disk, and what actually appears is decided by the restored pin list.
+- **The Windows Update item drops the old WSUS policy setting and picks up Delivery Optimization.** The `...\WindowsUpdate\AU` policy key it used to save exists only where a company update server or Group Policy created it; on an ordinary PC it was simply absent and the item reported it skipped forever. In its place the item now saves the **Delivery Optimization** policy — whether Windows shares updates with other PCs — which is a setting people actually change. It too is only saved when someone has configured it; on a PC where nobody has, the item reports it as not present, and that is normal rather than an error.
+
+  **Consequence for existing backups, stated plainly:** the file `Windows Update_HKEY_LOCAL_MACHINE_Software_Policies_Microsoft_Windows_WindowsUpdate_AU.reg` in backups made before this version is no longer read at all — not even as a skipped row, because the setting is gone from the list entirely. It is still a valid `.reg` file, so if you did have those policy values and want them back, you can apply that file by hand.
+
+  **A warning was also added that was missing before.** The Windows Update settings this item saves include the ID numbers Windows Update uses to recognise this particular PC. Restoring the backup onto a *different* PC copies that identity across, which can confuse Windows Update — or a company update server — about which machine is which, for both PCs. The item has always saved these; it just never said so.
+- **The Start menu pinned-apps warning now describes the risk that actually matters.** It said only "This is reserved for Windows 11." What it left out is that Windows builds that pinned list for one specific PC and one specific Windows build, so restoring it on a different PC, or after a major Windows update, can bring back the wrong pins or leave the Start menu empty — and **the app cannot detect that, so it will still report success.** The item was kept rather than retired because restoring it on the PC it came from is a genuine use case; the text now says which case is which.
+
 ### Added — developer tooling (Phase 3b)
 
 A new **Developer** section in the list, with the things a developer would miss after moving to a new PC.
