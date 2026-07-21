@@ -4,6 +4,42 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Planned — a rebuilt interface (Phase 4)
+
+Nothing here has shipped yet. This entry records the direction so the change is not a surprise when it
+starts landing; the reasoning is in
+[`docs/superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](docs/superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
+
+The app is being rebuilt around the three things people actually do with it — **keep this PC backed up**,
+**recover onto a PC**, and **check that it worked** — instead of around the list of 29 items. There will be
+a Home screen that opens with how long ago your last backup was and which items failed, a Back up screen
+with sensible presets (the full list stays, one click away), a Restore flow that starts by asking which
+backup you want and then shows you what is actually in it, and a History screen listing your backups and
+undo points together.
+
+Four things are worth knowing in advance:
+
+- **The pop-up warning on every item you click is going away.** It will be shown on the item itself
+  instead, so you can read it without dismissing anything, and you will see it before you tick the box
+  rather than after. Nothing is lost where it counts: the confirmation dialog before a restore has always
+  repeated every warning, and that dialog is not changing.
+- **The confirmation dialog before a restore is deliberately not changing.** It still stops everything,
+  still lists exactly what would be overwritten, still starts with every "close this app" box unticked,
+  and still has Cancel selected when it opens. That is the one place an interruption is the point.
+- **The results pop-up is going away too, and you will see more, not less.** The same summary appears on
+  screen as a list you can read at your own pace, one row per item, failures at the top, with the reason
+  text selectable so you can paste it into a bug report. Today it is one paragraph in a box most people
+  click away without reading.
+- **Backups will gain a `backup_manifest.json` file** next to the existing `backup_log.txt`, recording
+  what was captured and how each item turned out. The new screens need it to say anything truthful about a
+  backup. **Backups made before this change keep working and stay restorable** — they simply show
+  "details unavailable" where the outcome would go, because guessing from the old text log could show you
+  a green result that was never true.
+
+Dark mode and proper multi-monitor scaling arrive as part of this work. On .NET 8 dark mode has to be
+applied by hand, so a few Windows-supplied pieces — message boxes, scrollbars, the file picker — will stay
+light. That is a limit of the toolkit, not an oversight.
+
 ### Added — power-user settings (Phase 3c)
 
 Four new items in the **Settings** section, covering state the app could not previously save.
