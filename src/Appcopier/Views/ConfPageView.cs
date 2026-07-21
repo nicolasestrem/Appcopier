@@ -87,6 +87,12 @@ namespace Views
             AddConfiguration(new EVSCode(), "Developer");
             AddConfiguration(new ESsh(), "Developer");
             AddConfiguration(new EEnvironment(), "Developer");
+
+            // Directly after EEnvironment on purpose: the two read one key and differ only in what
+            // they keep, and the tree checkbox is the opt-in. Adjacent rows are what makes that a
+            // choice the user can see rather than one buried in the list.
+            AddConfiguration(new EEnvironmentFiltered(), "Developer");
+
             AddConfiguration(new EHosts(), "Developer");
 
             // Add event handler for button click

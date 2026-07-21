@@ -32,8 +32,10 @@ namespace Appcopier.Tests
         {
             List<BackupBase> modules = Modules().ToList();
 
-            // 19 before Phase 3b, plus the five Developer-category modules it added.
-            Assert.Equal(24, modules.Count);
+            // 19 before Phase 3b, plus the six Developer-category modules it added. Six rather than
+            // five because EEnvironment ships in two variants - the plain export and the opt-in
+            // filtered one - which are separate tree entries by design, not a duplicate.
+            Assert.Equal(25, modules.Count);
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
@@ -149,9 +151,13 @@ namespace Appcopier.Tests
                 .Where(m => m is RegistryModule)
                 .ToList();
 
-            // 9 before Phase 3b, plus EEnvironment - which is a plain single-key registry module
-            // despite shipping with the file-based Developer set.
-            Assert.Equal(10, registryModules.Count);
+            // 9 before Phase 3b, plus EEnvironment and EEnvironmentFiltered - both plain single-key
+            // registry modules despite shipping with the file-based Developer set.
+            //
+            // Those two declare the SAME key, and this test is fine with that: it asserts each
+            // module declares the key it writes, not that keys are unique across modules. Two
+            // modules over one key is this pair's whole design - they differ in what they keep.
+            Assert.Equal(11, registryModules.Count);
 
             foreach (BackupBase m in registryModules)
             {

@@ -28,12 +28,22 @@ namespace Conf
     ///    values, so they land unencrypted in the .reg beside the executable and survive in every
     ///    backup folder the user forgets to delete. Note this is word for word the hazard
     ///    <see cref="ESsh"/> refuses to carry private keys over - two modules in one category
-    ///    taking opposite stances on one risk. That is defensible only because the cases differ:
-    ///    a private key is ALWAYS a credential and excluding it loses nothing, whereas an
-    ///    environment variable usually is not, and filtering by name guesswork ("*TOKEN*") would
-    ///    silently drop real settings while still missing the secrets named differently - a filter
-    ///    that is wrong in both directions is worse than an honest disclosure. Revisit if this app
-    ///    ever grows encrypted backups.
+    ///    taking opposite stances on one risk. That is defensible because the cases differ: a
+    ///    private key is ALWAYS a credential and excluding it loses nothing, whereas an environment
+    ///    variable usually is not, so excluding by guess would cost real settings.
+    ///
+    ///    This module's behaviour is therefore UNCHANGED - it still exports everything, and the
+    ///    warning above is still the whole story for anyone who ticks it.
+    ///
+    ///    An earlier version of this note went further and argued no filter should ever be built,
+    ///    because name guesswork is wrong in both directions. That was right about the filter and
+    ///    wrong about the conclusion: it assumed the filter would REPLACE this module, and a
+    ///    partial backup silently standing in for a complete one really would be worse than an
+    ///    honest disclosure. <see cref="EEnvironmentFiltered"/> instead sits BESIDE this one as a
+    ///    second tick in the tree, reports every name it holds back, and never claims to have
+    ///    removed all secrets. Both failure directions stay visible, which is what the original
+    ///    objection was actually protecting. Recorded rather than deleted because the reasoning
+    ///    that looked conclusive turned on an assumption it never stated.
     /// </remarks>
     public class EEnvironment : RegistryModule
     {
