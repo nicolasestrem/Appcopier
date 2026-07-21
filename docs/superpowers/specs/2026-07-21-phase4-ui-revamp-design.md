@@ -260,12 +260,19 @@ Both claims are false**, and the reason they were made is worth keeping: they we
 design agent's summary and never checked against the source. Five UI dependencies live inside code this
 spec had already assigned to a UI-free library.
 
-- **`Results/RunSummary.cs:61` exposes `public MessageBoxIcon Icon`** — a `System.Windows.Forms` enum on
-  one of the most heavily tested engine types, and `RunSummaryTests.cs:110` asserts against
-  `MessageBoxIcon.Warning` directly. Core cannot both be UI-free and keep this member. It becomes a
-  Core-side severity enum with the UI mapping it, **and that test changes** — the one place the
-  "unmodified tests" claim provably fails. Path D deletes the summary MessageBox anyway, so the member
-  was going to lose its only consumer regardless; the extraction just forces the timing.
+- **`Results/RunSummary.cs:61` exposes `public MessageBoxIcon Icon`** — a `System.Windows.Forms` enum,
+  and `RunSummaryTests.cs:110` asserts against `MessageBoxIcon.Warning` directly. **Correction to this
+  correction:** the first version of this section concluded that the test therefore has to change. It
+  does not. `RunSummary`'s only WinForms coupling is that one member, its dependencies (`ModuleOutcome`,
+  `ResultState`) are Core, and all of its consumers are app-side — so **`RunSummary` and `RunVerb`
+  simply stay in the app project** and nothing about the test moves. C# has no extension *properties*,
+  so splitting the type instead would force `summary.Icon` into a method call at `ConfPageView.cs:277`,
+  `RestAppsForm.cs:577` and `RunSummaryTests.cs:111` — editing a test to achieve nothing.
+
+  The residual cost is real and belongs to PR 5, not here: with `RunSummary` app-side, a
+  `BackupRestoreOrchestrator` living in Core could not compose a summary. Either the orchestrator stays
+  app-side behind `IRunUi` — which is what the PR sequence already describes — or `RunSummary` has to
+  move later and take its test with it. **PR 5 must state which, rather than discovering it.**
 - **`Helpers/DataHelper.cs:25` builds `Data.DataRootDir` from `Application.StartupPath`** — a WinForms
   API, and the root path of *every backup the app has ever written*. This is the highest-risk item in
   PR 2 by a wide margin. Phase 1 was already burned once here: `Application.StartupPath` gained a
@@ -284,10 +291,16 @@ spec had already assigned to a UI-free library.
 Two further constraints the plan did not account for:
 
 - **`Properties/AssemblyInfo.cs:52` carries `InternalsVisibleTo("Appcopier.Tests")`, and most engine
-  types are `internal`** (`internal class Data`, among others). Core needs its own `InternalsVisibleTo`
-  for the test project, and — because the app consumes internal engine types — very likely one for
-  `Appcopier` as well. The alternative, widening types to public, is a larger and more permanent API
-  decision than PR 2 should be making by accident.
+  types are `internal`** — `Utils`, `LogHelper`, `Data`, `OSHelper`, `IRegistryTool`, `RegeditTool`,
+  `Stargazers`, `ProcessOutcome` among them. Today that costs nothing because there is one assembly.
+  After the split the app is a *different* assembly, so **Core must declare both
+  `InternalsVisibleTo("Appcopier")` and `InternalsVisibleTo("Appcopier.Tests")`** as MSBuild items —
+  without the first, the app fails to compile in hundreds of places.
+
+  The standing rule for PR 2 is therefore **no accessibility modifier changes at all**. If something
+  needs `public` to compile, the project reference is wrong, not the modifier. Widening types to public
+  is the tempting fix and it would quietly enlarge the API surface of a PR whose entire premise is
+  changing nothing.
 - **`AssemblyInfo.cs` must not move.** The deployed v0.30.0 checker downloads that exact raw GitHub path
   and string-parses it, and `Program.cs:24` resolves the local version through `typeof(Program).Assembly`.
   Both sides stay correct **only while `Program.cs` and `AssemblyInfo.cs` remain in the app project.**
@@ -296,9 +309,49 @@ Two further constraints the plan did not account for:
   one — so the reflection lookup falls through to `Application.ProductVersion` and the update check
   reports a phantom update on every run. Silent, and only observable in a shipped build.
 
-The consequence for the PR sequence: **PR 2's estimate is not credible until the `DataRootDir`
-measurement is done**, and it should be split so the path change is its own reviewable commit with the
-measurement pasted into it. The rest of the extraction is genuinely mechanical; that one line is not.
+### The reflection sweeps, and the literal that saves them
+
+The most dangerous property of this split is one neither the plan nor the first correction saw. **Five
+test sites enumerate modules through `typeof(BackupBase).Assembly.GetTypes()`** —
+`RestoreDeclarationTests.cs:22`, `ModuleTargetTests.cs:229`, `DeveloperModuleTests.cs:309`, and
+`BackupFileNamingTests.cs:47` and `:256`. After the split that expression resolves to
+**`Appcopier.Core.dll`**. Any module accidentally left behind in the app project becomes invisible to
+every one of them.
+
+That is this codebase's signature failure exactly: a suite that stays green while covering less. It is
+also why the modules must move **atomically** — `BackupBase` and all of `Conf/` in a single commit —
+rather than in convenient batches.
+
+**What makes it survivable is already in the repo.** `RestoreDeclarationTests.cs:41` asserts
+`Assert.Equal(29, modules.Count)`. A module left behind turns that red immediately and by name. This is
+the same defensive literal Phase 3c added after noticing that a membership change netting to zero is
+invisible in an assertion — and it now does a second job nobody designed it for. **PR 2 must not relax,
+parameterize, or recompute that 29**, and the same applies to `DeveloperModuleTests.cs:316`'s
+`Assert.NotEmpty`. Any pressure to soften either during the split is the signal that something has been
+left in the wrong assembly.
+
+Worth stating precisely, because it cuts against the instinct: the remaining three sweeps have **no
+count pin** — they filter to subsets (`Keys` field, `Key` property, `FileModule`) where a fixed number
+would be brittle. They are protected only transitively, by the 29 in `RestoreDeclarationTests`. That is
+adequate today and it is a single point of failure worth knowing about.
+
+### Consequences for the PR sequence
+
+**PR 2's estimate is not credible until the `DataRootDir` measurement is done**, and it should be split
+so the path change is its own reviewable commit with the measurement pasted into it. The rest of the
+extraction is genuinely mechanical; that one line is not.
+
+Two further sequencing constraints fall out of the above. **The modules move atomically**, for the sweep
+reason. And **`AppStoreApps`' dialog seam is introduced while it is still in the app project**, so the
+indirection is proven before an assembly boundary exists to complicate it — noting that
+`RestoreDeclarationTests.cs:28` and three other sites construct modules through
+`Activator.CreateInstance(type)` with no arguments, so **`AppStoreApps` must keep a parameterless
+constructor** and the dialog cannot be constructor-injected.
+
+One judgement call the seam forces, and it should be made deliberately rather than by default: when no
+dialog implementation is registered, that restore must report **`Failed`, not `Skipped`**. `Skipped`
+would be indistinguishable from the module's genuine success reason — "handled interactively in the app
+restore dialog" — which is the unverified-success claim this whole architecture exists to prevent.
 
 ## PR sequence
 
