@@ -14,7 +14,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 3a | Module bases: refactor & retire | **In review** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
 | 3b | Module coverage: developer tooling | **In review** — [spec](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md) |
 | 3c | Module coverage: power-user settings | **In review** — [spec](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md) |
-| 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
+| 4 | UI revamp (task-first redesign) + modernization | In progress — [spec](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md) |
 
 Phase 2 was originally written as one phase. It is four independent workstreams, and splitting it was
 the first decision of the 2a design. 2a is the foundation: until failure can be *expressed*, none of the
@@ -363,19 +363,73 @@ non-portable). `APinnedApps` copies a build-specific Start menu database that is
 non-portable between machines — kept, with its warning strengthened in 3c rather than retired, because
 same-machine restore is its honest use case.
 
-## Phase 4 — modernization
+## Phase 4 — UI revamp and modernization
 
-Independent of the safety work and of each other; can land any time after Phase 1, in any order.
+Full design: [`superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
+
+Phase 4 was originally scoped as the four modernization items at the bottom of this section. It opened
+instead with a **complete UI/UX revamp**, decided 2026-07-21 after a four-direction design pass. The
+revamp absorbed the DPI and dark-mode items, so those are no longer independent; the two networking
+items still are, and can land in any order alongside.
+
+### The UI revamp — "jobs, not modules"
+
+The reason it moved to the front of the phase: Phases 2a–3c rebuilt the engine's honesty and safety, and
+the presentation layer now actively *hides* that work. A warning fires as a modal on every tree click, so
+it is trained away. A `RichTextBox` is simultaneously help text and activity log, so selecting a module
+wipes the log line that recorded a failure. `RunSummary` composes an honest four-state headline and it is
+poured into a `MessageBox` that flattens 29 outcomes into one paragraph, gets dismissed on reflex, and
+cannot be re-read. Rollback has existed since 2b and **no screen mentions it**. The engine is not the
+bottleneck on trustworthiness any more; the surface is.
+
+The chosen direction rebuilds around the user's three jobs rather than the module inventory: **Home**
+(backup age, failures with reasons intact, undo points), **Back up** (presets, with the existing tree
+preserved behind an Advanced view), a **Restore wizard** that starts from the backup rather than the
+module tree, and **History** (backups and snapshots on one timeline). It stays on WinForms/.NET 8 and
+adds no NuGet packages.
+
+Three alternatives were considered and are recorded in the spec: a conservative in-place restyle, a
+Windows 11 Settings-style shell (whose visual language this direction absorbs), and a WPF migration. The
+WPF direction was rejected for the UI stack but **its Core-extraction milestone was adopted** — the
+engine moves into a UI-free `Appcopier.Core` class library early, which is worth doing under any
+direction and keeps a future framework move cheap.
+
+Two constraints worth restating here because they bind everything else:
+
+- **Informed consent does not move.** `RestoreConfirmForm` stays modal, Cancel-defaulted, with unchecked
+  consent boxes and every sentence authored by `RestorePlan`; the snapshot-override prompt stays modal
+  and still defaults to No. Modality is removed everywhere it was noise and kept everywhere it is the
+  feature.
+- **Honest reporting cannot be softened by presentation.** Restore-side wording stays "applied", never
+  "verified". The one engine addition — `backup_manifest.json`, written beside `backup_log.txt` — exists
+  because Home and History cannot make honest status claims by parsing prose logs. An absent or
+  unparsable manifest renders as *unknown*, never as inferred green.
+
+### Modernization items
 
 - Rewrite the update checker against the GitHub Releases API. It currently downloads `AssemblyInfo.cs` and
   string-parses it with raw index arithmetic; any reformat breaks it. Note the compatibility constraint in
   the Phase 1 spec — deployed clients still parse that file, so the format must survive the change.
 - Replace obsolete `WebClient` with `HttpClient` (the two `SYSLIB0014` warnings).
-- Per-monitor DPI awareness (currently System-aware; the `WFAC010` warning marks this).
-- Dark mode. Colors are hardcoded light-theme ARGB values across the views.
+- ~~Per-monitor DPI awareness~~ — absorbed into the UI revamp. It has to land *after* the layout work
+  rather than beside it: absolute positions do not survive a `WM_DPICHANGED` rescale, and layout
+  containers do, so flipping the manifest first would only produce fallout attributable to two causes.
+- ~~Dark mode~~ — absorbed into the UI revamp, for the same reason in reverse: theming a layout that is
+  about to be rewritten means doing it twice. Recorded here because the constraint is easy to get wrong:
+  `Application.SetColorMode` is **.NET 9+** and is not available on `net8.0-windows`, so this is
+  hand-rolled from a token class plus `DwmSetWindowAttribute` for the title bar. `MessageBox` and system
+  scrollbars stay light regardless, which is disclosed rather than chased.
 
 ## Cross-machine portability
 
 Several modules are machine-specific (Start menu database, printers, USB, display), and nothing warns the
 user when restoring onto different hardware. Worth addressing once Phase 2 makes failures visible — the two
 problems share a mechanism.
+
+Phase 4 takes the first half of this, as a side effect rather than as its goal. `backup_manifest.json`
+records the machine name, user name and OS build a backup was made under, and the restore wizard's
+contents step reads them back, so "this backup came from a different account" can be said **before**
+anything is overwritten rather than discovered afterwards. That is provenance, not detection: it tells the
+user the restore is cross-machine, and it still cannot tell them that a specific module silently produced
+the wrong result — the pinned-apps and user-fonts cases both report success while Windows quietly drops
+what was restored. Closing that gap needs per-module portability declarations, which Phase 4 does not add.
