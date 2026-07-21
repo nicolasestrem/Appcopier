@@ -23,9 +23,16 @@ namespace Appcopier
 
             try
             {
-                if (sink != null)
+                // Read the field once. Modules log from thread-pool threads while the UI can clear
+                // the sink underneath them, and a null check against one read followed by a
+                // dereference of another loses the line to an NRE that AppendLog's catch routes to
+                // Console.WriteLine - invisible in a WinForms app, which is the silent loss the
+                // LogMessage discipline exists to prevent.
+                ILogSink current = sink;
+
+                if (current != null)
                 {
-                    AppendLog(format, args);
+                    AppendLog(current, format, args);
                 }
             }
             catch (Exception ex)
@@ -51,11 +58,11 @@ namespace Appcopier
             Log("{0}", message ?? string.Empty);
         }
 
-        private void AppendLog(string format, params object[] args)
+        private void AppendLog(ILogSink target, string format, params object[] args)
         {
             try
             {
-                sink.Append(string.Format(format, args));
+                target.Append(string.Format(format, args));
             }
             catch (FormatException ex)
             {
@@ -75,9 +82,18 @@ namespace Appcopier
 
         public void ClearLog()
         {
+            // Same read-once rule as Log, and the same explicit null check rather than letting the
+            // catch below absorb an NRE. Both methods document "silent when no sink is registered";
+            // spelling one of them with an empty catch made an unregistered sink indistinguishable
+            // from a sink that genuinely failed.
+            ILogSink current = sink;
+
+            if (current == null)
+                return;
+
             try
             {
-                sink.Clear();
+                current.Clear();
             }
             catch { }
         }

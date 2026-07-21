@@ -34,11 +34,25 @@ namespace DataHelper
         //   AppContext.BaseDirectory      = ...\publish\
         //   GetDirectoryName(ProcessPath) = ...\publish        (no trailing separator)
         //   composed DataRootDir, all three = ...\publish\app\
-        //   BaseDirectory composes equal (ordinal) = True
+        //   SHIPPED expression below equals the StartupPath composition (ordinal) = True
         //
-        // ProcessPath is equally correct once Path.Combine has normalized the separator; BaseDirectory
-        // wins on being non-nullable.
-        public static string DataRootDir = Path.Combine(AppContext.BaseDirectory, "app") +
+        // Environment.ProcessPath, NOT AppContext.BaseDirectory, and the difference only shows up in
+        // a mode nothing here tests. Both measured identical above, and BaseDirectory was the first
+        // choice for being non-nullable - but BaseDirectory means "where the app's content was
+        // extracted to", which equals the exe directory only while IncludeAllContentForSelfExtract
+        // is off. Turn that on for some unrelated content-file reason and BaseDirectory silently
+        // becomes a temp directory: the build succeeds, every test passes because none of them
+        // publishes single-file, and the release writes every backup under
+        // %TEMP%\.net\Appcopier\<hash>\app\ - where the next temp clean deletes them and RestPageView
+        // shows an empty list, so the user believes they have backups they do not have. ProcessPath
+        // is the path of the running executable and cannot move like that.
+        //
+        // The fallback exists because ProcessPath is documented as nullable, not because it is
+        // expected: it is null only when the OS cannot report the process path at all.
+        public static string DataRootDir = Path.Combine(
+                                                Path.GetDirectoryName(Environment.ProcessPath) ??
+                                                    AppContext.BaseDirectory,
+                                                "app") +
                                             @"\";
 
         // winget. Same App Execution Alias directory Windows Terminal lives in.
