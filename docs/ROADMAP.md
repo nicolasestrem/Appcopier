@@ -13,7 +13,7 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 2c | Known module bugs | **Done** — [spec](superpowers/specs/2026-07-20-phase2c-module-bugs-design.md) |
 | 3a | Module bases: refactor & retire | **In review** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
 | 3b | Module coverage: developer tooling | **In review** — [spec](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md) |
-| 3c | Module coverage: power-user settings | Not started |
+| 3c | Module coverage: power-user settings | **In review** — [spec](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md) |
 | 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
 
 Phase 2 was originally written as one phase. It is four independent workstreams, and splitting it was
@@ -313,23 +313,47 @@ later.~~ All landed. Notes on what the implementation decided that the entry abo
 Deferred with reasons recorded in the spec: WSL config, VS Code extension list + reinstall dialog,
 VS Code Insiders/VSCodium and per-profile settings, the `WM_SETTINGCHANGE` broadcast.
 
-### Phase 3c — power-user settings (not started)
+### Phase 3c — power-user settings (in review)
 
-All under the existing "Settings" category (`W` prefix): power plans (`powercfg` export per scheme +
-active-scheme manifest; restore defaults to re-activating the recorded scheme — importing plans creates
-objects the pre-restore snapshot cannot remove, which must be argued to the safety reviewer explicitly,
-not assumed under the 2b additive-merge stance), per-user fonts (HKCU fonts key + `%LOCALAPPDATA%`
-fonts folder; username-absolute-path limitation disclosed like the WThemes wallpaper pointer), mapped
-network drives (`HKCU\Network`), regional/input settings (International + keyboard layout keys). Plus
-the two retargets still worth doing, with their orphaned-filename consequences disclosed per the 2c
-WTelemetry precedent:
+Full design: [`superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md`](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md).
 
-- `WTaskbar` does not capture pinned taskbar apps (those live in `Taskband` and the pinned shortcuts
-  folder). Becomes a WThemes-style hybrid keeping the legacy `Taskbar.reg` name for its existing key,
-  pinned by a literal test.
-- `WUpdates` pairs the core servicing key with a WSUS-era `\AU` policy key; the parent key (which
-  already contains the modern `UX\Settings`) stays to preserve its filename, `\AU` is dropped or
-  demoted, DeliveryOptimization config added.
+~~All under the existing "Settings" category (`W` prefix): power plans, per-user fonts, mapped network
+drives, regional/input settings, plus the `WTaskbar` and `WUpdates` retargets.~~ All landed. Two
+decisions were taken by the user before implementation, both in the safe direction:
+
+- **`WPowerPlans` restore is activate-only.** `powercfg /import` creates GUID-keyed scheme objects the
+  app has no mechanism to delete, so the pre-restore snapshot could not undo them while `SnapshotGate`
+  would still report the restore as undoable — the same asymmetry that pushed the `WTelemetry`
+  filename fallback out of 2c. The `.pow` exports are still written, and a restore that cannot find
+  the recorded plan fails and names the file to import by hand.
+- **`WUpdates` drops `\AU` rather than demoting it**, orphaning that key's export in existing backups.
+  Disclosed in `CHANGELOG.md` by exact filename, per the WTelemetry precedent.
+
+What the implementation found that the entry above did not anticipate:
+
+- **The measurement pass changed two designs before any code was written.** `DeliveryOptimization` was
+  measured absent at all three plausible paths, and a registry-wide search for `DODownloadMode` returned
+  zero matches; the key was settled from `DeliveryOptimization.admx` instead, which declares exactly one
+  (`SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization`) and makes `AbsenceIsNormal` true. Guessing
+  it would have exported a nonexistent key while reporting a normal skip — the silently-wrong direction.
+- **`WUpdates` has always captured this PC's Windows Update identity** and never said so. The key it
+  already exported carries `SusClientId`, `SusClientIdValidation` and `TraceId`. This was not on the
+  list; it turned up while measuring the key to decide the `\AU` question, and is now a `WarningMessage`.
+- **`WTaskbar` deliberately does not close Explorer before restoring.** `RestartExplorer` goes through
+  `CloseProcess`, which calls `Kill()` — a killed Explorer never flushes its in-memory pin list, which
+  is what makes restore-then-restart safe. Closing it *first* would be worse: AutoRestartShell relaunches
+  the shell within about a second, so a fresh Explorer would be holding the old `Taskband` before the
+  import finished. The residual case — restoring and then signing out without restarting — is disclosed
+  in the warning rather than engineered around with a kill that makes it worse.
+- **The retarget orphans nothing**, unlike `WUpdates`. The Advanced key keeps `Taskbar.reg` through a
+  `RegFileNameFor` override, the WThemes pattern, pinned by a literal test in `BackupFileNamingTests`.
+- **`WFonts` answers the absence question differently for its two halves**, and the measurement is why:
+  the HKCU fonts key exists with zero values on an account that has installed no per-user fonts, while
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts` does not exist at all. Key absent is a fault; folder absent
+  is normal.
+- **`RestoreDeclarationTests`' RegistryModule count stayed 11 across the phase** — `WTaskbar` left the
+  family and `WMappedDrives` joined it. A membership change that nets to zero is invisible in an
+  assertion, so the two moves are now pinned as literals beside the count.
 
 **Excluded from Phase 3 with recorded reasons:** scheduled tasks (honest restore needs SID/path
 rewriting and system-task filtering; creates elevated executable entries), file associations (the

@@ -20,7 +20,9 @@ namespace Appcopier.Tests
                 new WAPrivacy(), new WOther(), new WPrivacy(), new WVisualEffects(),
                 new DTouchpad(), new WPersonalization(), new WTelemetry(),
                 new WUpdates(), new DPrinters(), new GGaming(), new APinnedApps(),
-                new WThemes(), new WNetworkConf(), new CWiFiConf(), new AppStoreApps()
+                new WThemes(), new WNetworkConf(), new CWiFiConf(), new AppStoreApps(),
+                // Phase 3c power-user settings.
+                new WPowerPlans(), new WFonts(), new WMappedDrives(), new WRegional()
             })
             {
                 Assert.False(string.IsNullOrWhiteSpace(m.Title));
