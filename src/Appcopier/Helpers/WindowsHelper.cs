@@ -788,8 +788,10 @@ namespace Appcopier
         /// Failed. On a non-zero exit nothing is written either: the captured text is the tool's
         /// error banner, and a restore would happily "apply" it. A path that cannot be cleared
         /// fails the run before the tool starts - a file we cannot remove is a file we cannot
-        /// vouch for. A failed write is logged and the file simply not produced; the artifact
-        /// check then reports the missing file, which is the user-visible fact.
+        /// vouch for. A write that fails is logged and any partial file it left is removed, so
+        /// the artifact check then reports the missing file, which is the user-visible fact; a
+        /// partial that cannot be removed fails the run instead, because a truncated dump passes
+        /// the ladder's non-empty check and would restore as if it were whole.
         ///
         /// winget deliberately does NOT go through here: RestAppsForm shows winget's own console
         /// window as its only progress reporting, which is incompatible with redirected streams,
@@ -876,6 +878,20 @@ namespace Appcopier
                             catch (Exception ex)
                             {
                                 logger.LogMessage("Could not write the captured output to " + stdoutFile + ": " + ex.Message);
+
+                                // The write can throw part-way through (a full disk being the
+                                // classic), having already produced bytes - and a truncated dump
+                                // passes the artifact ladder's non-empty check, so it must go.
+                                // Once it is gone, returning the exit code is truthful: the
+                                // artifact check that must follow any export sees the missing
+                                // file. A partial that cannot be removed is a file we cannot
+                                // vouch for, and the only honest outcome left names it.
+                                string writeClearError = TryDeleteExport(stdoutFile);
+
+                                if (writeClearError != null)
+                                    return ProcessOutcome.OutcomeUnknown(
+                                        "its output could not be fully written to " + stdoutFile +
+                                        ", and the partial file could not be removed: " + writeClearError);
                             }
                         }
 

@@ -88,6 +88,61 @@ namespace Appcopier.Tests
             }
         }
 
+        // The pre-clear side of the same rule: a previous export that cannot be removed is a
+        // file the runner cannot vouch for, so the run must fail before the tool starts.
+        [Fact]
+        public async Task RunToolAsync_UnclearablePreviousExport_FailsBeforeStarting()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "out.txt");
+
+            try
+            {
+                File.WriteAllText(file, "the previous run's export");
+
+                using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    ProcessOutcome outcome = await Utils.RunToolAsync(
+                        "cmd.exe", new[] { "/c", "echo", "hello" }, stdoutFile: file);
+
+                    Assert.False(outcome.Started);
+                    Assert.Contains("could not clear", outcome.Error);
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A write that throws (here: the target path is a directory) must leave nothing the
+        // artifact ladder would bless - the honest end state is "Failed: wrote no file", never
+        // a green row over an artifact this run did not finish producing.
+        [Fact]
+        public async Task RunToolAsync_FailedArtifactWrite_LeavesNothingTheLadderWouldBless()
+        {
+            string dir = NewTempDir();
+            string target = Path.Combine(dir, "out.txt");
+            Directory.CreateDirectory(target);
+
+            try
+            {
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "cmd.exe", new[] { "/c", "echo", "hello" }, stdoutFile: target);
+
+                Assert.True(outcome.Started);
+                Assert.Equal(0, outcome.ExitCode);
+                Assert.False(File.Exists(target));
+
+                StepResult step = Utils.ValidateExportArtifact(target, "Target", "cmd", "exported");
+                Assert.Equal(ResultState.Failed, step.State);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
         [Fact]
         public async Task RunToolAsync_ReportsTheRealExitCode()
         {

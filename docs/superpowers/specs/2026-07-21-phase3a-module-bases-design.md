@@ -138,9 +138,28 @@ Accepted as-is, with reasons: `netsh exec` is now killed at the 60s bound where 
 `netsh exec`'s exit-0-on-partial-failure is unchanged from main and covered by the applied-not-verified
 wording rule.
 
+## PR #7 review findings
+
+The bot review pass over the open PR raised one real defect (Codex, independently confirmed by the
+Claude reviewer) and two suggestions declined with reasons:
+
+4. `RunToolAsync`'s exit-0 write of the captured output could throw part-way through (a full disk
+   being the classic), leaving a truncated file — which passes `ValidateExportArtifact`'s non-empty
+   check, so the row would go green over a dump this run never finished producing. The catch now
+   removes the partial (after which returning the exit code is truthful: the artifact check sees the
+   missing file), and a partial that cannot be removed fails the run as `OutcomeUnknown`, naming the
+   file. The mid-write throw itself has no deterministic injection point without a filesystem seam;
+   the pinning tests cover the two adjacent contracts instead — an unclearable previous export fails
+   before the tool starts, and a failed write leaves nothing the ladder would bless.
+
+Declined: two Gemini suggestions to null-guard `FolderModule`'s constructor parameter and a
+subclass-returned-null `ProcessesToCloseBeforeRestore`. Neither matches a reachable path — every call
+site passes a concrete path, and `BackupBase`'s default is an empty array, never null — and guarding
+scenarios that cannot happen is the defensive style this codebase deliberately moved away from.
+
 ## Verification
 
 `dotnet build` + `dotnet test` green at every commit boundary (506 → 497 → 504 → 510 → 513 tests as
-clusters landed); the safety pass above ran before the PR; manual elevated smoke of the migrated
+clusters landed, 515 after the PR-review fix); the safety pass above ran before the PR; manual elevated smoke of the migrated
 modules is on the release checklist rather than per-commit, since no module's registry keys, filenames,
 or copy targets changed.
