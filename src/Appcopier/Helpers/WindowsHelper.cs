@@ -118,6 +118,22 @@ namespace Appcopier
                 //
                 // Applied to every copy, not just EHosts: a per-caller flag is one more thing to
                 // get wrong, and a torn settings.json is not worth defending either.
+                //
+                // Known trade-off, accepted rather than overlooked: this needs permission to
+                // CREATE a file in the destination directory, where a direct write needed only
+                // permission to write the destination file. Those can differ - a machine could
+                // grant modify on hosts without create in ...\drivers\etc - and on such a machine
+                // a restore that used to work now fails. Judged worth it: the default ACL on that
+                // directory gives Administrators full control and this app runs elevated, every
+                // other destination is inside the user's own profile, and the failure is a loud
+                // Failed step rather than the silent truncation it replaces. Deliberately NO
+                // fall-back to a direct write when the temp file cannot be created - that would
+                // reinstate the tearing hazard in exactly the situation nobody would be watching,
+                // and it is the kind of quiet degradation this app's reporting rules exist to stop.
+                //
+                // The suffix is not a name a caller might legitimately want: a leftover .appcopier-tmp
+                // is never matched by a restore, which composes the exact artifact name it wants,
+                // nor by HasBackupIn, which does the same.
                 string temporary = destination + ".appcopier-tmp";
 
                 try

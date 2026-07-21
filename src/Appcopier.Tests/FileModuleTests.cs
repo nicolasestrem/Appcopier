@@ -432,6 +432,62 @@ namespace Appcopier.Tests
             }
         }
 
+        // Utils.CopyFile writes through a "<name>.appcopier-tmp" file and renames it into place. A
+        // crash between those two steps leaves that temp file in the backup folder, and it must
+        // not then read as a captured artifact - which would earn a process kill and then restore
+        // nothing. Both readers compose the exact name they want, so neither matches it; this
+        // pins that rather than trusting it.
+        [Fact]
+        public void HasBackupIn_IsNotFooledByALeftoverTemporaryFile()
+        {
+            string root = NewTempDir();
+            string source = NewTempDir();
+
+            try
+            {
+                ClosingFileModule m = new ClosingFileModule(Path.Combine(source, "config"));
+
+                Directory.CreateDirectory(Path.Combine(root, m.Title));
+                File.WriteAllText(Path.Combine(root, m.Title, "config.appcopier-tmp"), "half a file");
+
+                Assert.False(m.HasBackupIn(root));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+                Directory.Delete(source, recursive: true);
+            }
+        }
+
+        // Same fact on the restore side: a half-written temp file must not be restored over the
+        // user's live file under the real name.
+        [Fact]
+        public async Task Restore_IgnoresALeftoverTemporaryFile()
+        {
+            string backup = NewTempDir();
+            string live = NewTempDir();
+
+            try
+            {
+                string target = Path.Combine(live, "config");
+                PlainFileModule m = new PlainFileModule(target);
+
+                Directory.CreateDirectory(Path.Combine(backup, m.Title));
+                File.WriteAllText(Path.Combine(backup, m.Title, "config.appcopier-tmp"), "half a file");
+
+                ModuleResult r = await m.RestoreAsync(backup);
+
+                Assert.Equal(ResultState.Skipped, r.State);
+                Assert.Equal("nothing was backed up for this item", r.Steps.Single().Reason);
+                Assert.False(File.Exists(target));
+            }
+            finally
+            {
+                Directory.Delete(backup, recursive: true);
+                Directory.Delete(live, recursive: true);
+            }
+        }
+
         // The cross-machine case: the backup holds an artifact, but not one THIS machine's file
         // list asks for. Closing the app would cost the user their tabs for a restore that then
         // reports "nothing was backed up" for every file.
