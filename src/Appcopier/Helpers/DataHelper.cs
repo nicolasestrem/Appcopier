@@ -2,7 +2,6 @@
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Windows.Forms;
 
 namespace DataHelper
 {
@@ -21,7 +20,25 @@ namespace DataHelper
         // Application.StartupPath has no trailing separator on .NET Framework but does on .NET 5+,
         // so plain concatenation would yield "...\\app\". Path.Combine normalizes both cases.
         // The trailing separator is part of this field's contract - callers concatenate onto it.
-        public static string DataRootDir = Path.Combine(Application.StartupPath, "app") +
+        //
+        // AppContext.BaseDirectory replaced Application.StartupPath in Phase 4 PR 2, when this file
+        // moved to Appcopier.Core and lost its WinForms reference. This is the root path of every
+        // backup the app has ever written, and the two do NOT necessarily agree under
+        // PublishSingleFile with IncludeNativeLibrariesForSelfExtract - which is exactly how this
+        // app ships and is a mode neither `dotnet build` nor `dotnet test` ever exercises. So it was
+        // measured rather than reasoned about, on 2026-07-21, with a probe carrying identical csproj
+        // properties published under the exact /release flags and run from an unrelated working
+        // directory:
+        //
+        //   Application.StartupPath       = ...\publish\
+        //   AppContext.BaseDirectory      = ...\publish\
+        //   GetDirectoryName(ProcessPath) = ...\publish        (no trailing separator)
+        //   composed DataRootDir, all three = ...\publish\app\
+        //   BaseDirectory composes equal (ordinal) = True
+        //
+        // ProcessPath is equally correct once Path.Combine has normalized the separator; BaseDirectory
+        // wins on being non-nullable.
+        public static string DataRootDir = Path.Combine(AppContext.BaseDirectory, "app") +
                                             @"\";
 
         // winget. Same App Execution Alias directory Windows Terminal lives in.
