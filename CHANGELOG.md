@@ -34,7 +34,9 @@ Four things are worth knowing in advance:
   what was captured and how each item turned out. The new screens need it to say anything truthful about a
   backup. **Backups made before this change keep working and stay restorable** — they simply show
   "details unavailable" where the outcome would go, because guessing from the old text log could show you
-  a green result that was never true.
+  a green result that was never true. The same reasoning covers a backup that is interrupted partway: the
+  file is written once, at the end, so a run that never finished leaves no manifest and reads as
+  "details unavailable" rather than as a smaller backup that succeeded.
 
 Dark mode and proper multi-monitor scaling arrive as part of this work. On .NET 8 dark mode has to be
 applied by hand, so a few Windows-supplied pieces — message boxes, scrollbars, the file picker — will stay

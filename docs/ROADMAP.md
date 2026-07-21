@@ -368,9 +368,9 @@ same-machine restore is its honest use case.
 Full design: [`superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
 
 Phase 4 was originally scoped as the four modernization items at the bottom of this section. It opened
-instead with a **complete UI/UX revamp**, decided 2026-07-21 after a four-direction design pass. Two
-absorbed the DPI and dark-mode items, so those are no longer independent; the two networking items still
-are, and can land in any order alongside.
+instead with a **complete UI/UX revamp**, decided 2026-07-21 after a four-direction design pass. The
+revamp absorbed the DPI and dark-mode items, so those are no longer independent; the two networking
+items still are, and can land in any order alongside.
 
 ### The UI revamp — "jobs, not modules"
 
@@ -378,7 +378,7 @@ The reason it moved to the front of the phase: Phases 2a–3c rebuilt the engine
 the presentation layer now actively *hides* that work. A warning fires as a modal on every tree click, so
 it is trained away. A `RichTextBox` is simultaneously help text and activity log, so selecting a module
 wipes the log line that recorded a failure. `RunSummary` composes an honest four-state headline and it is
-poured into a `MessageBox` that flattens 24 outcomes into one paragraph, gets dismissed on reflex, and
+poured into a `MessageBox` that flattens 29 outcomes into one paragraph, gets dismissed on reflex, and
 cannot be re-read. Rollback has existed since 2b and **no screen mentions it**. The engine is not the
 bottleneck on trustworthiness any more; the surface is.
 

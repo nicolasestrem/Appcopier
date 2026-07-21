@@ -211,15 +211,39 @@ Home and History cannot make honest status claims by parsing prose logs. `backup
 a human; deriving "24 items, 1 failed" from it means a text parser whose failure mode is a confidently
 wrong colour on the screen whose entire job is telling the user whether they are okay.
 
-So the backup writes `backup_manifest.json` beside `backup_log.txt`, from
-`ConfPageView.LogBackedUpElements`: module type names, titles, states, reasons, the run timestamp,
-`Environment.MachineName`, `Environment.UserName`, the OS build, and the app version. It is tested the
-way `BackupLog` is.
+So the backup writes `backup_manifest.json` beside `backup_log.txt`. It carries a `manifest_version`
+integer, then module type names, titles, states, reasons, the run timestamp, `Environment.MachineName`,
+`Environment.UserName`, the OS build, and the app version. It is tested the way `BackupLog` is.
+
+`manifest_version` is its own field and **not** the app version, which is also recorded but for
+provenance only. App versions change on every release and mostly do not change the schema; conflating
+the two means a reader cannot distinguish "written by an older build" from "written to an older shape",
+and the compatibility surface noted below has no honest way to be queried.
+
+**A Core type writes it, not `ConfPageView`.** The manifest composer lands in `Appcopier.Core` beside
+`BackupLog`, taking the same `ModuleOutcome` list `BackupLog.Compose` takes and returning a string; the
+UI only decides where to put the result. PR 3 is labelled "engine, no UI" and PR 2 has just extracted a
+UI-free library — authoring the file from a `UserControl` would contradict both, and would make the
+composer testable only through a WinForms type. (The first draft of this section said the manifest was
+written *from* `ConfPageView.LogBackedUpElements`. That described where the call site sits, not where
+the logic belongs, and it read as the latter.)
 
 **The reader treats an absent or unparsable manifest as *unknown*, never as inferred green.** Every
 backup taken before this PR has no manifest, and a dashboard that guesses at those is the cry-wolf
 failure running in the dangerous direction. Best-effort text parsing may label something "approximate";
 it may not produce a verdict.
+
+**That rule covers "cannot read it" and not "read it fine, but it is a lie by omission", so the write
+is atomic and last.** A run killed partway — crash, `taskkill`, power loss — must leave *no* manifest,
+which the absent case above already handles correctly. The failure being closed off is the one where a
+partially-written-but-well-formed file parses cleanly and presents a truncated run as a smaller
+successful one: not unknown, but confidently green and wrong, which is the exact failure class the
+Phase 2a result types exist to prevent, arriving through the one door the unknown rule does not watch.
+So the composer runs once, after every module has reported, and the file is written whole — to a temp
+name in the backup folder and then moved into place, so a kill during the write cannot leave a
+half-parsed artifact either. **Incremental writing is not an option here**; if a future phase wants it
+for long runs, it must carry a completion marker written last, and the reader must treat its absence as
+unknown rather than as a shorter run.
 
 Recorded explicitly because it comes due later: **the moment Home and History parse this file, its
 schema is a versioned compatibility surface forever.** The `BackupLog` comment's "cheap insurance" stops
@@ -381,7 +405,9 @@ Nine PRs, each shipping a working app.
    draft claimed**, and the `Application.StartupPath` → `DataRootDir` change inside it must be measured
    on a single-file publish and land as its own commit. Estimate deferred until that measurement exists;
    the mechanical remainder is ~1–1.5 wk.
-3. **Backup manifest (engine, no UI).** As above. ~2–3 days.
+3. **Backup manifest (engine, no UI).** As above. The composer is a Core type beside `BackupLog`, the
+   file carries `manifest_version`, and the write is whole-and-last so an interrupted run leaves no
+   manifest rather than a well-formed short one. ~2–3 days.
 4. **Shell + NavigationService + Home.** `MainForm` becomes rail plus content host; the static
    `ViewHelper.SwitchView` is replaced by an instance `NavigationService`, because "clear the panel, add
    a control" cannot express the push/pop the wizard needs. The old `ConfPageView` is hosted unchanged
@@ -393,7 +419,20 @@ Nine PRs, each shipping a working app.
    composition. **Zero visual change, and `windows-safety-reviewer` runs on it.** ~3–4 days.
 6. **Backup page.** Presets, inline warnings, in-page results, the Explorer-restart row. ~4–5 days.
 7. **Restore wizard.** Three steps; `RestoreConfirmForm`'s content becomes step 3, or the form survives
-   as the host. **`windows-safety-reviewer` runs on it.** ~5–6 days.
+   as the host. **`windows-safety-reviewer` runs on it, and these four facts are what it checks** — not
+   "the consent semantics survive", which is an intent a diff cannot be read against:
+   - the confirm step is **modal** (`ConfPageView.cs:643` today, `confirm.ShowDialog(owner)`);
+   - focus rests on the safe default (`RestoreConfirmForm.cs:42`, `ActiveControl = btnCancel`);
+   - consent checkboxes are created unchecked (`RestoreConfirmForm.cs:69`, `Checked = false`);
+   - the snapshot-override prompt still defaults to **No** (`ConfPageView.cs:697`,
+     `MessageBoxDefaultButton.Button2`).
+
+   **None of the four is pinned by a test.** Verified: nothing in `src/Appcopier.Tests` asserts
+   `ActiveControl` or `MessageBoxDefaultButton`, and the only `ShowDialog` hits are comments in
+   `AppRestoreDialogTests.cs`. That is consistent with the suite's scope — these are WinForms facts, not
+   logic — but it means they survive this phase on a reviewer reading for them and on nothing that fails
+   a build. Naming them here is the whole mechanism, so a wizard rewrite cannot satisfy the sentence
+   while dropping the behaviour. ~5–6 days.
 8. **History/timeline.** Supersedes `RestPageView`; its `ReadLogOrNull` and log-concatenation logic move
    intact. ~3 days.
 9. **Theme + dark mode + PerMonitorV2 DPI.** `Theme` replaces every inline `Color.FromArgb`; DWM title
@@ -419,6 +458,36 @@ PR 9 needs a DPI matrix at 100/150/200% plus a cross-monitor drag, and a live li
 the OS setting. **No size or startup numbers are asserted anywhere in this document, because none have
 been measured.** If the artifact size becomes a question, the number comes from the `/release` skill's
 publish command and nowhere else.
+
+## Correction: what outside review caught
+
+The four corrections above were found by self-review. These came from the review pass on PR #10 and are
+recorded separately, because the distinction is the useful part: the first four were all *claims about
+existing code* that reading the code disproved, and the ones below are all *gaps in the design itself* —
+a class of error re-reading the source cannot surface, because there is no source yet to disagree with.
+
+| # | Gap | Where it landed |
+|---|---|---|
+| 5 | The unknown-vs-green rule had a third failure mode: a well-formed but truncated manifest from an interrupted run parses cleanly and reads as a smaller successful backup | manifest section, write-whole-and-last |
+| 6 | The four consent facts were stated as a semantic invariant with no named checkable facts, and none is pinned by a test | PR 7 bullet |
+| 7 | `manifest_version` was folded into the app version, which changes on every release | manifest section |
+| 8 | PR 3 was labelled "engine, no UI" while naming a `UserControl` as the writer | manifest section, PR 3 bullet |
+
+Number 5 is the one that mattered. It is a *confidently green* verdict on an incomplete backup — the
+failure this project's result types were built to make impossible — reached through the single path the
+"absent or unparsable → unknown" rule does not watch, because the file is neither absent nor unparsable.
+The rule was written against the two ways reading fails and not against the way writing fails.
+
+Still open after this pass, and deliberately not resolved here: whether `RestoreDeclarationTests.cs:41`'s
+`Assert.Equal(29, modules.Count)` should be joined by count pins on the three unpinned reflection sweeps
+(`ModuleTargetTests.cs:229`, `BackupFileNamingTests.cs:47` and `:256`) before the Core split. It was
+asked and neither reviewer answered it. It is a PR 2 decision and is recorded as one.
+
+Two review points were **not** adopted. The PR ordering rationale still defends three constraints and
+stays silent on the rest; the silence is accurate, since those orderings are convenience rather than
+dependency, but the doc does not yet say which is which. And the WPF effort and size figures in the
+rejected-alternatives section remain traceable to this document alone — they are estimates, they are
+labelled as the reasoning behind a decision already made, and nothing should later cite them as measured.
 
 ## Risks, deferred items, and known tensions
 
