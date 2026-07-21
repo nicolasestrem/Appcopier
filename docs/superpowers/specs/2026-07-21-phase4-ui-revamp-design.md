@@ -301,13 +301,28 @@ Two further constraints the plan did not account for:
   needs `public` to compile, the project reference is wrong, not the modifier. Widening types to public
   is the tempting fix and it would quietly enlarge the API surface of a PR whose entire premise is
   changing nothing.
-- **`AssemblyInfo.cs` must not move.** The deployed v0.30.0 checker downloads that exact raw GitHub path
-  and string-parses it, and `Program.cs:24` resolves the local version through `typeof(Program).Assembly`.
-  Both sides stay correct **only while `Program.cs` and `AssemblyInfo.cs` remain in the app project.**
-  Moving `Properties/` into Core because it looks like infrastructure would leave the app assembly with
-  no `AssemblyFileVersionAttribute` — and with `GenerateAssemblyInfo` false, the SDK would not supply
-  one — so the reflection lookup falls through to `Application.ProductVersion` and the update check
-  reports a phantom update on every run. Silent, and only observable in a shipped build.
+- **`AssemblyInfo.cs` must not move**, and the two reasons have *opposite* detectability — which the
+  first version of this section got wrong by lumping them together.
+
+  **The local half is loudly caught.** `Program.cs:24` resolves the version through
+  `typeof(Program).Assembly`, so moving `Properties/` into Core would leave the app assembly with no
+  `AssemblyFileVersionAttribute` and, with `GenerateAssemblyInfo` false, nothing to supply one. That
+  much is true. But this spec previously called the result "observable only in a shipped build", and
+  that is false: `VersionParsingTests.cs:71-79` asserts
+  `Data.ParseLatestVersion(RealAssemblyInfoText()) == Program.GetCurrentVersionTostring()` — the remote
+  parse against the local reflection — and `:63-67` pins the compiled attribute via
+  `typeof(MainForm).Assembly`. On top of that, `Appcopier.Tests.csproj:36` links the real file by path
+  for that test data. Move the file and all three break. **The suite turns red rather than shipping a
+  broken update checker**, which is the outcome the repo's testing culture is supposed to produce and
+  in this case already does.
+
+  **The remote half cannot be caught by anything.** `DataHelper.cs:44` hardcodes
+  `https://raw.githubusercontent.com/builtbybel/Appcopier/main/src/Appcopier/Properties/AssemblyInfo.cs`,
+  and the **already-deployed v0.30.0 binaries** fetch that literal path. Moving the file 404s them
+  permanently, for users who by definition have not upgraded and cannot be reached by any later fix. No
+  test in this repo — or any repo — can observe that, because the failing client is someone else's
+  running executable. **This is the constraint that actually binds**, and it is why the csproj comment
+  calls the path MANDATORY rather than merely important.
 
 ### The reflection sweeps, and the literal that saves them
 
