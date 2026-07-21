@@ -301,20 +301,23 @@ namespace Appcopier.Tests
         // --- Against the shipped modules ---
 
         [Fact]
-        public void RealModules_ContributeTheirOwnDeclarationsWarningsAndConsent()
+        public void RealModules_ContributeTheirOwnDeclarationsAndWarnings()
         {
             CWiFiConf wifi = new CWiFiConf();
-            BGoogleChrome chrome = new BGoogleChrome();
+            APinnedApps pinned = new APinnedApps();
 
-            RestorePlan plan = PlanFor(wifi, chrome);
+            RestorePlan plan = PlanFor(wifi, pinned);
 
             Assert.Contains(wifi.Title, plan.ConfirmationText);
             Assert.Contains(wifi.WarningMessage, plan.ConfirmationText);
             Assert.Contains(wifi.RestoreTargets.Single().Path, plan.ConfirmationText);
-            Assert.Contains(chrome.RestoreTargets.Single().Path, plan.ConfirmationText);
+            Assert.Contains(pinned.RestoreTargets.Single().Path, plan.ConfirmationText);
             Assert.DoesNotContain(RestoreTarget.UndeclaredMarker, plan.ConfirmationText);
 
-            Assert.Equal("chrome", Assert.Single(plan.ConsentEntries).ProcessName);
+            // No shipped module carries a consented close since the browsers were retired in 3a;
+            // the consent mechanics stay covered by the FakeModule tests above, and the 3b
+            // dev-tooling modules are expected to repopulate this.
+            Assert.Empty(plan.ConsentEntries);
         }
 
         // --- Construction ---

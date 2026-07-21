@@ -73,13 +73,13 @@ namespace Views
             AddConfiguration(new WOther(), "Settings");
             AddConfiguration(new AppStoreApps(), "Apps");
             AddConfiguration(new APinnedApps(), "Apps");
-            AddConfiguration(new BMozillaFirefox(), "Browser");
-            AddConfiguration(new BMicrosoftEdge(), "Browser");
-            AddConfiguration(new BGoogleChrome(), "Browser");
+            // The browser modules (Chrome, Edge, Firefox) were retired in Phase 3a: they copied
+            // whole profile directories - caches, GPU data, live locked databases - and browser
+            // sync solves the problem better than a local export can. Backups made with earlier
+            // versions keep their browser folders on disk; this app no longer restores them.
             AddConfiguration(new DPrinters(), "Devices");
             AddConfiguration(new DMouse(), "Devices");
             AddConfiguration(new DKeyboard(), "Devices");
-            AddConfiguration(new DUSB(), "Devices");
             AddConfiguration(new DTouchpad(), "Devices");
             AddConfiguration(new GGaming(), "Gaming");
             AddConfiguration(new CWiFiConf(), "Credentials");
