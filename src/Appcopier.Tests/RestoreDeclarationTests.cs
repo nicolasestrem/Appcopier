@@ -32,7 +32,7 @@ namespace Appcopier.Tests
         {
             List<BackupBase> modules = Modules().ToList();
 
-            Assert.Equal(23, modules.Count);
+            Assert.Equal(19, modules.Count);
             Assert.All(modules, m => Assert.False(string.IsNullOrWhiteSpace(m.Title)));
         }
 
@@ -86,21 +86,6 @@ namespace Appcopier.Tests
             Assert.True(m.RestoreMakesChanges);
         }
 
-        [Theory]
-        [InlineData(typeof(BGoogleChrome), "chrome")]
-        [InlineData(typeof(BMicrosoftEdge), "msedge")]
-        [InlineData(typeof(BMozillaFirefox), "firefox")]
-        public void Browsers_DeclareAConsentedCloseOfTheProcessTheirBackupCloses(Type type, string processName)
-        {
-            BackupBase m = (BackupBase)Activator.CreateInstance(type);
-
-            RestoreCloseRequirement req = Assert.Single(m.ProcessesToCloseBeforeRestore);
-
-            Assert.Equal(processName, req.ProcessName);
-            Assert.True(req.NeedsConsent);
-            Assert.False(string.IsNullOrWhiteSpace(req.DisplayName));
-        }
-
         [Fact]
         public void PinnedApps_DeclaresANonConsentedCloseOfTheStartMenu()
         {
@@ -111,9 +96,11 @@ namespace Appcopier.Tests
         }
 
         // Every other module closes nothing, so a close requirement appearing anywhere else is a
-        // new prompt nobody decided to add.
+        // new prompt nobody decided to add. The three browser modules, which declared consented
+        // closes, were retired in Phase 3a; consented closes return with the 3b dev-tooling
+        // modules, and this roster is where they get recorded.
         [Fact]
-        public void OnlyTheBrowsersAndPinnedApps_DeclareCloseRequirements()
+        public void OnlyPinnedApps_DeclaresACloseRequirement()
         {
             string[] declaring = Modules()
                 .Where(m => m.ProcessesToCloseBeforeRestore.Count > 0)
@@ -121,9 +108,7 @@ namespace Appcopier.Tests
                 .OrderBy(n => n)
                 .ToArray();
 
-            Assert.Equal(
-                new[] { "APinnedApps", "BGoogleChrome", "BMicrosoftEdge", "BMozillaFirefox" },
-                declaring);
+            Assert.Equal(new[] { "APinnedApps" }, declaring);
         }
 
         [Fact]
@@ -146,7 +131,7 @@ namespace Appcopier.Tests
                 .Where(m => m is RegistryModule)
                 .ToList();
 
-            Assert.Equal(10, registryModules.Count);
+            Assert.Equal(9, registryModules.Count);
 
             foreach (BackupBase m in registryModules)
             {
@@ -231,9 +216,6 @@ namespace Appcopier.Tests
 
         [Theory]
         [InlineData(typeof(APinnedApps))]
-        [InlineData(typeof(BGoogleChrome))]
-        [InlineData(typeof(BMicrosoftEdge))]
-        [InlineData(typeof(BMozillaFirefox))]
         public void FolderModules_DeclareTheFolderTheyOverwrite(Type type)
         {
             BackupBase m = (BackupBase)Activator.CreateInstance(type);
@@ -315,9 +297,6 @@ namespace Appcopier.Tests
         // for it, because closing is what costs the user work. Answering against a real folder
         // rather than a fake: the whole point is the on-disk layout the module's own restore reads.
         [Theory]
-        [InlineData(typeof(Conf.BGoogleChrome))]
-        [InlineData(typeof(Conf.BMicrosoftEdge))]
-        [InlineData(typeof(Conf.BMozillaFirefox))]
         [InlineData(typeof(Conf.APinnedApps))]
         public void ModulesThatCloseSomething_KnowWhetherTheBackupHoldsAnythingForThem(Type type)
         {
@@ -344,7 +323,7 @@ namespace Appcopier.Tests
         [InlineData("")]
         [InlineData("   ")]
         public void ModulesThatCloseSomething_TreatAMissingPathAsNothingToRestore(string path)
-            => Assert.False(new Conf.BGoogleChrome().HasBackupIn(path));
+            => Assert.False(new Conf.APinnedApps().HasBackupIn(path));
 
         // The default answers yes, so a module that has not been taught to check is never silently
         // skipped - being wrong that way costs a close, the other way cancels the user's restore.

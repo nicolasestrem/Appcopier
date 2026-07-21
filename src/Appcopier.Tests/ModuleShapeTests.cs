@@ -18,9 +18,8 @@ namespace Appcopier.Tests
             {
                 new WAccessibility(), new DMouse(), new DKeyboard(), new WTaskbar(),
                 new WAPrivacy(), new WOther(), new WPrivacy(), new WVisualEffects(),
-                new DUSB(), new DTouchpad(), new WPersonalization(), new WTelemetry(),
+                new DTouchpad(), new WPersonalization(), new WTelemetry(),
                 new WUpdates(), new DPrinters(), new GGaming(), new APinnedApps(),
-                new BMozillaFirefox(), new BMicrosoftEdge(), new BGoogleChrome(),
                 new WThemes(), new WNetworkConf(), new CWiFiConf(), new AppStoreApps()
             })
             {

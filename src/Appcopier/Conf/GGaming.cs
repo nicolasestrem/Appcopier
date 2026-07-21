@@ -1,82 +1,14 @@
-using Appcopier;
-using System.Collections.Generic;
-using System.IO;
-
 namespace Conf
 {
-    public class GGaming : BackupBase
+    public class GGaming : MultiKeyRegistryModule
     {
-        public List<string> Keys = new List<string>();
-
         public GGaming()
         {
             Title = "Gaming settings";
             Info = "This will export settings related to Windows Game Bar DVR (Game Recorder).";
 
-            LoadSettings();
-        }
-
-        private void LoadSettings()
-
-        {
             Keys.Add(@"HKEY_CURRENT_USER\SOFTWARE\Microsoft\GameBar");
             Keys.Add(@"HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR");
-        }
-
-        public override bool IsInstalled()
-        {
-            bool b1 = false;
-
-            foreach (string k in Keys)
-            {
-                if (Utils.KeyExists(k))
-                {
-                    b1 = true;
-                    break;
-                }
-            }
-
-            return b1;
-        }
-
-        // Read from Keys on every access: see the matching note in WPersonalization.
-        public override IReadOnlyList<RestoreTarget> RestoreTargets
-        {
-            get
-            {
-                List<RestoreTarget> targets = new List<RestoreTarget>();
-
-                foreach (string k in Keys)
-                    targets.Add(RestoreTarget.RegistryKey(k));
-
-                return targets;
-            }
-        }
-
-        public override ModuleResult Backup(string path)
-        {
-            List<StepResult> steps = new List<StepResult>();
-
-            foreach (string k in Keys)
-            {
-                string outputFileName = Path.Combine(path, RegFileNameFor(k));
-                steps.Add(Utils.ExportRegistryKey(outputFileName, k, AbsenceIsNormal(k)));
-            }
-
-            return ModuleResult.Aggregate(steps);
-        }
-
-        public override ModuleResult Restore(string path)
-        {
-            List<StepResult> steps = new List<StepResult>();
-
-            foreach (string k in Keys)
-            {
-                string inputFileName = Path.Combine(path, RegFileNameFor(k));
-                steps.Add(Utils.ImportRegistryKey(inputFileName, k));
-            }
-
-            return ModuleResult.Aggregate(steps);
         }
 
         // True for both keys, because both are REMOVABLE without anything being wrong: GameBar and
@@ -84,6 +16,6 @@ namespace Conf
         // means nothing is configured rather than that something broke. Both were probed on the
         // development machine and found PRESENT - the flag covers the machines where they are not,
         // it does not assert that absence is the common case.
-        private static bool AbsenceIsNormal(string key) => true;
+        protected override bool AbsenceIsNormal(string key) => true;
     }
 }

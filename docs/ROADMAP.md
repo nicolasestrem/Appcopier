@@ -11,7 +11,9 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 2a | Make failure representable and reported | **Done** — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
 | 2b | Restore safety: snapshot, rollback, confirmation | **Done** — [spec](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md) |
 | 2c | Known module bugs | **Done** — [spec](superpowers/specs/2026-07-20-phase2c-module-bugs-design.md) |
-| 3 | Module coverage: dev tooling and power-user settings | Not started |
+| 3a | Module bases: refactor & retire | **In review** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
+| 3b | Module coverage: developer tooling | Not started |
+| 3c | Module coverage: power-user settings | Not started |
 | 4 | Modernization: HttpClient, update checker, DPI, dark mode | Not started |
 
 Phase 2 was originally written as one phase. It is four independent workstreams, and splitting it was
@@ -245,27 +247,63 @@ serves neither.
 
 ## Phase 3 — module coverage
 
-23 modules exist today, strong on core Windows personalization/privacy and Wi-Fi/winget, and largely absent
-on the state a power user would actually miss.
+23 modules existed going in, strong on core Windows personalization/privacy and Wi-Fi/winget, and largely
+absent on the state a power user would actually miss. Split into three sub-phases in the 2026-07-21
+planning pass (multi-agent design plus an adversarial critique that confirmed twelve defects in the first
+draft; the corrected plan is what the sub-phases below implement).
 
-**Developer tooling:** Windows Terminal settings, VS Code (settings, keybindings, extension list), `.ssh`
-config and keys, user environment variables, WSL distro configuration, `hosts` file.
+### Phase 3a — module bases: refactor & retire (in review)
 
-**Power-user settings:** power plans, installed fonts, mapped network drives, scheduled tasks, file
-associations, regional and input settings, display layout.
+Full design: [`superpowers/specs/2026-07-21-phase3a-module-bases-design.md`](superpowers/specs/2026-07-21-phase3a-module-bases-design.md).
 
-**Refactor first.** The 23 modules are near-identical copy-paste; `WNetworkConf` and `CWiFiConf` each carry
-their own `netsh` helper. Extract shared `RegistryModule` / `FolderModule` / `CommandModule` bases before
-adding more, or the duplication doubles.
+- ~~**Refactor first.** The modules are near-identical copy-paste; `WNetworkConf` and `CWiFiConf` each
+  carry their own `netsh` helper.~~ Done in 3a: `MultiKeyRegistryModule` and `FolderModule` bases, one
+  shared `Utils.RunToolAsync` runner and `ValidateExportArtifact` ladder. A planned `CommandModule` base
+  was **dropped by the critique** — it fit one of its three intended consumers; the runner was the real
+  shared seam. winget deliberately keeps its own runner (its visible console window is the app-restore
+  dialog's progress reporting).
+- ~~**Browsers are deprioritized** … fix or retire them~~ **Retired**, by user decision 2026-07-21:
+  sync solves it better, and fixing meant per-browser exclusion lists plus the missed Firefox Local
+  half. Old backups keep their browser folders on disk; the app no longer restores them (disclosed in
+  CHANGELOG).
+- ~~`DUSB` targets a near-empty key~~ **Retired** in 3a — the Info text promised far more than the key held.
+- The 2b-deferred `AllowPrompts` cleanup resolved itself: the retirement removed the flag's only
+  readers, so the mechanism was deleted outright rather than redesigned.
 
-**Browsers are deprioritized.** Chrome profile sync already solves this better than a local export, and the
-current modules are blunt full-directory copies — they grab caches and GPU data, miss half the Firefox
-profile, and copy live locked databases. Fix or retire them; do not extend the pattern to more browsers.
+### Phase 3b — developer tooling (not started)
 
-**Also worth revisiting:** `WTaskbar` does not capture pinned taskbar apps (those live in `Taskband`);
-`APinnedApps` copies a build-specific Start menu database that is notoriously non-portable between machines;
-`DUSB` targets a near-empty key; `WUpdates` targets WSUS-era policy keys rather than modern Windows 11
-update settings.
+New `FileModule` base + `RestoreTarget.File` kind, new "Developer" tree category (prefix `E`):
+Windows Terminal settings, VS Code settings/keybindings/snippets, `.ssh` **config and known_hosts only**
+(private keys are deliberately excluded from plaintext backups — user decision), user environment
+variables (`HKCU\Environment`), `hosts` file. Terminal and VS Code declare consented closes: both rewrite
+their own settings files while running, so an unclosed app can silently overwrite a restored file minutes
+later. Deferred with reasons recorded: WSL config, VS Code extension list + reinstall dialog.
+
+### Phase 3c — power-user settings (not started)
+
+All under the existing "Settings" category (`W` prefix): power plans (`powercfg` export per scheme +
+active-scheme manifest; restore defaults to re-activating the recorded scheme — importing plans creates
+objects the pre-restore snapshot cannot remove, which must be argued to the safety reviewer explicitly,
+not assumed under the 2b additive-merge stance), per-user fonts (HKCU fonts key + `%LOCALAPPDATA%`
+fonts folder; username-absolute-path limitation disclosed like the WThemes wallpaper pointer), mapped
+network drives (`HKCU\Network`), regional/input settings (International + keyboard layout keys). Plus
+the two retargets still worth doing, with their orphaned-filename consequences disclosed per the 2c
+WTelemetry precedent:
+
+- `WTaskbar` does not capture pinned taskbar apps (those live in `Taskband` and the pinned shortcuts
+  folder). Becomes a WThemes-style hybrid keeping the legacy `Taskbar.reg` name for its existing key,
+  pinned by a literal test.
+- `WUpdates` pairs the core servicing key with a WSUS-era `\AU` policy key; the parent key (which
+  already contains the modern `UX\Settings`) stays to preserve its filename, `\AU` is dropped or
+  demoted, DeliveryOptimization config added.
+
+**Excluded from Phase 3 with recorded reasons:** scheduled tasks (honest restore needs SID/path
+rewriting and system-task filtering; creates elevated executable entries), file associations (the
+`UserChoice` hash is anti-tamper — a registry merge passes the post-import probe while Windows rejects
+the association, a guaranteed dishonest green row), display layout (monitor-EDID-keyed, inherently
+non-portable). `APinnedApps` copies a build-specific Start menu database that is notoriously
+non-portable between machines — kept, with its warning strengthened in 3c rather than retired, because
+same-machine restore is its honest use case.
 
 ## Phase 4 — modernization
 

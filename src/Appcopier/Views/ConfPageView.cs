@@ -73,13 +73,13 @@ namespace Views
             AddConfiguration(new WOther(), "Settings");
             AddConfiguration(new AppStoreApps(), "Apps");
             AddConfiguration(new APinnedApps(), "Apps");
-            AddConfiguration(new BMozillaFirefox(), "Browser");
-            AddConfiguration(new BMicrosoftEdge(), "Browser");
-            AddConfiguration(new BGoogleChrome(), "Browser");
+            // The browser modules (Chrome, Edge, Firefox) were retired in Phase 3a: they copied
+            // whole profile directories - caches, GPU data, live locked databases - and browser
+            // sync solves the problem better than a local export can. Backups made with earlier
+            // versions keep their browser folders on disk; this app no longer restores them.
             AddConfiguration(new DPrinters(), "Devices");
             AddConfiguration(new DMouse(), "Devices");
             AddConfiguration(new DKeyboard(), "Devices");
-            AddConfiguration(new DUSB(), "Devices");
             AddConfiguration(new DTouchpad(), "Devices");
             AddConfiguration(new GGaming(), "Gaming");
             AddConfiguration(new CWiFiConf(), "Credentials");
@@ -219,15 +219,8 @@ namespace Views
         /// snapshot is an ordinary backup, so it inherits the export verification and the honest
         /// per-module results rather than growing a second, less-tested capture path.
         /// </remarks>
-        /// <param name="allowPrompts">
-        /// False for the pre-restore snapshot. Consent was already taken on the UI thread, and a
-        /// module prompting from a thread-pool thread here would raise an ownerless dialog behind a
-        /// disabled window - and a declined prompt would return Skipped, leaving the module
-        /// uncaptured while the restore went on to overwrite it.
-        /// </param>
         private async Task<List<ModuleResult>> RunModulesBackup(IReadOnlyList<BackupBase> modules,
-                                                                string folder, string progressVerb,
-                                                                bool allowPrompts = true)
+                                                                string folder, string progressVerb)
         {
             List<ModuleResult> results = new List<ModuleResult>();
 
@@ -239,7 +232,6 @@ namespace Views
 
                 try
                 {
-                    module.AllowPrompts = allowPrompts;
                     outcome = await module.BackupAsync(folder);
                 }
                 catch (Exception ex)
@@ -251,15 +243,6 @@ namespace Views
                     {
                         StepResult.Failed(module.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
                     });
-                }
-                finally
-                {
-                    // Always back to asking. These module instances live in the tree for the life of
-                    // the window, so a suppression left set by a snapshot would still be set the next
-                    // time the user pressed Backup - and that module would then close their browser
-                    // without asking. Restoring the permissive value is the safe direction to fail
-                    // in: the worst it costs is a prompt the caller meant to suppress.
-                    module.AllowPrompts = true;
                 }
 
                 results.Add(outcome);
@@ -522,7 +505,7 @@ namespace Views
                 return SnapshotGate.FolderNotCreated(createError);
 
             List<ModuleResult> results =
-                await RunModulesBackup(snapshotSet, snapshotFolderPath, "Snapshotting", allowPrompts: false);
+                await RunModulesBackup(snapshotSet, snapshotFolderPath, "Snapshotting");
 
             LogBackedUpElements(snapshotFolderPath, snapshotSet, results, new[]
             {

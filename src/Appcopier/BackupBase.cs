@@ -104,22 +104,15 @@ namespace Appcopier
             return safe.ToString();
         }
 
-        /// <summary>
-        /// Whether this module may ask the user a question while backing up.
-        /// </summary>
-        /// <remarks>
-        /// The pre-restore snapshot sets this false, and that is not a convenience. A module that
-        /// prompts there raises an ownerless MessageBox from a thread-pool thread while the window
-        /// is already disabled, so it can paint behind the app and strand the restore - and a "no"
-        /// answer returns Skipped, which is indistinguishable at the gate from "there was nothing to
-        /// back up". The module would then be left uncaptured and restored anyway, which is the
-        /// whole defect this phase exists to remove.
-        ///
-        /// Consent for closing these processes is gathered once, on the UI thread, before the
-        /// snapshot starts. Asking again from module code would be asking a second time for
-        /// something already agreed.
-        /// </remarks>
-        internal bool AllowPrompts { get; set; } = true;
+        // An AllowPrompts flag lived here until Phase 3a: shared mutable state, set on the module
+        // instance before each backup and reset in a finally, that told the retired browser
+        // modules not to prompt during the pre-restore snapshot. It went with its last consumers -
+        // no shipped module prompts during backup at all now. A future module that genuinely must
+        // ask something at backup time should receive that permission as a PARAMETER on the call
+        // that needs it, not as instance state a caller has to remember to reset; and it must
+        // never prompt on the snapshot path, where a thread-pool MessageBox has no owner and a
+        // declined prompt reads as "nothing to back up" at the snapshot gate while the restore
+        // goes on to overwrite the uncaptured module.
 
         // Property to display Info
         public string Title { get; set; }

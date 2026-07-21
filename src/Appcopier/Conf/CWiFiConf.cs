@@ -1,24 +1,17 @@
 using Appcopier;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace Conf
 {
     public class CWiFiConf : BackupBase
     {
-        private static readonly LogHelper logger = LogHelper.Instance;
-
         public CWiFiConf()
         {
             Title = "Wi-Fi networks & passwords";
             Info = "This will back up and restore credentials of Wi-Fi networks.";
-            IsWarning();
-        }
-
-        private void IsWarning()
-        {
             WarningMessage = "Restoring this backup adds every saved network in it back to this machine, for all accounts, not just yours. This includes networks you may have since forgotten.";
         }
 
@@ -33,7 +26,7 @@ namespace Conf
                     "to this machine for all accounts")
             };
 
-        public override ModuleResult Backup(string path)
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
 
@@ -54,24 +47,28 @@ namespace Conf
                 foreach (string file in Directory.GetFiles(path, "*.xml"))
                     before[file] = File.GetLastWriteTimeUtc(file);
 
-                int exitCode = ExecuteNetshCommand($"wlan export profile key=clear folder=\"{path.TrimEnd('\\')}\""); // remove trailing backslash from path
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "netsh",
+                    new[] { "wlan", "export", "profile", "key=clear", "folder=" + path.TrimEnd('\\') });
 
-                string[] after = Directory.GetFiles(path, "*.xml");
-                int added = 0;
-                foreach (string file in after)
+                List<string> changed = new List<string>();
+                foreach (string file in Directory.GetFiles(path, "*.xml"))
                 {
                     DateTime previousWrite;
                     bool existedBefore = before.TryGetValue(file, out previousWrite);
 
                     if (!existedBefore || File.GetLastWriteTimeUtc(file) > previousWrite)
-                        added++;
+                        changed.Add(file);
                 }
 
-                if (exitCode != 0)
+                bool succeeded = outcome != null && outcome.Started && !outcome.TimedOut
+                                 && outcome.Error == null && outcome.ExitCode == 0;
+
+                if (succeeded && changed.Count > 0)
                 {
-                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
+                    steps.Add(StepResult.Succeeded(Title, $"exported {changed.Count} Wi-Fi profile(s)"));
                 }
-                else if (added == 0)
+                else if (succeeded)
                 {
                     // netsh has been measured printing "saved successfully" with exit code 0 while
                     // writing nothing (the export path was too long for it). A zero exit code alone
@@ -80,7 +77,34 @@ namespace Conf
                 }
                 else
                 {
-                    steps.Add(StepResult.Succeeded(Title, $"exported {added} Wi-Fi profile(s)"));
+                    string reason;
+
+                    if (outcome == null || !outcome.Started)
+                        reason = "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error);
+                    else if (outcome.TimedOut)
+                        reason = "netsh did not finish";
+                    else if (outcome.Error != null)
+                        reason = "netsh ran but its outcome could not be determined: " + outcome.Error;
+                    else
+                        reason = $"netsh exited with code {outcome.ExitCode}";
+
+                    // A bounded export can die part-way through having already written some of the
+                    // profiles, into a folder the restore side reads back by CONTENT - so whatever
+                    // this run wrote or overwrote must go with the failure, or a backup the row
+                    // reports as Failed would still restore a partial profile set. Same rule as
+                    // the runner's stdoutFile pre-clear, applied to files netsh names itself.
+                    string stuck = TryRemovePartialExports(changed);
+
+                    if (stuck != null)
+                        reason += "; the partial profile file(s) it left could not be removed and would still restore: " + stuck;
+
+                    // A timed-out netsh is killed, but the kill is deliberately not escalated when
+                    // it fails - a process that outlives the timeout can keep writing profiles
+                    // after this cleanup ran, and a complete profile file always restores.
+                    if (outcome != null && outcome.TimedOut)
+                        reason += "; if netsh is in fact still running, profile files it writes after this point would also restore";
+
+                    steps.Add(StepResult.Failed(Title, reason));
                 }
             }
             catch (Exception ex)
@@ -91,7 +115,40 @@ namespace Conf
             return ModuleResult.Aggregate(steps);
         }
 
-        public override ModuleResult Restore(string path)
+        /// <summary>
+        /// Best-effort removal of the files a failed export wrote or overwrote. Returns the names
+        /// it could not remove (with why), or null when everything (or nothing) was cleaned up.
+        /// </summary>
+        /// <remarks>
+        /// Scoped to what the restore side would actually find, with the same predicate it uses
+        /// (WlanProfile.IsWlanProfile), so "what a failed backup removes" and "what a restore
+        /// discovers" cannot drift apart: a truncated file fails the XML parse and cannot restore
+        /// anyway, and a foreign .xml some other writer put in the shared folder is not this
+        /// module's to delete.
+        /// </remarks>
+        private static string TryRemovePartialExports(List<string> files)
+        {
+            List<string> stuck = new List<string>();
+
+            foreach (string file in files)
+            {
+                if (!WlanProfile.IsWlanProfile(file))
+                    continue;
+
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    stuck.Add(Path.GetFileName(file) + " (" + ex.Message + ")");
+                }
+            }
+
+            return stuck.Count == 0 ? null : string.Join(", ", stuck);
+        }
+
+        public override async Task<ModuleResult> RestoreAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
 
@@ -115,11 +172,32 @@ namespace Conf
                     // XML per network, and stopping at the first entry discarded all the others.
                     foreach (string xmlFile in xmlFiles)
                     {
-                        int exitCode = ExecuteNetshCommand($"wlan add profile filename=\"{xmlFile}\"");
+                        ProcessOutcome outcome = await Utils.RunToolAsync(
+                            "netsh", new[] { "wlan", "add", "profile", "filename=" + xmlFile });
 
-                        steps.Add(exitCode == 0
-                            ? StepResult.Applied(Title, Path.GetFileName(xmlFile))
-                            : StepResult.Failed(Path.GetFileName(xmlFile), $"netsh exited with code {exitCode}"));
+                        string name = Path.GetFileName(xmlFile);
+
+                        if (outcome != null && outcome.Started && !outcome.TimedOut
+                            && outcome.Error == null && outcome.ExitCode == 0)
+                        {
+                            steps.Add(StepResult.Applied(Title, name));
+                        }
+                        else if (outcome == null || !outcome.Started)
+                        {
+                            steps.Add(StepResult.Failed(name, "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error)));
+                        }
+                        else if (outcome.TimedOut)
+                        {
+                            steps.Add(StepResult.Failed(name, "netsh did not finish"));
+                        }
+                        else if (outcome.Error != null)
+                        {
+                            steps.Add(StepResult.Failed(name, "netsh ran but its outcome could not be determined: " + outcome.Error));
+                        }
+                        else
+                        {
+                            steps.Add(StepResult.Failed(name, $"netsh exited with code {outcome.ExitCode}"));
+                        }
                     }
                 }
             }
@@ -129,34 +207,6 @@ namespace Conf
             }
 
             return ModuleResult.Aggregate(steps);
-        }
-
-        // Helper method to execute netsh commands
-        private int ExecuteNetshCommand(string arguments)
-        {
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = "netsh",
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true, // capture error output
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using (Process process = new Process { StartInfo = psi })
-            {
-                process.Start();
-                string output = process.StandardOutput.ReadToEnd();
-                string error = process.StandardError.ReadToEnd();
-
-                process.WaitForExit();
-
-                logger.LogMessage($"Wi-Fi Conf: {output}");
-                logger.LogMessage($"Wi-Fi Conf: {error}");
-
-                return process.ExitCode;
-            }
         }
     }
 }
