@@ -1,24 +1,17 @@
 using Appcopier;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace Conf
 {
     public class CWiFiConf : BackupBase
     {
-        private static readonly LogHelper logger = LogHelper.Instance;
-
         public CWiFiConf()
         {
             Title = "Wi-Fi networks & passwords";
             Info = "This will back up and restore credentials of Wi-Fi networks.";
-            IsWarning();
-        }
-
-        private void IsWarning()
-        {
             WarningMessage = "Restoring this backup adds every saved network in it back to this machine, for all accounts, not just yours. This includes networks you may have since forgotten.";
         }
 
@@ -33,7 +26,7 @@ namespace Conf
                     "to this machine for all accounts")
             };
 
-        public override ModuleResult Backup(string path)
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
 
@@ -54,7 +47,9 @@ namespace Conf
                 foreach (string file in Directory.GetFiles(path, "*.xml"))
                     before[file] = File.GetLastWriteTimeUtc(file);
 
-                int exitCode = ExecuteNetshCommand($"wlan export profile key=clear folder=\"{path.TrimEnd('\\')}\""); // remove trailing backslash from path
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "netsh",
+                    new[] { "wlan", "export", "profile", "key=clear", "folder=" + path.TrimEnd('\\') });
 
                 string[] after = Directory.GetFiles(path, "*.xml");
                 int added = 0;
@@ -67,9 +62,21 @@ namespace Conf
                         added++;
                 }
 
-                if (exitCode != 0)
+                if (outcome == null || !outcome.Started)
                 {
-                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
+                    steps.Add(StepResult.Failed(Title, "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error)));
+                }
+                else if (outcome.TimedOut)
+                {
+                    steps.Add(StepResult.Failed(Title, "netsh did not finish"));
+                }
+                else if (outcome.Error != null)
+                {
+                    steps.Add(StepResult.Failed(Title, "netsh ran but its outcome could not be determined: " + outcome.Error));
+                }
+                else if (outcome.ExitCode != 0)
+                {
+                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {outcome.ExitCode}"));
                 }
                 else if (added == 0)
                 {
@@ -91,7 +98,7 @@ namespace Conf
             return ModuleResult.Aggregate(steps);
         }
 
-        public override ModuleResult Restore(string path)
+        public override async Task<ModuleResult> RestoreAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
 
@@ -115,11 +122,32 @@ namespace Conf
                     // XML per network, and stopping at the first entry discarded all the others.
                     foreach (string xmlFile in xmlFiles)
                     {
-                        int exitCode = ExecuteNetshCommand($"wlan add profile filename=\"{xmlFile}\"");
+                        ProcessOutcome outcome = await Utils.RunToolAsync(
+                            "netsh", new[] { "wlan", "add", "profile", "filename=" + xmlFile });
 
-                        steps.Add(exitCode == 0
-                            ? StepResult.Applied(Title, Path.GetFileName(xmlFile))
-                            : StepResult.Failed(Path.GetFileName(xmlFile), $"netsh exited with code {exitCode}"));
+                        string name = Path.GetFileName(xmlFile);
+
+                        if (outcome != null && outcome.Started && !outcome.TimedOut
+                            && outcome.Error == null && outcome.ExitCode == 0)
+                        {
+                            steps.Add(StepResult.Applied(Title, name));
+                        }
+                        else if (outcome == null || !outcome.Started)
+                        {
+                            steps.Add(StepResult.Failed(name, "could not run netsh: " + (outcome == null ? "no outcome" : outcome.Error)));
+                        }
+                        else if (outcome.TimedOut)
+                        {
+                            steps.Add(StepResult.Failed(name, "netsh did not finish"));
+                        }
+                        else if (outcome.Error != null)
+                        {
+                            steps.Add(StepResult.Failed(name, "netsh ran but its outcome could not be determined: " + outcome.Error));
+                        }
+                        else
+                        {
+                            steps.Add(StepResult.Failed(name, $"netsh exited with code {outcome.ExitCode}"));
+                        }
                     }
                 }
             }
@@ -129,34 +157,6 @@ namespace Conf
             }
 
             return ModuleResult.Aggregate(steps);
-        }
-
-        // Helper method to execute netsh commands
-        private int ExecuteNetshCommand(string arguments)
-        {
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = "netsh",
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true, // capture error output
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using (Process process = new Process { StartInfo = psi })
-            {
-                process.Start();
-                string output = process.StandardOutput.ReadToEnd();
-                string error = process.StandardError.ReadToEnd();
-
-                process.WaitForExit();
-
-                logger.LogMessage($"Wi-Fi Conf: {output}");
-                logger.LogMessage($"Wi-Fi Conf: {error}");
-
-                return process.ExitCode;
-            }
         }
     }
 }

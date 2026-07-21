@@ -1,15 +1,13 @@
 using Appcopier;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace Conf
 {
     public class WNetworkConf : BackupBase
     {
-        private static readonly LogHelper logger = LogHelper.Instance;
-
         public WNetworkConf()
         {
             Title = "Network configuration";
@@ -27,132 +25,70 @@ namespace Conf
                     "routes and interface settings to this machine's network adapters")
             };
 
-        public override ModuleResult Backup(string path)
+        public override async Task<ModuleResult> BackupAsync(string path)
         {
-            List<StepResult> steps = new List<StepResult>();
-
-            // Execute netsh command to export TCP/IP configuration to a file
             string filePath = Path.Combine(path, $"{Title}.txt");
 
-            try
-            {
-                int exitCode = ExecuteNetshCommand($"interface dump", filePath);
+            // netsh prints the dump to stdout; RunToolAsync captures it and lands it in the file.
+            ProcessOutcome outcome = await Utils.RunToolAsync(
+                "netsh", new[] { "interface", "dump" }, stdoutFile: filePath);
 
-                // The exit code alone is not enough. netsh can exit 0 having produced nothing, and
-                // an empty dump restores nothing, so the artifact is checked as well.
-                if (exitCode != 0)
-                {
-                    steps.Add(StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
-                }
-                else if (!File.Exists(filePath))
-                {
-                    steps.Add(StepResult.Failed(Title, "netsh reported success but wrote no file"));
-                }
-                else if (new FileInfo(filePath).Length == 0)
-                {
-                    steps.Add(StepResult.Failed(Title, "netsh wrote an empty file"));
-                }
-                else
-                {
-                    steps.Add(StepResult.Succeeded(Title, "exported the TCP/IP configuration"));
-                }
-            }
-            catch (Exception ex)
-            {
-                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
-            }
-
-            return ModuleResult.Aggregate(steps);
+            return ModuleResult.Aggregate(new[] { Verify(outcome, filePath) });
         }
 
-        public override ModuleResult Restore(string path)
+        // The exit code alone is not enough. netsh can exit 0 having produced nothing, and an
+        // empty dump restores nothing, so the artifact is checked as well.
+        private StepResult Verify(ProcessOutcome outcome, string filePath)
         {
-            List<StepResult> steps = new List<StepResult>();
+            if (outcome == null)
+                return StepResult.Failed(Title, "the netsh export returned no outcome");
 
-            // Execute netsh command to import TCP/IP configuration from file
+            if (!outcome.Started)
+                return StepResult.Failed(Title, "could not run netsh: " + outcome.Error);
+
+            if (outcome.TimedOut)
+                return StepResult.Failed(Title, "netsh did not finish");
+
+            if (outcome.Error != null)
+                return StepResult.Failed(Title, "netsh ran but its outcome could not be determined: " + outcome.Error);
+
+            if (outcome.ExitCode != 0)
+                return StepResult.Failed(Title, $"netsh exited with code {outcome.ExitCode}");
+
+            return Utils.ValidateExportArtifact(filePath, Title, "netsh", "exported the TCP/IP configuration");
+        }
+
+        public override async Task<ModuleResult> RestoreAsync(string path)
+        {
             string filePath = Path.Combine(path, $"{Title}.txt");
 
             if (!File.Exists(filePath))
             {
                 return ModuleResult.Aggregate(new[]
                 {
-                    StepResult.Skipped(Title, "nothing was backed up for this item")
+                    StepResult.Skipped(Title, NothingBackedUp)
                 });
             }
 
-            try
-            {
-                // ExecuteNetshCommand now only creates its StreamWriter when an output path is
-                // actually supplied, so this null is safe - the restore runs to completion and
-                // reports its real exit code.
-                int exitCode = ExecuteNetshCommand($"exec \"{filePath}\"", null);
+            ProcessOutcome outcome = await Utils.RunToolAsync(
+                "netsh", new[] { "exec", filePath });
 
-                steps.Add(exitCode == 0
-                    ? StepResult.Applied(Title, "the backed-up TCP/IP configuration")
-                    : StepResult.Failed(Title, $"netsh exited with code {exitCode}"));
-            }
-            catch (Exception ex)
-            {
-                steps.Add(StepResult.Failed(Title, $"{ex.GetType().Name}: {ex.Message}"));
-            }
+            StepResult step;
 
-            return ModuleResult.Aggregate(steps);
-        }
+            if (outcome == null)
+                step = StepResult.Failed(Title, "the netsh restore returned no outcome");
+            else if (!outcome.Started)
+                step = StepResult.Failed(Title, "could not run netsh: " + outcome.Error);
+            else if (outcome.TimedOut)
+                step = StepResult.Failed(Title, "netsh did not finish, and may have partly applied the configuration");
+            else if (outcome.Error != null)
+                step = StepResult.Failed(Title, "netsh ran but its outcome could not be determined, so the configuration may have been partly applied: " + outcome.Error);
+            else if (outcome.ExitCode != 0)
+                step = StepResult.Failed(Title, $"netsh exited with code {outcome.ExitCode}");
+            else
+                step = StepResult.Applied(Title, "the backed-up TCP/IP configuration");
 
-        // Helper method to execute netsh commands
-        private int ExecuteNetshCommand(string arguments, string outputFilePath)
-        {
-            ProcessStartInfo psi = new ProcessStartInfo
-            {
-                FileName = "netsh",
-                Arguments = arguments,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using (Process process = new Process { StartInfo = psi })
-            {
-                // The writer is created ONLY when a path was supplied, and BEFORE Start(). It used
-                // to be constructed unconditionally, after Start() - and Restore passes null - so
-                // restoring network configuration threw once netsh was already applying the backup's
-                // addresses, DNS servers and interface metrics. The user was told the restore failed
-                // while their networking was being reconfigured, and netsh was left running unwaited.
-                //
-                // Opening the file first closes the remaining half of that: a locked file, a missing
-                // directory or a denied path makes the constructor throw, and if netsh were already
-                // running we would abandon it with nobody draining its stdout - the pipe fills, netsh
-                // blocks on the write, and the process survives the Dispose below as an orphan.
-                // Nothing has been started yet at this point, so the throw is just a failed backup.
-                StreamWriter outputFile = outputFilePath == null
-                    ? null
-                    : new StreamWriter(outputFilePath);
-
-                try
-                {
-                    process.Start();
-
-                    // Drain stdout either way. Leaving it unread lets the pipe fill and block netsh.
-                    while (!process.StandardOutput.EndOfStream)
-                    {
-                        string line = process.StandardOutput.ReadLine();
-
-                        if (outputFile != null)
-                            outputFile.WriteLine(line);
-
-                        logger.LogMessage(line);
-                    }
-                }
-                finally
-                {
-                    if (outputFile != null)
-                        outputFile.Dispose();
-                }
-
-                process.WaitForExit();
-
-                return process.ExitCode;
-            }
+            return ModuleResult.Aggregate(new[] { step });
         }
     }
 }

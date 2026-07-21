@@ -760,6 +760,152 @@ namespace Appcopier
         }
 
         /// <summary>
+        /// How long to wait for an ordinary command-line tool before giving up on it.
+        /// </summary>
+        /// <remarks>
+        /// Matches RegeditTool's budget rather than winget's: netsh finishes in seconds, so a
+        /// minute is a backstop for a wedged process, not a progress budget.
+        /// </remarks>
+        private const int ToolTimeoutMs = 60000;
+
+        /// <summary>
+        /// Runs a command-line tool with both output streams captured, and waits for it to finish.
+        /// </summary>
+        /// <remarks>
+        /// Replaces the two private ExecuteNetshCommand copies that WNetworkConf and CWiFiConf
+        /// each carried - one redirected stderr and one did not, and the one that drained stdout
+        /// line-by-line could not safely redirect stderr at all: with nobody draining it, a
+        /// chatty tool fills the pipe and blocks, which is the orphan-process hazard the old
+        /// WNetworkConf comment documents. Both streams are therefore drained CONCURRENTLY, from
+        /// the moment the process starts, with the exit wait running against neither.
+        ///
+        /// <paramref name="stdoutFile"/> lands the captured stdout on disk after the tool exits.
+        /// A failed write is logged and the file simply not produced - the artifact check that
+        /// must follow any export (exit codes are not evidence) then reports the missing file,
+        /// which is the user-visible fact, rather than this method inventing an outcome for a
+        /// process that ran fine.
+        ///
+        /// winget deliberately does NOT go through here: RestAppsForm shows winget's own console
+        /// window as its only progress reporting, which is incompatible with redirected streams,
+        /// and its ten-minute budget reflects measured installs. See RunWingetAsync.
+        /// </remarks>
+        internal static async Task<ProcessOutcome> RunToolAsync(string fileName, string[] args,
+                                                                string stdoutFile = null,
+                                                                int timeoutMs = ToolTimeoutMs)
+        {
+            return await Task.Run(() =>
+            {
+                // Mirrors RunWingetAsync: once Start() has returned the tool may already be doing
+                // its work, so a later exception must not be reported as "never started".
+                bool started = false;
+
+                try
+                {
+                    ProcessStartInfo startInfo = new ProcessStartInfo
+                    {
+                        FileName = fileName,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+
+                    foreach (string arg in args)
+                        startInfo.ArgumentList.Add(arg);
+
+                    using (Process proc = Process.Start(startInfo))
+                    {
+                        if (proc == null)
+                            return ProcessOutcome.NeverStarted(fileName + " did not start");
+
+                        started = true;
+
+                        Task<string> stdout = proc.StandardOutput.ReadToEndAsync();
+                        Task<string> stderr = proc.StandardError.ReadToEndAsync();
+
+                        if (!proc.WaitForExit(timeoutMs))
+                        {
+                            try
+                            {
+                                proc.Kill(entireProcessTree: true);
+                                proc.WaitForExit(5000);
+                            }
+                            catch (Exception)
+                            {
+                                // A leaked process is the better trade than losing the timeout signal.
+                            }
+
+                            return ProcessOutcome.Timeout();
+                        }
+
+                        // The drains complete when the pipes close. Bounded, so a grandchild that
+                        // inherited the handles and outlived the tool cannot hold the exit code
+                        // hostage; an unfinished drain then just means less captured text.
+                        Task.WaitAll(new Task[] { stdout, stderr }, 5000);
+
+                        string output = stdout.IsCompletedSuccessfully ? stdout.Result : "";
+                        string error = stderr.IsCompletedSuccessfully ? stderr.Result : "";
+
+                        if (output.Length > 0)
+                            logger.LogMessage(fileName + ": " + output);
+
+                        if (error.Length > 0)
+                            logger.LogMessage(fileName + " (stderr): " + error);
+
+                        if (stdoutFile != null)
+                        {
+                            try
+                            {
+                                File.WriteAllText(stdoutFile, output);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogMessage("Could not write the captured output to " + stdoutFile + ": " + ex.Message);
+                            }
+                        }
+
+                        return ProcessOutcome.Ran(proc.ExitCode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return started
+                        ? ProcessOutcome.OutcomeUnknown(ex.Message)
+                        : ProcessOutcome.NeverStarted(ex.Message);
+                }
+            }).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Checks that a command-line export actually produced its file.
+        /// </summary>
+        /// <remarks>
+        /// The export-side half of "an exit code is not evidence", for tools other than regedit
+        /// (whose .reg files get the stronger RegFile.Validate). Measured examples that make the
+        /// check mandatory: regedit /e on a nonexistent key exits 0 and writes nothing, and netsh
+        /// wlan export printed "saved successfully" with exit code 0 while writing nothing.
+        /// Content checks stay with the caller - only it knows what a usable file looks like.
+        /// </remarks>
+        internal static StepResult ValidateExportArtifact(string filePath, string target,
+                                                          string toolName, string successReason)
+        {
+            if (!File.Exists(filePath))
+                return StepResult.Failed(target, toolName + " reported success but wrote no file");
+
+            try
+            {
+                if (new FileInfo(filePath).Length == 0)
+                    return StepResult.Failed(target, toolName + " wrote an empty file");
+            }
+            catch (Exception ex)
+            {
+                return StepResult.Failed(target, "could not read back the exported file: " + ex.Message);
+            }
+
+            return StepResult.Succeeded(target, successReason);
+        }
+
+        /// <summary>
         /// How long to wait for winget before giving up on it.
         /// </summary>
         /// <remarks>

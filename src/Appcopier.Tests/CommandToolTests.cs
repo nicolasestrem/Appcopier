@@ -1,0 +1,120 @@
+using Appcopier;
+using System;
+using System.IO;
+using System.Threading.Tasks;
+using Xunit;
+
+namespace Appcopier.Tests
+{
+    // The shared command runner and the export-artifact ladder it feeds. These run real
+    // processes (cmd.exe), unelevated, and touch nothing outside their own temp folders.
+    public class CommandToolTests
+    {
+        private static string NewTempDir()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "actool_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        [Fact]
+        public async Task RunToolAsync_CapturesStdoutIntoTheRequestedFile()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "out.txt");
+
+            try
+            {
+                ProcessOutcome outcome = await Utils.RunToolAsync(
+                    "cmd.exe", new[] { "/c", "echo", "hello" }, stdoutFile: file);
+
+                Assert.True(outcome.Started);
+                Assert.False(outcome.TimedOut);
+                Assert.Null(outcome.Error);
+                Assert.Equal(0, outcome.ExitCode);
+                Assert.Contains("hello", File.ReadAllText(file));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public async Task RunToolAsync_ReportsTheRealExitCode()
+        {
+            ProcessOutcome outcome = await Utils.RunToolAsync("cmd.exe", new[] { "/c", "exit", "3" });
+
+            Assert.True(outcome.Started);
+            Assert.Equal(3, outcome.ExitCode);
+        }
+
+        // A tool that cannot be started must say so, not report an outcome it never had.
+        [Fact]
+        public async Task RunToolAsync_MissingTool_NeverStarted()
+        {
+            ProcessOutcome outcome = await Utils.RunToolAsync(
+                Path.Combine(Path.GetTempPath(), "no-such-tool-" + Guid.NewGuid().ToString("N") + ".exe"),
+                new string[0]);
+
+            Assert.False(outcome.Started);
+            Assert.NotNull(outcome.Error);
+        }
+
+        // Exit code 0 is not evidence: regedit /e on a nonexistent key and netsh wlan export have
+        // both been measured exiting 0 having written nothing. The ladder is what stands between
+        // that and a green row.
+        [Fact]
+        public void ValidateExportArtifact_MissingFile_IsFailed()
+        {
+            string missing = Path.Combine(Path.GetTempPath(), "actool_" + Guid.NewGuid().ToString("N") + ".txt");
+
+            StepResult step = Utils.ValidateExportArtifact(missing, "Target", "sometool", "exported");
+
+            Assert.Equal(ResultState.Failed, step.State);
+            Assert.Contains("wrote no file", step.Reason);
+        }
+
+        [Fact]
+        public void ValidateExportArtifact_EmptyFile_IsFailed()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "empty.txt");
+
+            try
+            {
+                File.WriteAllBytes(file, new byte[0]);
+
+                StepResult step = Utils.ValidateExportArtifact(file, "Target", "sometool", "exported");
+
+                Assert.Equal(ResultState.Failed, step.State);
+                Assert.Contains("empty", step.Reason);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void ValidateExportArtifact_NonEmptyFile_SucceedsWithTheCallersReason()
+        {
+            string dir = NewTempDir();
+            string file = Path.Combine(dir, "full.txt");
+
+            try
+            {
+                File.WriteAllText(file, "content");
+
+                StepResult step = Utils.ValidateExportArtifact(file, "Target", "sometool", "exported the thing");
+
+                Assert.Equal(ResultState.Succeeded, step.State);
+                Assert.Equal("exported the thing", step.Reason);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+}
