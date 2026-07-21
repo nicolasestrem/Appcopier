@@ -2,6 +2,7 @@ using Appcopier;
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -116,6 +117,18 @@ namespace Appcopier.Tests
 
                 // The destination was not truncated on the way to failing.
                 Assert.Equal("original", File.ReadAllText(dest));
+
+                // ...and the flag agrees, which is what the step's wording depends on.
+                //
+                // This pins the ASSIGNMENT'S PLACEMENT through the real CopyFile: the flag is set on
+                // the line after the destination FileStream constructor returns, so a constructor
+                // that throws must leave it false. Moving that assignment one line earlier would
+                // start claiming truncation for copies that never touched the destination - telling
+                // a user their hosts file may be damaged when it is untouched - and nothing else in
+                // the suite would notice. The true case cannot be reached here (a genuine
+                // mid-CopyToAsync failure needs disk-full or a failing device), so this half is
+                // where the regression risk actually lives.
+                Assert.False(r.DestinationTruncated);
             }
             finally
             {
@@ -403,20 +416,21 @@ namespace Appcopier.Tests
             }
         }
 
-        // A failed copy leaves the live file at its previous contents.
+        // A copy that fails BEFORE the write begins leaves the live file at its previous contents.
         //
-        // HONEST SCOPE, because this test was nearly labelled as proving atomicity and does not:
-        // it induces the failure at the SOURCE OPEN, which happens before the destination is
-        // touched at all, so it passes against a direct FileMode.Create write too - verified by
-        // temporarily reverting the temp-file-and-rename and watching it still pass. What the
-        // rename actually protects against is a failure DURING CopyToAsync - disk full, a source
-        // read error mid-stream, the process killed - and that is NOT covered here, because
-        // inducing a mid-stream failure through a path-based API needs a filesystem this suite
-        // cannot arrange.
+        // HONEST SCOPE, and the scope is narrower than the name suggests. This induces the failure
+        // at the SOURCE OPEN, which happens before the destination is touched, so it pins exactly
+        // one thing: CopyFile does not truncate the destination on its way to discovering it cannot
+        // read the source. That is worth pinning - it is the difference between a failed backup and
+        // a destroyed hosts file - but it is not atomicity.
         //
-        // Kept anyway: "a failed copy does not damage the destination" is worth pinning on its
-        // own, and it is the half a test can reach. The uncovered half is stated so nobody reads
-        // a green suite as evidence for it.
+        // A failure DURING the write is NOT covered and, since 2026-07-21, is no longer defended
+        // against: CopyFile writes straight into the destination with FileMode.Create, which
+        // truncates first, so a disk-full or mid-stream read error leaves the destination empty or
+        // half-written. That is a deliberate trade (see CopyFile's remarks - the temp-file swap that
+        // prevented it broke hard links and symlinks, silently and unrecoverably). No test here
+        // claims otherwise, and inducing a mid-stream failure through a path-based API needs a
+        // filesystem this suite cannot arrange in any case.
         [Fact]
         public async Task FailedCopy_LeavesTheDestinationAtItsPreviousContents()
         {
@@ -449,9 +463,13 @@ namespace Appcopier.Tests
             }
         }
 
-        // A successful copy must leave nothing behind but the destination itself - no stray
-        // .appcopier-tmp beside it, which would end up in the backup folder and, on the restore
-        // side, in the user's profile.
+        // A successful copy must leave nothing behind but the destination itself.
+        //
+        // Written when CopyFile staged through a `.appcopier-tmp` sibling and a leftover would have
+        // landed in the backup folder and, on the restore side, in the user's profile. That staging
+        // is gone, so today this is a REGRESSION GUARD rather than a live hazard: it fails the
+        // moment anyone reintroduces a scratch file next to the destination without cleaning it up.
+        // Cheap, and the exact shape of mistake it catches has already been made once here.
         [Fact]
         public async Task SuccessfulCopy_LeavesNoTemporaryFileBehind()
         {
@@ -477,15 +495,18 @@ namespace Appcopier.Tests
 
         // The restore must not widen who can read the file it overwrites.
         //
-        // Writing through a temp file and renaming is what makes the content swap atomic, but
-        // File.Move(overwrite) hands the destination the TEMP file's security descriptor - so a
-        // destination hardened with inheritance removed comes back inheriting again. Measured:
-        // protected True -> False, 1 explicit rule -> 7 inherited. File.Replace preserves it.
-        //
         // This is a security boundary on two real modules: .ssh\config, whose recommended
-        // permissions are exactly this hardened shape and which names internal hosts and
-        // usernames; and hosts, which can carry an explicit anti-tamper ACE and is written
-        // elevated and machine-wide.
+        // permissions are exactly this hardened shape and which names internal hosts, jump-host
+        // topology and usernames; and hosts, which can carry an explicit anti-tamper ACE from EDR
+        // or GPO and is written elevated and machine-wide.
+        //
+        // FileMode.Create truncates the existing file rather than replacing it, so the descriptor
+        // survives and this passes for free. It is pinned anyway because it did NOT hold for free
+        // once: the temp-file-and-rename version had to reach for File.Replace to keep it, and its
+        // first draft used File.Move(overwrite), which handed the destination the temp file's
+        // freshly inherited descriptor - measured, protected True -> False, 1 explicit rule -> 7
+        // inherited, on exactly the two files above. Any future rewrite that stages through another
+        // file inherits that trap, and this test is what stands between it and the user.
         [Fact]
         public async Task RestoringOverAHardenedFile_PreservesItsPermissions()
         {
@@ -538,6 +559,135 @@ namespace Appcopier.Tests
             {
                 Directory.Delete(dir, recursive: true);
             }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CreateHardLinkW(string linkPath, string existingPath,
+                                                   IntPtr securityAttributes);
+
+        // Restoring onto a linked file updates the file behind the link instead of replacing it.
+        //
+        // The case: a developer keeps .ssh\config or VS Code's settings.json in a git-managed
+        // dotfiles repo and links the real path to it. Restoring must write THROUGH that link, the
+        // way every editor saving the path already does. Replacing it leaves an ordinary file at
+        // the path, the repo behind it silently stale, and their whole arrangement quietly
+        // dismantled - with no step reporting anything, because from the copy's point of view it
+        // succeeded.
+        //
+        // THIS TEST DISCRIMINATES, which is the only reason it is worth having. Verified by
+        // restoring the temp-file-and-rename that CopyFile used until 2026-07-21: the assertion
+        // below fails against it, because the rename replaces the directory entry and the link
+        // stops pointing at the same file. It is the regression guard for the trade recorded in
+        // CopyFile's remarks.
+        //
+        // A hard link, not a symbolic one, because CreateHardLink needs no privilege while
+        // symlinks need elevation or Developer Mode. Symlinks are therefore still NOT covered here
+        // - stated so a green suite is not read as evidence about them. Both are reparse-free
+        // directory entries pointing at one file for the purposes of an in-place write, so a
+        // direct write follows either; that last step is reasoning, not measurement.
+        [Fact]
+        public async Task RestoringOverALinkedFile_WritesThroughTheLink()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "source");
+                File.WriteAllText(source, "RESTORED");
+
+                // The file the link stands for - "the dotfiles repo copy".
+                string target = Path.Combine(dir, "dotfiles-config");
+                File.WriteAllText(target, "ORIGINAL");
+
+                // The path a module restores to - "%USERPROFILE%\.ssh\config".
+                string link = Path.Combine(dir, "config");
+
+                if (!CreateHardLinkW(link, target, IntPtr.Zero))
+                    return;   // Cannot arrange the precondition; assert nothing.
+
+                CopyResult r = await Utils.CopyFile(source, link);
+
+                Assert.Equal(1, r.FilesCopied);
+                Assert.Equal("RESTORED", File.ReadAllText(link));
+
+                // The one that matters: the file behind the link moved too, so it is still the
+                // same file. Against the temp-file-and-rename this reads "ORIGINAL".
+                Assert.Equal("RESTORED", File.ReadAllText(target));
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A failure that never reached the destination must SAY the destination is unchanged.
+        //
+        // Pairs with the wording test below. This one goes through the real CopyFile, so it also
+        // pins that DestinationTruncated stays false when the copy dies at the source open - which
+        // is the half of that flag this suite can actually reach.
+        [Fact]
+        public async Task AFailureBeforeTheWriteBegins_SaysTheDestinationWasLeftUnchanged()
+        {
+            string dir = NewTempDir();
+
+            try
+            {
+                string source = Path.Combine(dir, "source");
+                File.WriteAllText(source, "new content");
+
+                string dest = Path.Combine(dir, "hosts");
+                File.WriteAllText(dest, "127.0.0.1 localhost");
+
+                CopyResult r;
+
+                using (new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    r = await Utils.CopyFile(source, dest);
+                }
+
+                Assert.False(r.DestinationTruncated);
+
+                StepResult step = r.ToFileStep(dest, absenceIsNormal: false);
+
+                Assert.Equal(ResultState.Failed, step.State);
+                Assert.Contains("left unchanged", step.Reason);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        // A failure that began writing must NOT claim the destination was left alone.
+        //
+        // HONEST SCOPE: this drives ToFileStep directly with a hand-built tally, because inducing a
+        // genuine mid-CopyToAsync failure through a path-based API needs a filesystem this suite
+        // cannot arrange - the same limit already recorded on
+        // FailedCopy_LeavesTheDestinationAtItsPreviousContents. So this pins the WORDING, and
+        // AFailureBeforeTheWriteBegins pins the flag's false case through the real code path. The
+        // flag's true case is set one line after the FileStream constructor returns and is not
+        // covered by a test; that is stated rather than papered over.
+        //
+        // Worth having anyway: before the atomic write was reverted, every failure here read "could
+        // not be copied", which told the user their live file was untouched. That became false the
+        // moment CopyFile went back to writing in place, and for EHosts the file in question is
+        // machine-wide.
+        [Fact]
+        public void AFailureAfterWritingBegan_DoesNotClaimTheFileIsUntouched()
+        {
+            CopyResult r = new CopyResult
+            {
+                FilesFailed = 1,
+                FirstError = "hosts: The disk is full.",
+                DestinationTruncated = true
+            };
+
+            StepResult step = r.ToFileStep("hosts", absenceIsNormal: false);
+
+            Assert.Equal(ResultState.Failed, step.State);
+            Assert.DoesNotContain("left unchanged", step.Reason);
+            Assert.Contains("incomplete", step.Reason);
         }
 
         // --- ToFileStep: the same ladder as ToStep, differing only in the nouns ---

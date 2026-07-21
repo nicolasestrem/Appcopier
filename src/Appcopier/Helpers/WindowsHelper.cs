@@ -102,64 +102,69 @@ namespace Appcopier
 
             using (sourceStream)
             {
-                // Written to a temporary file beside the destination and moved into place, rather
-                // than straight into the destination with FileMode.Create.
+                // Written STRAIGHT INTO the destination with FileMode.Create. This method briefly
+                // wrote to a temporary file and renamed it into place, for atomicity, and that was
+                // reverted on 2026-07-21 after the trade was examined against the pre-restore
+                // snapshot. The reasoning is recorded because the atomic version looks like the
+                // more careful one and someone will want it back.
                 //
-                // Create TRUNCATES before a single byte is written, so a copy that fails part-way
-                // - source read error, disk full, the app killed mid-restore - leaves the
-                // destination empty or half-written. On the restore path the destination is the
-                // user's live file, and for EHosts that file is %WINDIR%\System32\drivers\etc\hosts:
-                // machine-wide, read by every program that resolves a name, and a truncated one
-                // silently changes name resolution for every account on the PC. The step reports
-                // Failed either way and the pre-restore snapshot holds a copy, so this was never
-                // silent - but recovery was manual, and the same non-atomic path was the only way
-                // back. A rename on one volume is atomic, so the live file is either the old
-                // contents or the new ones and never a prefix of the new ones.
+                // A rename makes the content swap atomic: the live file is the old contents or the
+                // new ones, never a prefix. What it costs is the DIRECTORY ENTRY. Renaming replaces
+                // the entry, so a destination that is a link stops being one - measured on Windows
+                // 11, 2026-07-21, with a hard link: afterwards the link held the new content and
+                // the file it was linked to still held the old, no longer the same file.
                 //
-                // Applied to every copy, not just EHosts: a per-caller flag is one more thing to
-                // get wrong, and a torn settings.json is not worth defending either.
+                // Line those two up against what the restore path already guarantees:
                 //
-                // Known trade-off, accepted rather than overlooked: this needs permission to
-                // CREATE a file in the destination directory, where a direct write needed only
-                // permission to write the destination file. Those can differ - a machine could
-                // grant modify on hosts without create in ...\drivers\etc - and on such a machine
-                // a restore that used to work now fails. Judged worth it: the default ACL on that
-                // directory gives Administrators full control and this app runs elevated, every
-                // other destination is inside the user's own profile, and the failure is a loud
-                // Failed step rather than the silent truncation it replaces. Deliberately NO
-                // fall-back to a direct write when the temp file cannot be created - that would
-                // reinstate the tearing hazard in exactly the situation nobody would be watching,
-                // and it is the kind of quiet degradation this app's reporting rules exist to stop.
+                //                        | torn file (what atomicity prevents) | broken link (what it costs)
+                //   reported to the user | yes* - the step is Failed           | NO - every row green
+                //   undone by a snapshot | yes - old contents are in it        | NO - it captures
+                //                        |                                     | contents, not links
                 //
-                // The suffix is not a name a caller might legitimately want: a leftover .appcopier-tmp
-                // is never matched by a restore, which composes the exact artifact name it wants,
-                // nor by HasBackupIn, which does the same.
+                // * with one exception, because the claim has to be exact if the trade rests on it.
+                //   A torn file has three triggers: disk full, a source read error, and the app
+                //   being killed mid-restore. The first two throw, are caught below, and become a
+                //   Failed step the user sees. A KILL reports nothing at all - PerformRestoration
+                //   never returns, so no summary is shown and restore_log.txt is never written.
+                //   The snapshot half still holds in that case (it is taken before the restore
+                //   begins), so the file is recoverable, but the user is not told it needs
+                //   recovering. So: two of three triggers are loud, one is silent-but-recoverable,
+                //   and a broken link is silent-and-permanent. The trade still runs the same way,
+                //   and now it says so accurately rather than by rounding the kill case up to
+                //   "reported".
                 //
-                // KNOWN BEHAVIOUR CHANGE, disclosed rather than fixed: writing through a temp file
-                // and renaming REPLACES the directory entry, so it breaks a link rather than
-                // writing through it. The in-place FileMode.Create this replaced followed the link
-                // and updated the underlying file. Measured on Windows 11, 2026-07-21, with a hard
-                // link: after the rename the link holds the new content while the file it was
-                // linked to still holds the old one - they are no longer the same file. NOT
-                // MEASURED, because this environment cannot create symbolic links without
-                // elevation or Developer Mode: whether a symlink behaves the same. Windows
-                // documents ReplaceFile and MoveFileEx as operating on the reparse point, so the
-                // expectation is that it does, but that is reasoning and not a measurement, and it
-                // is written here as such.
+                // Atomicity was buying protection from a failure that is loud and recoverable, and
+                // paying with one that is silent and permanent. Both columns point the same way, so
+                // the swap goes and Create comes back.
                 //
-                // Who this reaches: developers who symlink .ssh\config or VS Code's settings.json
-                // into a git-managed dotfiles repo, which is a common arrangement among exactly
-                // the people these modules are for. For them a restore now replaces the link with
-                // an ordinary file instead of updating the repo behind it.
+                // Who the link case reaches: developers who symlink .ssh\config or VS Code's
+                // settings.json into a git-managed dotfiles repo - a common arrangement among
+                // exactly the people these modules are for. Create follows the link and updates the
+                // file behind it, which is what every editor saving that path already does.
                 //
-                // Not repaired here on purpose. Detecting a link and writing through it is a
-                // different write path, and it is one this environment cannot exercise - shipping
-                // untested handling for the case would be worse than stating the limit. It is also
-                // not obvious which behaviour is correct: writing through silently modifies a git
-                // repository the user did not name, and replacing the link silently dismantles
-                // their setup. That is a decision to take deliberately, not inside a copy helper.
-                string temporary = destination + ".appcopier-tmp";
-
+                // The rejected middle option was to detect a link and write through it while
+                // keeping the rename otherwise. That needs a branch this environment CANNOT test:
+                // creating a symbolic link requires elevation or Developer Mode, so the symlink arm
+                // would ship unexercised. An untested branch guarding a silent failure is worse
+                // than not having the branch, and writing directly gets link-preservation
+                // structurally instead - the same reason ESsh excludes private keys by never
+                // enumerating the directory rather than by filtering it.
+                //
+                // Residual, stated rather than buried: Create truncates before the first byte, so a
+                // copy that dies part-way (disk full, source read error, the app killed
+                // mid-restore) leaves the destination empty or half-written. That is the failure in
+                // the left column above - Failed step plus snapshot for the first two, snapshot
+                // only for the kill, per the footnote - and for the files these modules carry, all
+                // a few kilobytes, the window is microseconds. A real cost, accepted knowingly.
+                //
+                // Create also PRESERVES the destination's security descriptor, because it truncates
+                // an existing file rather than replacing it. That matters on .ssh\config, whose
+                // recommended permissions are an explicit non-inheriting ACE, and on hosts, which
+                // can carry an anti-tamper ACE from EDR or GPO. The temp-file version had to reach
+                // for File.Replace to hold this property (File.Move(overwrite) handed the
+                // destination the temp file's freshly inherited descriptor - measured: protected
+                // True -> False, 1 explicit rule -> 7 inherited). Writing in place gets it for
+                // free, and CopyFileTests pins it so a future rewrite cannot quietly lose it.
                 try
                 {
                     string destinationDir = Path.GetDirectoryName(destination);
@@ -169,43 +174,15 @@ namespace Appcopier
 
                     long length = sourceStream.Length;
 
-                    using (FileStream destinationStream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
+                    using (FileStream destinationStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
                     {
-                        await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
-                    }
+                        // The open has already truncated the destination. Recorded HERE - after the
+                        // constructor returned, before a single byte is written - because that is
+                        // the exact instant the live file stops being intact, and ToFileStep needs
+                        // to know it to avoid telling the user their file was left alone.
+                        result.DestinationTruncated = true;
 
-                    // File.Replace, NOT File.Move(overwrite: true). Measured on Windows 11,
-                    // 2026-07-21, against a destination hardened the `icacls /inheritance:r` way
-                    // (inheritance off, one explicit ACE):
-                    //
-                    //   File.Move(overwrite)  -> protected True->FALSE, 1 rule -> 7 inherited
-                    //   File.Replace          -> protected True, 1 rule, unchanged
-                    //
-                    // Move replaces the destination wholesale, so the TEMP file's freshly
-                    // inherited security descriptor becomes the destination's. That silently
-                    // widens access on exactly the two modules where it matters: a restored
-                    // .ssh\config reverts to inheriting its parent - and .ssh\config names
-                    // internal hosts, jump-host topology and usernames - while a hosts file
-                    // carrying an explicit anti-tamper ACE from EDR or GPO loses it, elevated and
-                    // machine-wide, with nothing reporting the change.
-                    //
-                    // FileMode.Create truncated in place and preserved the descriptor, so this is
-                    // a regression the atomicity fix would have introduced. Content atomicity is
-                    // not worth a silent security-boundary change; Replace gives both.
-                    //
-                    // Replace is tried FIRST rather than guarded by File.Exists, deliberately:
-                    // File.Exists answers false for a destination whose parent denies access, and
-                    // taking the Move branch on that answer would reset the ACL of precisely the
-                    // hardened file this exists to protect.
-                    try
-                    {
-                        File.Replace(temporary, destination, null);
-                    }
-                    catch (FileNotFoundException)
-                    {
-                        // No destination to replace: the first capture of this file, or a restore
-                        // onto a machine that never had it. Nothing to preserve, so create it.
-                        File.Move(temporary, destination, overwrite: true);
+                        await sourceStream.CopyToAsync(destinationStream).ConfigureAwait(false);
                     }
 
                     result.FilesCopied++;
@@ -218,21 +195,6 @@ namespace Appcopier
                         result.FirstError = source + ": " + ex.Message;
 
                     logger.LogMessage("Error copying file " + source + " to " + destination + ": " + ex.Message);
-                }
-                finally
-                {
-                    // The half-written temp file, if the copy died before the move. Best effort:
-                    // failing to clean it up must not turn a reported failure into a different
-                    // reported failure, and the step already carries the real reason.
-                    try
-                    {
-                        if (File.Exists(temporary))
-                            File.Delete(temporary);
-                    }
-                    catch (Exception cleanupError)
-                    {
-                        logger.LogMessage("Could not remove the temporary file " + temporary + ": " + cleanupError.Message);
-                    }
                 }
             }
 

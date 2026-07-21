@@ -49,6 +49,28 @@ namespace Appcopier
         public string FirstError { get; set; }
 
         /// <summary>
+        /// The destination file was opened for writing, and therefore truncated, before the copy
+        /// failed. Set only by <see cref="Utils.CopyFile"/>; read only by <see cref="ToFileStep"/>.
+        /// </summary>
+        /// <remarks>
+        /// This exists because CopyFile writes in place with FileMode.Create, which truncates as
+        /// part of a successful open. Without it every failure reads "could not be copied", which
+        /// tells the user their file was left alone - true when the copy died reaching for the
+        /// SOURCE, false when it died mid-write, and the difference is whether the live
+        /// %WINDIR%\System32\drivers\etc\hosts they are looking at is intact or empty.
+        ///
+        /// It was accurate before the atomic write was reverted, because the temp-file swap really
+        /// did leave the destination untouched on failure. Reverting that made one existing sentence
+        /// wrong without touching the sentence, which is the kind of drift a reason string cannot
+        /// signal on its own.
+        ///
+        /// Set AFTER the FileStream constructor returns, deliberately: FileMode.Create truncates as
+        /// part of opening, so a constructor that throws has not truncated anything and the
+        /// destination is genuinely unchanged.
+        /// </remarks>
+        public bool DestinationTruncated { get; set; }
+
+        /// <summary>
         /// Maps the tally onto a step outcome.
         /// </summary>
         /// <remarks>
@@ -130,8 +152,20 @@ namespace Appcopier
                     : StepResult.Failed(target, "expected file " + target + " is missing");
             }
 
+            // The two failures are worded apart because the user's next action differs. A copy that
+            // never reached the destination leaves nothing to repair; one that died mid-write has
+            // left a truncated file in place, and for EHosts that file is machine-wide and read by
+            // everything that resolves a name. Saying "could not be copied" in that second case is
+            // technically true about the copy and materially false about the file.
             if (FilesFailed > 0)
-                return StepResult.Failed(target, "could not be copied: " + FirstError);
+            {
+                return DestinationTruncated
+                    ? StepResult.Failed(target,
+                        "the copy failed after it had begun writing, so " + target + " is now " +
+                        "incomplete and should be restored again or repaired by hand: " + FirstError)
+                    : StepResult.Failed(target,
+                        "could not be copied, and " + target + " was left unchanged: " + FirstError);
+            }
 
             if (FilesCopied == 0)
             {
