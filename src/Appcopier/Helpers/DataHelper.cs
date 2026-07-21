@@ -1,5 +1,4 @@
-﻿using Appcopier;
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -51,8 +50,9 @@ namespace DataHelper
         /// Extracts the AssemblyFileVersion value out of the raw text of a Properties/AssemblyInfo.cs.
         /// </summary>
         /// <remarks>
-        /// Pulled verbatim out of <see cref="CheckForUpdates"/> so the parse can be unit tested without
-        /// network I/O or MessageBoxes. The logic is intentionally byte-for-byte identical to what the
+        /// Pulled verbatim out of <see cref="Appcopier.UpdateCheck.CheckForUpdates"/> so the parse can
+        /// be unit tested without network I/O or MessageBoxes. The logic is intentionally
+        /// byte-for-byte identical to what the
         /// deployed v0.30.0 client does, including its quirks: only lines containing the literal
         /// "[assembly: AssemblyFileVersion" are considered (so AssemblyVersion is correctly ignored),
         /// the LAST such line wins, no match yields an empty string, and malformed lines throw.
@@ -69,55 +69,6 @@ namespace DataHelper
             }
 
             return latestVersion;
-        }
-
-        public static void CheckForUpdates()
-        {
-            if (IsInet() == true)
-            {
-                try
-                {
-                    string assemblyInfo = new WebClient().DownloadString(Data.Uri.URL_ASSEMBLY);
-
-                    string parsed = ParseLatestVersion(assemblyInfo);
-
-                    if (string.IsNullOrWhiteSpace(parsed))
-                    {
-                        // The file downloaded but held no AssemblyFileVersion we could read. Saying
-                        // so beats the old behavior, which compared "" against the current version,
-                        // found them unequal, and offered a download for a nonexistent release.
-                        MessageBox.Show(
-                            "Could not read the latest version number from the update file.",
-                            "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
-
-                    // Both sides go through the same normalization. Comparing a raw remote string
-                    // against a normalized local one means a four-part or suffixed version upstream
-                    // would never match, and every up-to-date user would be offered a phantom
-                    // update on every check, forever.
-                    string latestVersion = Program.NormalizeVersion(parsed);
-                    string currentVersion = Program.GetCurrentVersionTostring();
-
-                    if (latestVersion == currentVersion)                          // Up-to-date
-                    {
-                        MessageBox.Show($"No new updates available.", "Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    else                                                          // Update available
-                    {
-                        if (MessageBox.Show($"App version {latestVersion} available.\nDo you want to open the Download page?", "App update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1) == DialogResult.Yes)
-                            Utils.OpenUrl(Data.Uri.URL_GITLATEST);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
-                }
-            }
-            else if (IsInet() == false)
-            {
-                MessageBox.Show($"Problem on Internet connection: Checking for App updates failed");
-            }
         }
 
         // Check Inet

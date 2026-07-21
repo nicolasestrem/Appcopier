@@ -197,7 +197,7 @@ namespace Appcopier
             // Optionally, check for updates when checked
             if (checkVersion.Checked)
             {
-                Data.CheckForUpdates();
+                UpdateCheck.CheckForUpdates();
             }
         }
 
