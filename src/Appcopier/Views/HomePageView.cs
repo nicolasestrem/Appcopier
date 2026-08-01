@@ -54,10 +54,14 @@ namespace Views
 
             Controls.Add(rows);
 
-            RefreshView();
+            RefreshView(ViewEntry.Fresh);
         }
 
-        public void RefreshView()
+        /// <summary>
+        /// Rebuilt from disk on every visit. The entry kind is not consulted: Home carries no
+        /// selection to preserve, and the question it answers can change between any two visits.
+        /// </summary>
+        public void RefreshView(ViewEntry entry)
         {
             rows.SuspendLayout();
 
@@ -92,14 +96,46 @@ namespace Views
 
             BackupFolders folders = BackupFolders.Read();
 
-            if (folders.Backups.Count == 0)
+            if (folders.UnreadableReason != null)
+                BuildUnreadableRoot(folders.UnreadableReason);
+            else if (folders.Backups.Count == 0)
                 BuildNoBackups();
             else
                 BuildLatestBackup(folders.Backups[0]);
 
             rows.Controls.Add(Separator());
-            rows.Controls.Add(Line(DescribeUndoPoints(folders.Snapshots), Ui.Body(), Ui.Muted));
+
+            // The snapshot list comes from the SAME enumeration that just failed, so an empty one
+            // means "could not look", not "there are none". Saying "Undo points: none" here would be
+            // the inferred negative this screen refuses to make about backups, made about the thing
+            // that undoes a restore.
+            rows.Controls.Add(Line(
+                folders.UnreadableReason == null
+                    ? DescribeUndoPoints(folders.Snapshots)
+                    : "Undo points: unknown while the backup folder cannot be read",
+                Ui.Body(), Ui.Muted));
+
+            // Disk space is a property of the drive, not of the folder listing, so it stays.
             rows.Controls.Add(Line(DescribeDisk(), Ui.Body(), Ui.Muted));
+        }
+
+        /// <summary>
+        /// The backup folder is there but could not be listed.
+        /// </summary>
+        /// <remarks>
+        /// Emphatically NOT "No backups yet". That sentence would tell someone their backups are
+        /// gone when the far likelier truth is that they are sitting there intact behind a
+        /// permission this process does not have. Same rule as an unreadable manifest: not knowing
+        /// is reported as not knowing.
+        /// </remarks>
+        private void BuildUnreadableRoot(string reason)
+        {
+            rows.Controls.Add(Line("The backup folder could not be read.", Ui.Heading(), Ui.Danger));
+            rows.Controls.Add(Line(Data.DataRootDir, Ui.Body(), Ui.Muted));
+            rows.Controls.Add(Line(
+                "Any backups already there are untouched - this screen simply cannot list them.",
+                Ui.Body(), Ui.Muted));
+            rows.Controls.Add(Line(reason, Ui.Body(), Ui.Danger));
         }
 
         private void BuildNoBackups()

@@ -18,10 +18,12 @@ namespace Views
     /// </remarks>
     internal sealed class BackupFolders
     {
-        private BackupFolders(IReadOnlyList<BackupFolder> backups, IReadOnlyList<BackupFolder> snapshots)
+        private BackupFolders(IReadOnlyList<BackupFolder> backups, IReadOnlyList<BackupFolder> snapshots,
+                              string unreadableReason)
         {
             Backups = backups;
             Snapshots = snapshots;
+            UnreadableReason = unreadableReason;
         }
 
         /// <summary>User backups, newest first.</summary>
@@ -30,28 +32,56 @@ namespace Views
         /// <summary>Pre-restore snapshots, newest first.</summary>
         internal IReadOnlyList<BackupFolder> Snapshots { get; }
 
+        /// <summary>
+        /// Why the backup folder could not be listed, or null when it was listed successfully.
+        /// </summary>
+        /// <remarks>
+        /// "Could not look" and "looked, found nothing" are different answers and the screen must not
+        /// merge them. An empty list means nothing has ever been backed up; a denied or vanished
+        /// folder means this app does not know, and rendering that as "No backups yet" tells the user
+        /// their backups are gone when they may be sitting there intact.
+        /// </remarks>
+        internal string UnreadableReason { get; }
+
         internal static BackupFolders Read()
         {
             List<BackupFolder> backups = new List<BackupFolder>();
             List<BackupFolder> snapshots = new List<BackupFolder>();
 
-            if (Directory.Exists(Data.DataRootDir))
-            {
-                foreach (string path in Directory.GetDirectories(Data.DataRootDir))
-                {
-                    BackupFolder folder = new BackupFolder(path);
+            string[] paths;
 
-                    if (IsSnapshot(folder.Name))
-                        snapshots.Add(folder);
-                    else
-                        backups.Add(folder);
-                }
+            try
+            {
+                // Enumerate directly instead of guarding with Directory.Exists. Exists SWALLOWS the
+                // access error and answers false, so a folder whose ACL denies this user is
+                // indistinguishable from one that was never created - which is how an unreadable
+                // root came to be reported as "no backups yet".
+                paths = Directory.GetDirectories(Data.DataRootDir);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // Genuinely absent, which is the ordinary state before the first backup.
+                return new BackupFolders(backups, snapshots, null);
+            }
+            catch (Exception ex)
+            {
+                return new BackupFolders(backups, snapshots, ex.Message);
+            }
+
+            foreach (string path in paths)
+            {
+                BackupFolder folder = new BackupFolder(path);
+
+                if (IsSnapshot(folder.Name))
+                    snapshots.Add(folder);
+                else
+                    backups.Add(folder);
             }
 
             backups.Sort(NewestFirst);
             snapshots.Sort(NewestFirst);
 
-            return new BackupFolders(backups, snapshots);
+            return new BackupFolders(backups, snapshots, null);
         }
 
         /// <summary>

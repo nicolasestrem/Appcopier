@@ -42,12 +42,14 @@ namespace Views
         /// taken after startup would not appear in the list until the app was restarted - the folder
         /// the user just created being precisely the one they are most likely to want.
         /// </remarks>
-        public void RefreshView()
+        void IRefreshableView.RefreshView(ViewEntry entry)
         {
-            // What is selected right now, before the reload throws it away. Returning from About
-            // pops back to this view and refreshes it again, and without this the folder the user
-            // had chosen - and its log - would vanish because they glanced at the About page.
-            string current = listRestoration.SelectedItem?.ToString();
+            // Carried over only when the user is coming BACK. Returning from About must not lose the
+            // folder they had picked - but a restore started afresh, from the rail or from the
+            // backup page, must not silently pre-pick the folder chosen on some earlier journey.
+            // That would let OK run against a source this run never chose, which is exactly what a
+            // newly constructed picker used to make impossible.
+            string carried = entry == ViewEntry.Back ? listRestoration.SelectedItem?.ToString() : null;
 
             LoadBackups();
 
@@ -58,9 +60,9 @@ namespace Views
             rtbLog.Clear();
             linkISubHeader.Visible = false;
 
-            // An explicit request from Home wins over what happened to be selected; re-selecting the
-            // previous folder is only a fallback, and only while it still exists.
-            string wanted = pendingSelection ?? current;
+            // An explicit request from Home wins; the carried-over folder is only a fallback, and
+            // only while it still exists.
+            string wanted = pendingSelection ?? carried;
             pendingSelection = null;
 
             ApplySelection(wanted);

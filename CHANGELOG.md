@@ -24,6 +24,9 @@ so Home says it does not know. Those backups are intact and restore exactly as b
 "none failed": a run where an item never reported back is not the same as a run where it went fine, and
 the reason it gives is shown in full just like a failure.
 
+**A backup folder that cannot be read says so**, rather than reporting that you have no backups. The
+two are very different things to be told, and only one of them is ever good news.
+
 "Back up again" on Home takes you to the Back up screen with the same items ticked that the last backup
 recorded. If that backup named an item this version no longer has, it is skipped without complaint.
 

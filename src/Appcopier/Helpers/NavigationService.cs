@@ -52,7 +52,7 @@ namespace Appcopier
         internal void Show(Control view)
         {
             back.Clear();
-            Render(view);
+            Render(view, Views.ViewEntry.Fresh);
         }
 
         /// <summary>Shows a view and remembers the current one for <see cref="Pop"/>.</summary>
@@ -61,7 +61,7 @@ namespace Appcopier
             if (Current != null && Current != view)
                 back.Push(Current);
 
-            Render(view);
+            Render(view, Views.ViewEntry.Fresh);
         }
 
         /// <summary>
@@ -71,15 +71,15 @@ namespace Appcopier
         {
             if (back.Count > 0)
             {
-                Render(back.Pop());
+                Render(back.Pop(), Views.ViewEntry.Back);
                 return;
             }
 
             if (Root != null)
-                Render(Root);
+                Render(Root, Views.ViewEntry.Back);
         }
 
-        private void Render(Control view)
+        private void Render(Control view, Views.ViewEntry entry)
         {
             if (view == null)
                 return;
@@ -100,8 +100,9 @@ namespace Appcopier
             host.ResumeLayout(true);
 
             // Rebuilt from disk on every visit, so a backup that finished a moment ago is on screen
-            // when the user gets back to Home rather than one navigation later.
-            (view as Views.IRefreshableView)?.RefreshView();
+            // when the user gets back to Home rather than one navigation later. The entry kind lets
+            // a view tell "came back to what they were doing" from "started this again".
+            (view as Views.IRefreshableView)?.RefreshView(entry);
         }
     }
 }
