@@ -225,6 +225,9 @@ namespace Views
                 // Write backup_manifest.json - the machine-readable companion to the log above.
                 WriteBackupManifest(CurrentBackupPath, running, results);
 
+                // Write backup_manifest.json - the machine-readable companion to the log above.
+                WriteBackupManifest(CurrentBackupPath, selectedConfigs, results);
+
                 ShowSummary(
                     RunSummary.For(ModuleOutcome.Pair(running, results), true, RunVerb.Backup),
                     "Backup");

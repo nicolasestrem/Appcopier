@@ -11,9 +11,9 @@ Each phase is a separate spec, branch, and PR. Phase specs live in `docs/superpo
 | 2a | Make failure representable and reported | **Done** — [spec](superpowers/specs/2026-07-20-phase2a-honest-failures-design.md) |
 | 2b | Restore safety: snapshot, rollback, confirmation | **Done** — [spec](superpowers/specs/2026-07-20-phase2b-restore-safety-design.md) |
 | 2c | Known module bugs | **Done** — [spec](superpowers/specs/2026-07-20-phase2c-module-bugs-design.md) |
-| 3a | Module bases: refactor & retire | **In review** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
-| 3b | Module coverage: developer tooling | **In review** — [spec](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md) |
-| 3c | Module coverage: power-user settings | **In review** — [spec](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md) |
+| 3a | Module bases: refactor & retire | **Done** — [spec](superpowers/specs/2026-07-21-phase3a-module-bases-design.md) |
+| 3b | Module coverage: developer tooling | **Done** — [spec](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md) |
+| 3c | Module coverage: power-user settings | **Done** — [spec](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md) |
 | 4 | UI revamp (task-first redesign) + modernization | In progress — [spec](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md) |
 
 Phase 2 was originally written as one phase. It is four independent workstreams, and splitting it was
@@ -252,7 +252,7 @@ absent on the state a power user would actually miss. Split into three sub-phase
 planning pass (multi-agent design plus an adversarial critique that confirmed twelve defects in the first
 draft; the corrected plan is what the sub-phases below implement).
 
-### Phase 3a — module bases: refactor & retire (in review)
+### Phase 3a — module bases: refactor & retire (done)
 
 Full design: [`superpowers/specs/2026-07-21-phase3a-module-bases-design.md`](superpowers/specs/2026-07-21-phase3a-module-bases-design.md).
 
@@ -270,7 +270,7 @@ Full design: [`superpowers/specs/2026-07-21-phase3a-module-bases-design.md`](sup
 - The 2b-deferred `AllowPrompts` cleanup resolved itself: the retirement removed the flag's only
   readers, so the mechanism was deleted outright rather than redesigned.
 
-### Phase 3b — developer tooling (in review)
+### Phase 3b — developer tooling (done)
 
 Full design: [`superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md`](superpowers/specs/2026-07-21-phase3b-developer-tooling-design.md).
 
@@ -313,7 +313,7 @@ later.~~ All landed. Notes on what the implementation decided that the entry abo
 Deferred with reasons recorded in the spec: WSL config, VS Code extension list + reinstall dialog,
 VS Code Insiders/VSCodium and per-profile settings, the `WM_SETTINGCHANGE` broadcast.
 
-### Phase 3c — power-user settings (in review)
+### Phase 3c — power-user settings (done)
 
 Full design: [`superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md`](superpowers/specs/2026-07-21-phase3c-power-user-settings-design.md).
 
