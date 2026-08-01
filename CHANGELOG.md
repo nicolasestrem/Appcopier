@@ -4,7 +4,30 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
-## [0.31.0] - 2026-08-01
+### Added — backups now record what happened, in a file the app can read back (Phase 4, PR 3)
+
+Every backup writes a `backup_manifest.json` next to the existing `backup_log.txt`. It lists each item
+you backed up, whether it succeeded, was skipped or failed, and the reason it gave, along with the time
+of the run, the PC and account it was taken on, the Windows build, and the app version.
+
+The log file is unchanged and is still the one written for you to read. The new file exists because the
+screens arriving in the next releases have to state things like "24 items, 1 failed", and working that
+out by parsing the wording of the log would mean a guess that looks like a fact when it is wrong.
+
+Three consequences worth stating plainly:
+
+- **Backups made before this version keep working and stay restorable.** They have no manifest, so the
+  new screens will show "details unavailable" for them rather than a result. That is deliberate: an
+  invented green tick on a backup nobody checked is worse than an honest blank.
+- **The file is written once, at the very end, and appears complete or not at all.** A run that is
+  interrupted — a crash, a forced close, power loss — leaves no manifest, which reads as "details
+  unavailable". It cannot leave a shorter file that still parses, because that would present a
+  half-finished backup as a smaller successful one.
+- **If the manifest cannot be written, the backup is not affected.** The failure is noted in the log and
+  your data is still there; only the summary of it is missing.
+
+Pre-restore snapshots do not get a manifest yet. They are listed separately from your own backups, and
+the screen that presents them has not been built.
 
 ### Changed — the engine moved into its own library (Phase 4, PR 2)
 
