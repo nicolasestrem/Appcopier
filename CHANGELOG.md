@@ -4,6 +4,8 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-01
+
 ### Changed — the engine moved into its own library (Phase 4, PR 2)
 
 Nothing about what the app does changed here, and nothing you can see changed either. The backup and
