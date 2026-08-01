@@ -1,0 +1,264 @@
+using Appcopier;
+using Conf;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using Xunit;
+
+namespace Appcopier.Tests
+{
+    public class BackupManifestTests
+    {
+        private static ModuleResult Ok() => ModuleResult.Aggregate(new[] { StepResult.Succeeded("k", "exported k") });
+        private static ModuleResult Skip() => ModuleResult.Aggregate(new[] { StepResult.Skipped("k", "not present on this system") });
+        private static ModuleResult Bad() => ModuleResult.Aggregate(new[] { StepResult.Failed("k", "access denied") });
+
+        private static List<BackupBase> Modules() => new List<BackupBase> { new DMouse(), new DTouchpad() };
+
+        private static readonly DateTime When = new DateTime(2026, 8, 1, 14, 22, 3, DateTimeKind.Utc);
+
+        private static string Compose(IReadOnlyList<BackupBase> modules, IReadOnlyList<ModuleResult> results)
+            => BackupManifest.Compose(modules, results, When, "DESKTOP-NB01", "nicol", "Build 26100.4652", "0.31.0");
+
+        // -------------------------------------------------------------------------------------
+        // Compose
+        // -------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Compose_ProducesParseableJson()
+        {
+            string json = Compose(Modules(), new List<ModuleResult> { Ok(), Skip() });
+
+            JObject root = JObject.Parse(json);
+
+            Assert.NotNull(root["modules"]);
+        }
+
+        [Fact]
+        public void Compose_WritesTheSchemaVersion()
+        {
+            JObject root = JObject.Parse(Compose(Modules(), new List<ModuleResult> { Ok(), Skip() }));
+
+            Assert.Equal(1, root["manifest_version"].Value<int>());
+        }
+
+        [Fact]
+        public void Compose_KeepsTheSchemaVersionSeparateFromTheAppVersion()
+        {
+            // The correction that matters: conflating them means a reader cannot tell "written by an
+            // older build" from "written to an older shape".
+            JObject root = JObject.Parse(Compose(Modules(), new List<ModuleResult> { Ok(), Skip() }));
+
+            Assert.Equal(JTokenType.Integer, root["manifest_version"].Type);
+            Assert.Equal("0.31.0", root["app_version"].Value<string>());
+        }
+
+        [Fact]
+        public void Compose_RecordsTypeTitleStateAndReasonForEveryModule()
+        {
+            JArray modules = (JArray)JObject.Parse(Compose(Modules(), new List<ModuleResult> { Ok(), Bad() }))["modules"];
+
+            Assert.Equal(2, modules.Count);
+
+            Assert.Equal("DMouse", modules[0]["type"].Value<string>());
+            Assert.Equal("Mouse", modules[0]["title"].Value<string>());
+            Assert.Equal("succeeded", modules[0]["state"].Value<string>());
+            Assert.Equal(Ok().Reason, modules[0]["reason"].Value<string>());
+
+            Assert.Equal("DTouchpad", modules[1]["type"].Value<string>());
+            Assert.Equal("failed", modules[1]["state"].Value<string>());
+
+            // Verbatim, not re-worded. The reason is the only channel a failed row has, and
+            // ModuleResult already folded it ("1 of 1 operations failed: access denied").
+            Assert.Equal(Bad().Reason, modules[1]["reason"].Value<string>());
+            Assert.Contains("access denied", modules[1]["reason"].Value<string>());
+        }
+
+        [Fact]
+        public void Compose_UsesExactlyTheLowercaseStateLiterals()
+        {
+            // Pinned because the reader compares against them and a casing drift would silently
+            // demote every row to unrecognised.
+            JArray modules = (JArray)JObject.Parse(
+                Compose(new List<BackupBase> { new DMouse(), new DTouchpad(), new DKeyboard() },
+                        new List<ModuleResult> { Ok(), Skip(), Bad() }))["modules"];
+
+            Assert.Equal("succeeded", modules[0]["state"].Value<string>());
+            Assert.Equal("skipped", modules[1]["state"].Value<string>());
+            Assert.Equal("failed", modules[2]["state"].Value<string>());
+        }
+
+        [Fact]
+        public void Compose_MissingResultRow_IsUnknownRatherThanIndexingPastTheEnd()
+        {
+            // Same divergence BackupLog tolerates: a module that threw before producing a result.
+            JArray modules = (JArray)JObject.Parse(Compose(Modules(), new List<ModuleResult> { Ok() }))["modules"];
+
+            Assert.Equal(2, modules.Count);
+            Assert.Equal("unknown", modules[1]["state"].Value<string>());
+            Assert.Equal("no result was recorded", modules[1]["reason"].Value<string>());
+        }
+
+        [Fact]
+        public void Compose_MissingResultRow_IsNotReportedAsSucceeded()
+        {
+            // The direction that matters. An absent verdict must never read as a good one.
+            JArray modules = (JArray)JObject.Parse(Compose(Modules(), null))["modules"];
+
+            Assert.All(modules, row => Assert.NotEqual("succeeded", row["state"].Value<string>()));
+        }
+
+        [Fact]
+        public void Compose_RecordsTheEnvironmentFields()
+        {
+            JObject root = JObject.Parse(Compose(Modules(), new List<ModuleResult> { Ok(), Skip() }));
+
+            Assert.Equal("DESKTOP-NB01", root["machine_name"].Value<string>());
+            Assert.Equal("nicol", root["user_name"].Value<string>());
+            Assert.Equal("Build 26100.4652", root["os_build"].Value<string>());
+        }
+
+        [Fact]
+        public void Compose_WritesTheTimestampInRoundTripFormat()
+        {
+            // Asserted against the raw text, not through JObject.Parse: that helper would rewrite
+            // the value into a DateTime and re-render it, hiding the very format under test.
+            string json = Compose(Modules(), new List<ModuleResult> { Ok(), Skip() });
+
+            Assert.Contains("\"created\": \"" + When.ToString("o") + "\"", json);
+            Assert.Equal(When, DateTime.Parse(When.ToString("o"),
+                CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime());
+        }
+
+        [Fact]
+        public void Compose_NoModules_StillProducesAWellFormedDocument()
+        {
+            JObject root = JObject.Parse(Compose(new List<BackupBase>(), new List<ModuleResult>()));
+
+            Assert.Equal(1, root["manifest_version"].Value<int>());
+            Assert.Empty((JArray)root["modules"]);
+        }
+
+        // -------------------------------------------------------------------------------------
+        // TryParse - the round trip
+        // -------------------------------------------------------------------------------------
+
+        [Fact]
+        public void TryParse_ReadsBackWhatComposeWrote()
+        {
+            ManifestData data = BackupManifest.TryParse(Compose(Modules(), new List<ModuleResult> { Ok(), Bad() }));
+
+            Assert.NotNull(data);
+            Assert.Equal(1, data.ManifestVersion);
+            Assert.Equal("0.31.0", data.AppVersion);
+            Assert.Equal("DESKTOP-NB01", data.MachineName);
+            Assert.Equal("nicol", data.UserName);
+            Assert.Equal("Build 26100.4652", data.OsBuild);
+            Assert.Equal(When, DateTime.Parse(data.Created,
+                CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime());
+        }
+
+        [Fact]
+        public void TryParse_ReturnsTheTimestampExactlyAsWritten()
+        {
+            // Regression. Newtonsoft's default DateParseHandling rewrote any date-shaped string
+            // into a Date token, so this field came back NULL from a document that had it - the
+            // reader lost the run time and nothing said so. The parser now reads scalars verbatim.
+            ManifestData data = BackupManifest.TryParse(Compose(Modules(), new List<ModuleResult> { Ok(), Skip() }));
+
+            Assert.Equal(When.ToString("o"), data.Created);
+        }
+
+        [Fact]
+        public void TryParse_ReadsEveryModuleRow()
+        {
+            ManifestData data = BackupManifest.TryParse(Compose(Modules(), new List<ModuleResult> { Ok(), Bad() }));
+
+            Assert.Equal(2, data.Modules.Count);
+            Assert.Equal("DMouse", data.Modules[0].Type);
+            Assert.Equal("Mouse", data.Modules[0].Title);
+            Assert.Equal("succeeded", data.Modules[0].State);
+            Assert.Equal(Ok().Reason, data.Modules[0].Reason);
+            Assert.Equal("failed", data.Modules[1].State);
+            Assert.Equal(Bad().Reason, data.Modules[1].Reason);
+        }
+
+        // -------------------------------------------------------------------------------------
+        // TryParse - null on any defect. Each defect is its own fact because each is a separate
+        // way the reader could otherwise be handed a document it would go on to trust.
+        // -------------------------------------------------------------------------------------
+
+        [Fact]
+        public void TryParse_Null_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(null));
+
+        [Fact]
+        public void TryParse_Empty_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(""));
+
+        [Fact]
+        public void TryParse_Whitespace_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse("   \r\n  "));
+
+        [Fact]
+        public void TryParse_Garbage_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse("not json at all"));
+
+        [Fact]
+        public void TryParse_TruncatedJson_ReturnsNull()
+        {
+            // The interrupted-write shape, defended twice: the writer makes it unreachable and the
+            // reader refuses it anyway.
+            string json = Compose(Modules(), new List<ModuleResult> { Ok(), Skip() });
+
+            Assert.Null(BackupManifest.TryParse(json.Substring(0, json.Length / 2)));
+        }
+
+        [Fact]
+        public void TryParse_JsonArrayRatherThanObject_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse("[1, 2, 3]"));
+
+        [Fact]
+        public void TryParse_MissingManifestVersion_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(@"{ ""modules"": [] }"));
+
+        [Fact]
+        public void TryParse_NonIntegerManifestVersion_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": ""1"", ""modules"": [] }"));
+
+        [Fact]
+        public void TryParse_UnknownManifestVersion_ReturnsNull()
+        {
+            // A future writer's shape. Refusing it is the point: this build cannot know what a
+            // version-2 row means, and reading it as version 1 is exactly the confident lie the
+            // separate schema field exists to prevent.
+            Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": 2, ""modules"": [] }"));
+        }
+
+        [Fact]
+        public void TryParse_MissingModules_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": 1 }"));
+
+        [Fact]
+        public void TryParse_ModulesNotAnArray_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": 1, ""modules"": ""two"" }"));
+
+        [Fact]
+        public void TryParse_ModuleRowNotAnObject_ReturnsNull()
+            => Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": 1, ""modules"": [ ""DMouse"" ] }"));
+
+        [Fact]
+        public void TryParse_AbsentProvenanceFields_StillParses()
+        {
+            // Missing context costs the reader a line; missing structure costs it the count. Only
+            // the second is fatal.
+            ManifestData data = BackupManifest.TryParse(@"{ ""manifest_version"": 1, ""modules"": [] }");
+
+            Assert.NotNull(data);
+            Assert.Null(data.MachineName);
+            Assert.Null(data.AppVersion);
+            Assert.Empty(data.Modules);
+        }
+    }
+}

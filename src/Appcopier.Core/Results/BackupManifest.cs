@@ -1,0 +1,275 @@
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.IO;
+
+namespace Appcopier
+{
+    /// <summary>
+    /// Composes and parses backup_manifest.json - the machine-readable record of a backup run.
+    /// </summary>
+    /// <remarks>
+    /// backup_log.txt is written for a human and is explicitly free to change shape (see BackupLog).
+    /// Home and History cannot make a status claim like "24 items, 1 failed" by parsing prose, because
+    /// the failure mode of a text parser is a confidently wrong verdict rather than a visible error.
+    /// This file exists so the reader has something it is allowed to trust.
+    ///
+    /// Two rules are load-bearing and neither is stylistic:
+    ///
+    /// 1. <see cref="Version"/> is the SCHEMA version and is not the app version, which is recorded
+    ///    separately for provenance only. App versions change on every release and mostly do not
+    ///    change the shape; conflating them means a reader cannot tell "written by an older build"
+    ///    from "written to an older shape".
+    /// 2. <see cref="TryParse"/> returns null on ANY defect. Callers render null as unknown -
+    ///    "details unavailable" - and never as an inferred success. Every backup taken before this
+    ///    file existed has no manifest, and a dashboard that guesses at those is the cry-wolf failure
+    ///    running in the dangerous direction. Best-effort parsing may label something approximate; it
+    ///    may not produce a verdict.
+    ///
+    /// The composer takes the same (modules, results) pair BackupLog.Compose takes, and is tolerant of
+    /// the same ragged input for the same reason: a module that threw before producing a result leaves
+    /// the two lists at different lengths, and reporting that beats indexing past the end.
+    /// </remarks>
+    internal static class BackupManifest
+    {
+        /// <summary>
+        /// Schema version of the document, NOT the app version. Bump only when the shape changes.
+        /// </summary>
+        internal const int Version = 1;
+
+        internal const string FileName = "backup_manifest.json";
+
+        internal const string StateSucceeded = "succeeded";
+        internal const string StateSkipped = "skipped";
+        internal const string StateFailed = "failed";
+
+        /// <summary>
+        /// The state written when a module produced no result at all.
+        /// </summary>
+        internal const string StateUnknown = "unknown";
+
+        internal const string NoResultReason = "no result was recorded";
+
+        internal static string Compose(IReadOnlyList<BackupBase> modules,
+                                       IReadOnlyList<ModuleResult> results,
+                                       DateTime when,
+                                       string machineName,
+                                       string userName,
+                                       string osBuild,
+                                       string appVersion)
+        {
+            JArray moduleRows = new JArray();
+
+            int count = modules == null ? 0 : modules.Count;
+
+            for (int i = 0; i < count; i++)
+            {
+                BackupBase module = modules[i];
+
+                if (module == null)
+                    continue;
+
+                // Same divergence tolerance as BackupLog.Compose: a module that threw before
+                // producing a result leaves the lists ragged.
+                ModuleResult result = (results != null && i < results.Count) ? results[i] : null;
+
+                JObject row = new JObject
+                {
+                    ["type"] = module.GetType().Name,
+                    ["title"] = module.Title,
+                    ["state"] = result == null ? StateUnknown : Label(result.State),
+                    ["reason"] = result == null ? NoResultReason : result.Reason
+                };
+
+                moduleRows.Add(row);
+            }
+
+            JObject root = new JObject
+            {
+                ["manifest_version"] = Version,
+                ["app_version"] = appVersion,
+                ["created"] = when.ToString("o"),
+                ["machine_name"] = machineName,
+                ["user_name"] = userName,
+                ["os_build"] = osBuild,
+                ["modules"] = moduleRows
+            };
+
+            return root.ToString(Formatting.Indented);
+        }
+
+        /// <summary>
+        /// Reads a manifest, returning null if it cannot be trusted for any reason at all.
+        /// </summary>
+        /// <remarks>
+        /// Null covers: not JSON, not an object, no manifest_version, a manifest_version that is not
+        /// an integer, a manifest_version this build does not know, and no modules array. There is
+        /// deliberately no partial-credit return - a caller handed half a document would have to
+        /// decide what the missing half meant, and the whole point of the type is that it never has
+        /// to guess.
+        /// </remarks>
+        internal static ManifestData TryParse(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+                return null;
+
+            JObject root = ReadObject(json);
+
+            if (root == null)
+                return null;
+
+            JToken versionToken = root["manifest_version"];
+
+            if (versionToken == null || versionToken.Type != JTokenType.Integer)
+                return null;
+
+            int version = versionToken.Value<int>();
+
+            if (version != Version)
+                return null;
+
+            if (!(root["modules"] is JArray moduleRows))
+                return null;
+
+            List<ManifestModule> modules = new List<ManifestModule>();
+
+            foreach (JToken rowToken in moduleRows)
+            {
+                if (!(rowToken is JObject row))
+                    return null;
+
+                modules.Add(new ManifestModule(
+                    Text(row["type"]),
+                    Text(row["title"]),
+                    Text(row["state"]),
+                    Text(row["reason"])));
+            }
+
+            return new ManifestData(
+                version,
+                Text(root["app_version"]),
+                Text(root["created"]),
+                Text(root["machine_name"]),
+                Text(root["user_name"]),
+                Text(root["os_build"]),
+                modules);
+        }
+
+        /// <summary>
+        /// Parses the document into an object, leaving every scalar exactly as it was written.
+        /// </summary>
+        /// <remarks>
+        /// JObject.Parse cannot be used here, and the reason is not a preference. Its default
+        /// DateParseHandling rewrites any string that LOOKS like a date into a Date token, so
+        /// "created" came back as JTokenType.Date rather than String - which made <see cref="Text"/>
+        /// return null for the one field whose whole job is to say when the run happened, and did it
+        /// silently. Turning the behaviour off keeps the manifest what it claims to be: a record of
+        /// what was written, read back verbatim. It also stops the same trap firing on any future
+        /// date-shaped value, including a machine name or a reason string that happens to parse.
+        ///
+        /// The trailing-token check restores what JObject.Parse gave for free: JToken.ReadFrom stops
+        /// at the end of the first value, so "{...} garbage" would otherwise be accepted.
+        /// </remarks>
+        private static JObject ReadObject(string json)
+        {
+            try
+            {
+                using (StringReader text = new StringReader(json))
+                using (JsonTextReader reader = new JsonTextReader(text) { DateParseHandling = DateParseHandling.None })
+                {
+                    JToken token = JToken.ReadFrom(reader);
+
+                    if (reader.Read())
+                        return null;
+
+                    return token as JObject;
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// A string field, or null when absent or not a string.
+        /// </summary>
+        /// <remarks>
+        /// Absent provenance fields are tolerated where absent STRUCTURE is not: machine_name being
+        /// missing costs the reader a line of context, whereas a missing modules array would cost it
+        /// the ability to count anything.
+        /// </remarks>
+        private static string Text(JToken token)
+            => token != null && token.Type == JTokenType.String ? token.Value<string>() : null;
+
+        private static string Label(ResultState state)
+        {
+            switch (state)
+            {
+                case ResultState.Succeeded: return StateSucceeded;
+                case ResultState.Skipped: return StateSkipped;
+                default: return StateFailed;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A parsed manifest. Only ever produced by <see cref="BackupManifest.TryParse"/>, which returns
+    /// null rather than an instance carrying doubt - so holding one of these means the document was
+    /// well-formed and of a known schema version.
+    /// </summary>
+    internal sealed class ManifestData
+    {
+        internal ManifestData(int manifestVersion, string appVersion, string created, string machineName,
+                              string userName, string osBuild, IReadOnlyList<ManifestModule> modules)
+        {
+            ManifestVersion = manifestVersion;
+            AppVersion = appVersion;
+            Created = created;
+            MachineName = machineName;
+            UserName = userName;
+            OsBuild = osBuild;
+            Modules = modules;
+        }
+
+        internal int ManifestVersion { get; }
+
+        internal string AppVersion { get; }
+
+        /// <summary>Round-trip ("o") timestamp of the run, as written.</summary>
+        internal string Created { get; }
+
+        internal string MachineName { get; }
+
+        internal string UserName { get; }
+
+        internal string OsBuild { get; }
+
+        internal IReadOnlyList<ManifestModule> Modules { get; }
+    }
+
+    /// <summary>
+    /// One module's row in a parsed manifest.
+    /// </summary>
+    internal sealed class ManifestModule
+    {
+        internal ManifestModule(string type, string title, string state, string reason)
+        {
+            Type = type;
+            Title = title;
+            State = state;
+            Reason = reason;
+        }
+
+        /// <summary>The module's CLR type name, e.g. "DMouse". May name a retired module.</summary>
+        internal string Type { get; }
+
+        internal string Title { get; }
+
+        /// <summary>One of the BackupManifest.State* literals, or anything a future writer wrote.</summary>
+        internal string State { get; }
+
+        internal string Reason { get; }
+    }
+}

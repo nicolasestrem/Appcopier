@@ -189,6 +189,9 @@ namespace Views
                 // Log backed-up elements
                 LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
 
+                // Write backup_manifest.json - the machine-readable companion to the log above.
+                WriteBackupManifest(CurrentBackupPath, selectedConfigs, results);
+
                 ShowSummary(
                     RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Backup),
                     "Backup");
@@ -292,6 +295,65 @@ namespace Views
             catch (Exception ex)
             {
                 logger.LogMessage("Failed to create backup log file: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Writes backup_manifest.json beside the log, atomically and only once every module has
+        /// reported.
+        /// </summary>
+        /// <remarks>
+        /// Whole-and-last, which is the point of the temp-file dance rather than a plain
+        /// WriteAllText. The reader treats an absent manifest as unknown and says so, and that
+        /// already covers a run killed partway. What it does NOT cover is a half-written file that
+        /// still parses: that presents a truncated run as a smaller successful one - not unknown,
+        /// but confidently green and wrong. File.Move over the final name makes the file appear
+        /// complete or not at all, so a crash mid-write leaves the folder manifest-less and honest.
+        ///
+        /// Called for user backups only, not for the pre-restore snapshot: snapshots are identified
+        /// by SnapshotNaming and their presentation belongs to History. The composer takes the same
+        /// arguments either way, so adding the snapshot call later costs one line.
+        ///
+        /// Failing to write is logged and swallowed. The backup itself succeeded; losing its index
+        /// must not be reported as losing the data.
+        /// </remarks>
+        private void WriteBackupManifest(string backupFolderPath, IReadOnlyList<BackupBase> configurations,
+                                         IReadOnlyList<ModuleResult> results)
+        {
+            string finalPath = Path.Combine(backupFolderPath, BackupManifest.FileName);
+            string tempPath = finalPath + ".tmp";
+
+            try
+            {
+                string json = BackupManifest.Compose(
+                    configurations,
+                    results,
+                    DateTime.Now,
+                    Environment.MachineName,
+                    Environment.UserName,
+                    OsHelper.GetVersion(),
+                    Program.GetCurrentVersionTostring());
+
+                File.WriteAllText(tempPath, json);
+
+                // Overwrite rather than fail: a leftover manifest from an earlier run into the same
+                // folder would otherwise outlive the run that replaced it.
+                File.Move(tempPath, finalPath, true);
+            }
+            catch (Exception ex)
+            {
+                logger.LogMessage("Failed to create backup manifest file: " + ex.Message);
+
+                // A .tmp left behind would be mistaken for backup content by the restore view.
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch (Exception cleanupEx)
+                {
+                    logger.LogMessage("Could not remove the partial manifest file: " + cleanupEx.Message);
+                }
             }
         }
 
