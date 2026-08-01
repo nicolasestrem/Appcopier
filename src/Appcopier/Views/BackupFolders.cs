@@ -2,6 +2,7 @@ using Appcopier;
 using DataHelper;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 
 namespace Views
@@ -73,17 +74,35 @@ namespace Views
     /// <summary>One folder under the backup root.</summary>
     internal sealed class BackupFolder
     {
+        private readonly ManifestData manifest;
+
         internal BackupFolder(string path)
         {
             Path = path;
             Name = System.IO.Path.GetFileName(path);
-            Created = ReadCreated(path);
+
+            // Read once here rather than on demand: Created depends on it, and the folders are
+            // sorted by Created, so a lazy read would parse the same small file repeatedly during
+            // an ordinary sort.
+            manifest = ReadManifest(path);
+            Created = ReadCreated(path, manifest);
         }
 
         internal string Path { get; }
 
         internal string Name { get; }
 
+        /// <summary>
+        /// When the run this folder holds actually finished.
+        /// </summary>
+        /// <remarks>
+        /// From the manifest when there is one, and only otherwise from the directory timestamp.
+        /// The filesystem answer is the weaker of the two in both directions: a second backup in one
+        /// session reuses the folder, so the directory still carries the FIRST run's creation time
+        /// and "12 days ago" would be said of a run made minutes ago; and a backup folder copied
+        /// from another machine is stamped with the moment it was copied, so an old run sorts first
+        /// and reads as today's.
+        /// </remarks>
         internal DateTime Created { get; }
 
         /// <summary>
@@ -94,11 +113,13 @@ namespace Views
         /// null, because they are the same answer to the caller: this app does not know what is in
         /// here. Callers render that as "details unavailable".
         /// </remarks>
-        internal ManifestData ReadManifest()
+        internal ManifestData ReadManifest() => manifest;
+
+        private static ManifestData ReadManifest(string path)
         {
             try
             {
-                string file = System.IO.Path.Combine(Path, BackupManifest.FileName);
+                string file = System.IO.Path.Combine(path, BackupManifest.FileName);
 
                 if (!File.Exists(file))
                     return null;
@@ -111,8 +132,18 @@ namespace Views
             }
         }
 
-        private static DateTime ReadCreated(string path)
+        private static DateTime ReadCreated(string path, ManifestData manifest)
         {
+            // "o" as written by Compose. Parsed with RoundtripKind and converted to local time, so a
+            // backup carried over from a machine in another time zone is described in the time zone
+            // of whoever is reading the screen.
+            if (manifest != null
+                && DateTime.TryParse(manifest.Created, CultureInfo.InvariantCulture,
+                                     DateTimeStyles.RoundtripKind, out DateTime recorded))
+            {
+                return recorded.ToLocalTime();
+            }
+
             try
             {
                 return Directory.GetCreationTime(path);

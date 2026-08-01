@@ -46,6 +46,13 @@ namespace Views
         {
             LoadBackups();
 
+            // The list reload clears the selection, but the log pane and its header are not part of
+            // the list and would otherwise still show the folder chosen on a previous visit - beside
+            // an empty selection, and possibly for a folder since deleted. Reset them so the screen
+            // never describes a backup the user is not looking at.
+            rtbLog.Clear();
+            linkISubHeader.Visible = false;
+
             string wanted = pendingSelection;
             pendingSelection = null;
 
@@ -63,18 +70,36 @@ namespace Views
                 Color.FromArgb(245, 241, 249);
         }
 
+        /// <summary>
+        /// Fills the list from the backup directory. Total: it never throws.
+        /// </summary>
+        /// <remarks>
+        /// This runs from the constructor, and the constructor now runs from MainForm's, which is
+        /// evaluated as the ARGUMENT to Application.Run - outside the message pump, where an
+        /// exception is not caught by WinForms and kills the process before any window exists. The
+        /// user would see the app fail to start. Directory.GetDirectories genuinely throws for an
+        /// unreadable root: a changed ACL, or the executable sitting on a volume that has gone away.
+        /// Reporting an empty list plus a log line is the same degradation OsHelper.GetVersion
+        /// makes for the same reason.
+        /// </remarks>
         internal void LoadBackups()
         {
             listRestoration.Items.Clear();
 
-            if (Directory.Exists(Data.DataRootDir))
+            try
             {
-                string[] backups = Directory.GetDirectories(Data.DataRootDir);
+                if (!Directory.Exists(Data.DataRootDir))
+                    return;
 
-                foreach (string backup in backups)
+                foreach (string backup in Directory.GetDirectories(Data.DataRootDir))
                 {
                     listRestoration.Items.Add(Path.GetFileName(backup));
                 }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Instance.LogMessage(
+                    "The backup folder " + Data.DataRootDir + " could not be read: " + ex.Message);
             }
         }
 
