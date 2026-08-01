@@ -124,7 +124,14 @@ namespace Appcopier
             if (versionToken == null || versionToken.Type != JTokenType.Integer)
                 return null;
 
-            int version = versionToken.Value<int>();
+            // Read the underlying value rather than converting. Newtonsoft stores a JSON integer as
+            // a long, or as a BigInteger when it does not fit one - and Value<int>() is
+            // Convert.ToInt32 underneath, which throws OverflowException (NOT a JsonException, so it
+            // escapes this method entirely) for "manifest_version": 9999999999. Requiring the
+            // underlying value to be a long rejects both oversized shapes with no conversion at all,
+            // which is what keeps the never-throws contract true rather than nearly true.
+            if (!(versionToken is JValue versionValue) || !(versionValue.Value is long version))
+                return null;
 
             if (version != Version)
                 return null;
@@ -139,15 +146,25 @@ namespace Appcopier
                 if (!(rowToken is JObject row))
                     return null;
 
-                modules.Add(new ManifestModule(
-                    Text(row["type"]),
-                    Text(row["title"]),
-                    Text(row["state"]),
-                    Text(row["reason"])));
+                string type = Text(row["type"]);
+                string title = Text(row["title"]);
+                string state = Text(row["state"]);
+                string reason = Text(row["reason"]);
+
+                // Every row field must be present and a string. A row like {} or {"state":42}
+                // otherwise becomes a ManifestModule of nulls, and a reader counting items and
+                // matching State against "failed" would count it as an item that did not fail -
+                // a green verdict derived from a document that says nothing. Same no-partial-credit
+                // rule as the document as a whole: one malformed row means the file is not
+                // trustworthy, so the whole thing reads as unknown.
+                if (type == null || title == null || state == null || reason == null)
+                    return null;
+
+                modules.Add(new ManifestModule(type, title, state, reason));
             }
 
             return new ManifestData(
-                version,
+                (int)version,
                 Text(root["app_version"]),
                 Text(root["created"]),
                 Text(root["machine_name"]),

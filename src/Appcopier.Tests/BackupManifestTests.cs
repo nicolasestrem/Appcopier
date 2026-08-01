@@ -248,6 +248,50 @@ namespace Appcopier.Tests
         public void TryParse_ModuleRowNotAnObject_ReturnsNull()
             => Assert.Null(BackupManifest.TryParse(@"{ ""manifest_version"": 1, ""modules"": [ ""DMouse"" ] }"));
 
+        [Theory]
+        [InlineData("9999999999")]                      // valid JSON integer, too big for int
+        [InlineData("-9999999999")]
+        [InlineData("99999999999999999999999999999")]   // too big for long: Newtonsoft holds BigInteger
+        public void TryParse_OutOfRangeManifestVersion_ReturnsNull(string version)
+        {
+            // Regression. The type check says "integer" but says nothing about magnitude, and
+            // Value<int>() is Convert.ToInt32 underneath - it throws OverflowException, which is not
+            // a JsonException and so escaped TryParse entirely. One corrupt file would have taken
+            // down a caller that was promised it never has to catch anything.
+            Assert.Null(BackupManifest.TryParse(
+                @"{ ""manifest_version"": " + version + @", ""modules"": [] }"));
+        }
+
+        [Theory]
+        [InlineData(@"{}")]
+        [InlineData(@"{ ""state"": 42 }")]
+        [InlineData(@"{ ""type"": ""DMouse"", ""title"": ""Mouse"", ""state"": ""succeeded"" }")]
+        [InlineData(@"{ ""type"": ""DMouse"", ""title"": ""Mouse"", ""state"": null, ""reason"": ""x"" }")]
+        public void TryParse_IncompleteModuleRow_ReturnsNull(string row)
+        {
+            // Regression. Such a row used to become a ManifestModule of nulls inside an otherwise
+            // trusted document - and a reader counting items and matching State against "failed"
+            // would count it as an item that did NOT fail. A green verdict derived from a row that
+            // says nothing is the exact failure this type exists to prevent, so one bad row means
+            // the whole file reads as unknown.
+            Assert.Null(BackupManifest.TryParse(
+                @"{ ""manifest_version"": 1, ""modules"": [ " + row + @" ] }"));
+        }
+
+        [Fact]
+        public void TryParse_CompleteModuleRow_IsAccepted()
+        {
+            // The other side of the rule above: a row carrying all four string fields is fine, and
+            // an empty reason is a value rather than an absence.
+            ManifestData data = BackupManifest.TryParse(
+                @"{ ""manifest_version"": 1, ""modules"": [
+                     { ""type"": ""DMouse"", ""title"": ""Mouse"", ""state"": ""succeeded"", ""reason"": """" } ] }");
+
+            Assert.NotNull(data);
+            Assert.Equal("DMouse", Assert.Single(data.Modules).Type);
+            Assert.Equal("", data.Modules[0].Reason);
+        }
+
         [Fact]
         public void TryParse_AbsentProvenanceFields_StillParses()
         {

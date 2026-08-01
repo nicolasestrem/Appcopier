@@ -168,6 +168,15 @@ namespace Views
                     return;
                 }
 
+                // Before a single module writes anything. CurrentBackupPath is built from
+                // Data.NowShort, stamped once per process, so a second Backup click in the same
+                // session runs into the SAME folder - and the first run's manifest would otherwise
+                // survive alongside files the second run has already replaced. That is the
+                // confidently-green failure the whole-and-last write exists to prevent, arriving by
+                // a different route: an interrupted second run must read as unknown, not as the
+                // first run's verdict.
+                InvalidateBackupManifest(CurrentBackupPath);
+
                 foreach (TreeNode parentNode in treeConfigurations.Nodes)
                 {
                     foreach (TreeNode childNode in parentNode.Nodes)
@@ -295,6 +304,45 @@ namespace Views
             catch (Exception ex)
             {
                 logger.LogMessage("Failed to create backup log file: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Removes any manifest already in the folder, so a run that does not finish leaves none.
+        /// </summary>
+        /// <remarks>
+        /// The whole-and-last write guarantees a manifest describes a COMPLETED run, but only for a
+        /// folder that started empty. Backing up twice in one session reuses the folder, because
+        /// CurrentBackupPath is built from Data.NowShort and that is stamped once per process. Then
+        /// the first run's manifest sits beside files the second run has already overwritten, and if
+        /// the second run is interrupted the reader trusts a verdict for data that is no longer
+        /// there - a stale green, which is the failure this file exists to make impossible.
+        ///
+        /// Deleting up front means the window between "modules started" and "manifest published" has
+        /// no manifest in it at all, which is exactly the state the reader renders as unknown.
+        ///
+        /// A stray .tmp is cleared too: the writer removes its own on failure, but a process killed
+        /// mid-write cannot.
+        ///
+        /// Failure is logged, not fatal. A manifest that cannot be deleted is about to be
+        /// overwritten by File.Move anyway on the happy path; refusing to back up over it would turn
+        /// a stale index into a refusal to protect the user's data.
+        /// </remarks>
+        private void InvalidateBackupManifest(string backupFolderPath)
+        {
+            string finalPath = Path.Combine(backupFolderPath, BackupManifest.FileName);
+
+            foreach (string path in new[] { finalPath, finalPath + ".tmp" })
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        File.Delete(path);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogMessage("Could not clear the previous backup manifest: " + ex.Message);
+                }
             }
         }
 
