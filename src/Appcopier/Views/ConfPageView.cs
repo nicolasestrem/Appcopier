@@ -4,6 +4,7 @@ using DataHelper;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -324,27 +325,83 @@ namespace Views
         /// A stray .tmp is cleared too: the writer removes its own on failure, but a process killed
         /// mid-write cannot.
         ///
-        /// Failure is logged, not fatal. A manifest that cannot be deleted is about to be
-        /// overwritten by File.Move anyway on the happy path; refusing to back up over it would turn
-        /// a stale index into a refusal to protect the user's data.
+        /// Deleting can itself fail - a read-only attribute, or a file held open by a backup tool or
+        /// an editor - so there are two more attempts before giving up: clear the attribute and
+        /// retry, then truncate the file to nothing. An empty file is not valid JSON, so TryParse
+        /// refuses it and the reader says "details unavailable", which is the honest answer. That
+        /// leaves only "locked against writing too" unhandled, and there the backup still proceeds:
+        /// refusing to protect the user's data because a stale index file is locked would trade a
+        /// bookkeeping problem for a real one. It is logged loudly instead.
         /// </remarks>
         private void InvalidateBackupManifest(string backupFolderPath)
         {
             string finalPath = Path.Combine(backupFolderPath, BackupManifest.FileName);
 
-            foreach (string path in new[] { finalPath, finalPath + ".tmp" })
+            foreach (string path in new[] { finalPath, TempManifestPath(finalPath) })
             {
-                try
+                if (!TryRemove(path) && File.Exists(path))
                 {
-                    if (File.Exists(path))
-                        File.Delete(path);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogMessage("Could not clear the previous backup manifest: " + ex.Message);
+                    logger.LogMessage(
+                        "The previous backup manifest at " + path + " could not be removed or emptied. "
+                        + "If this run does not finish, that file still describes the PREVIOUS run.");
                 }
             }
         }
+
+        private bool TryRemove(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return true;
+
+                File.Delete(path);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.LogMessage("Could not delete " + path + ": " + ex.Message);
+            }
+
+            // A read-only attribute is the common cause and is ours to clear.
+            try
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.LogMessage("Could not delete " + path + " after clearing its attributes: " + ex.Message);
+            }
+
+            // Last resort: make it unparseable. An empty file reads as unknown, which is true.
+            try
+            {
+                File.WriteAllText(path, string.Empty);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.LogMessage("Could not empty " + path + ": " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The scratch path the manifest is written to before being moved into place.
+        /// </summary>
+        /// <remarks>
+        /// Process-scoped. Data.NowShort has minute precision and there is no single-instance guard,
+        /// so two copies of the app started in the same minute address the same backup folder. They
+        /// would otherwise share one .tmp and overwrite each other's half-written document, which is
+        /// the one way this write can publish a well-formed manifest describing neither run. Their
+        /// racing over the FINAL file is a pre-existing hazard of the shared folder - two processes
+        /// writing one backup was already unsound before this file existed - but the temp collision
+        /// is created here, so it is closed here.
+        /// </remarks>
+        private static string TempManifestPath(string finalPath)
+            => finalPath + "." + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + ".tmp";
 
         /// <summary>
         /// Writes backup_manifest.json beside the log, atomically and only once every module has
@@ -369,7 +426,7 @@ namespace Views
                                          IReadOnlyList<ModuleResult> results)
         {
             string finalPath = Path.Combine(backupFolderPath, BackupManifest.FileName);
-            string tempPath = finalPath + ".tmp";
+            string tempPath = TempManifestPath(finalPath);
 
             try
             {
