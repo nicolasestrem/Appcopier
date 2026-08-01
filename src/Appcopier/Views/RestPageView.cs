@@ -1,4 +1,5 @@
-﻿using DataHelper;
+﻿﻿using Appcopier;
+using DataHelper;
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -9,12 +10,14 @@ namespace Views
 {
     public partial class RestPageView : UserControl
     {
-        private ConfPageView configPage;
+        private readonly ConfPageView configPage;
+        private readonly NavigationService navigation;
 
-        public RestPageView(ConfPageView cp)
+        internal RestPageView(ConfPageView cp, NavigationService navigation)
         {
             InitializeComponent();
             configPage = cp;
+            this.navigation = navigation;
 
             LoadBackups();
             SetStyle();
@@ -46,6 +49,26 @@ namespace Views
             }
         }
 
+        /// <summary>
+        /// Selects a backup folder by name, if it is still in the list.
+        /// </summary>
+        /// <remarks>
+        /// Silent when the name is absent rather than throwing or clearing: Home offers this for the
+        /// newest folder it saw, and the folder can be renamed or deleted in Explorer between Home
+        /// reading the directory and the user clicking through. Leaving nothing selected puts the
+        /// user in front of the list they were going to see anyway.
+        /// </remarks>
+        internal void SelectBackup(string folderName)
+        {
+            if (string.IsNullOrEmpty(folderName))
+                return;
+
+            int index = listRestoration.Items.IndexOf(folderName);
+
+            if (index >= 0)
+                listRestoration.SelectedIndex = index;
+        }
+
         private async void btnOK_Click(object sender, EventArgs e)
         {
             if (listRestoration.SelectedItems.Count != 1)
@@ -56,14 +79,15 @@ namespace Views
 
             configPage.CurrentRestorePath = Data.DataRootDir + listRestoration.SelectedItem.ToString() + "\\";
 
-            ViewHelper.SwitchView.SetMainFormAsView();
+            // Back to the backup page, which owns the log pane the restore reports progress into.
+            navigation.Show(configPage);
 
             // Call restoration logic after setting path
             await configPage.HandleRestorationAfterSelection();
         }
 
         private void btnBack_Click(object sender, EventArgs e)
-           => ViewHelper.SwitchView.SetMainFormAsView();
+           => navigation.Pop();
 
         private void linkOpenBackupsDirectory_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
              => Process.Start(new ProcessStartInfo("explorer.exe", Data.DataRootDir) { UseShellExecute = true });

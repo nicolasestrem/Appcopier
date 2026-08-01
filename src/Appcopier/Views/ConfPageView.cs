@@ -799,36 +799,93 @@ namespace Views
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
-            bool isAtLeastOneChecked = treeConfigurations.Nodes
-                   .Cast<TreeNode>()
-                   .Any(parentNode => parentNode.Nodes.Cast<TreeNode>().Any(childNode => childNode.Checked));
-
-            // At least one node is checked, then proceed!
-            if (isAtLeastOneChecked)
+            if (TryCollectRestoreSelection())
             {
-                // Clear selectedConfigs list before populating it
-                selectedConfigs.Clear();
+                ShowRestoreView();
+                return;
+            }
 
-                foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// Navigates to the folder picker. Supplied by the shell, which owns that view.
+        /// </summary>
+        /// <remarks>
+        /// A delegate rather than a NavigationService reference, matching how the engine's other
+        /// UI seams are wired: this page needs exactly one navigation, and handing it the whole
+        /// service would let any future edit here reach every screen in the app.
+        /// </remarks>
+        internal Action ShowRestoreView = () => { };
+
+        /// <summary>
+        /// Populates <see cref="selectedConfigs"/> from the ticked tree nodes, reporting whether
+        /// anything was ticked at all.
+        /// </summary>
+        /// <remarks>
+        /// The restore SET is chosen here and the FOLDER on the next page, and RestPageView's OK
+        /// button runs the restore against this list - so this must have succeeded before that page
+        /// is shown, whether the user got there from this page's button or from the rail. Returning
+        /// a bool rather than showing the warning itself: the two callers land the user in different
+        /// places, and only one of them is already on this page.
+        /// </remarks>
+        internal bool TryCollectRestoreSelection()
+        {
+            selectedConfigs.Clear();
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
                 {
-                    foreach (TreeNode childNode in parentNode.Nodes)
+                    if (childNode.Checked)
                     {
-                        if (childNode.Checked)
+                        BackupBase configuration = childNode.Tag as BackupBase;
+                        if (configuration != null)
                         {
-                            BackupBase configuration = childNode.Tag as BackupBase;
-                            if (configuration != null)
-                            {
-                                selectedConfigs.Add(configuration);
-                            }
+                            selectedConfigs.Add(configuration);
                         }
                     }
                 }
-
-                ViewHelper.SwitchView.SetView(new RestPageView(this));
             }
-            else
+
+            return selectedConfigs.Count > 0;
+        }
+
+        /// <summary>
+        /// Ticks exactly the modules named by their CLR type name, unticking everything else.
+        /// </summary>
+        /// <remarks>
+        /// Drives Home's "Back up again" from the names in a backup_manifest.json. Unknown names are
+        /// ignored in silence and that is deliberate, not lax: a manifest written by an older build
+        /// can name a module this one retired - the browser modules Phase 3a removed, for instance -
+        /// and a warning about it would be an error message about someone else's past decision, on a
+        /// button whose entire promise is "the same as last time".
+        ///
+        /// Exact, ordinal type-name match. Titles are user-facing prose and have been reworded
+        /// between releases; type names are what the manifest records for precisely this reason.
+        /// </remarks>
+        internal void SelectModulesByTypeName(IReadOnlyList<string> moduleTypeNames)
+        {
+            HashSet<string> wanted = new HashSet<string>(StringComparer.Ordinal);
+
+            if (moduleTypeNames != null)
             {
-                MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                foreach (string name in moduleTypeNames)
+                {
+                    if (!string.IsNullOrEmpty(name))
+                        wanted.Add(name);
+                }
+            }
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    BackupBase configuration = childNode.Tag as BackupBase;
+
+                    childNode.Checked = configuration != null
+                        && wanted.Contains(configuration.GetType().Name);
+                }
             }
         }
 

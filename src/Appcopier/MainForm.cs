@@ -1,179 +1,186 @@
-﻿using DataHelper;
-using Microsoft.Win32;
 using System;
+using System.Collections.Generic;
 using System.Drawing;
-using System.IO;
-using System.Threading.Tasks;
-using System.Timers;
 using System.Windows.Forms;
 using Views;
 
 namespace Appcopier
 {
+    /// <summary>
+    /// The shell: a left rail and a content host. It owns the views and the navigation, nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Rail entries are constructed once and reused rather than rebuilt on each visit. That is what
+    /// makes ConfPageView's checkbox selection, its log pane and its LogHelper target survive a trip
+    /// to Home and back - the same lifetime the single configPage field already had before the rail
+    /// existed. Home is the exception in spirit only: the instance is reused, but it re-reads the
+    /// backup directory every time it is shown, via IRefreshableView.
+    ///
+    /// Gone with this change: the wallpaper splash (an Image.FromFile of the user's desktop background,
+    /// shown for a hardcoded 500 ms Task.Delay before the real UI appeared) and the QR-code easter egg
+    /// with its timer, hover handlers and MessageBox. Both were removed by the design rather than
+    /// broken. The update check and its version checkbox are untouched.
+    /// </remarks>
     public partial class MainForm : Form
     {
-        private ConfPageView configPage;
-        private System.Timers.Timer timer;
-        private bool isMouseOverQRCode = false;
+        private readonly NavigationService navigation;
+
+        private readonly ConfPageView configPage;
+        private readonly HomePageView homePage;
+        private readonly RestPageView restorePage;
+
+        /// <summary>
+        /// Built on first use, unlike the rail pages.
+        /// </summary>
+        /// <remarks>
+        /// Its constructor fetches the GitHub stargazer count. Building it up front would put a
+        /// network request in every app start for a page most sessions never open - and the old
+        /// code, which built it inside the click handler, did not.
+        /// </remarks>
+        private AboutPageView aboutPage;
 
         public MainForm()
         {
             InitializeComponent();
 
-            // Initialize ConfigurationPageView
+            navigation = new NavigationService(pnlForm);
+
             configPage = new ConfPageView();
+            restorePage = new RestPageView(configPage, navigation);
 
-            // Some Fancy intro crap, just like in the Windows Backup app
-            string wallpaperPath = GetDesktopWallpaper();
-            string pcName = Environment.MachineName;
+            homePage = new HomePageView(GoToBackUp, GoToRestoreFor);
 
-            if (!string.IsNullOrEmpty(wallpaperPath))
-            {
-                try
-                {
-                    Image wallpaperImage = Image.FromFile(wallpaperPath);
-                    pictureWallpaper.Image = wallpaperImage;
-                    lblMachineName.Text = pcName;
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Error loading Wallpaper: {ex.Message}");
-                }
-            }
+            // ConfPageView's own Restore button picks the module SET; the page that follows picks the
+            // folder. A delegate rather than a reference to this form: the view needs one navigation,
+            // not the shell.
+            configPage.ShowRestoreView = () => navigation.Push(restorePage);
 
-            //Load Icons
-            GetCodeIcons();
+            navigation.Root = homePage;
+
+            SetStyle();
         }
 
-        private async void MainForm_Shown(object sender, EventArgs e)
+        private void MainForm_Shown(object sender, EventArgs e)
         {
-            // DO NOT DO THIS! Here's an exception to show something fancy and wait
-            await Task.Delay(500);
-            // Refer to instance ConfigPageView
-            pnlMain.Controls.Add(configPage);
-            configPage.Anchor = (AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom);
-            configPage.Dock = DockStyle.Fill;
-            // Refer Main and default NavPage
-            ViewHelper.SwitchView.INavPage = pnlForm.Controls[0];
-            ViewHelper.SwitchView.mainForm = this;
-            // Get versioning
             checkVersion.Text = GetMinorVersion(Program.GetCurrentVersionTostring());
-            // Get Disk space
             lblDiskSpace.Text = Utils.GetSystemPartitionDiskSpaceInfo();
-            // Load styling
-            this.SetStyle();
-            // Hide fancy intro
-            pictureWallpaper.Visible =
-            lblMachineName.Visible = false;
+
+            navigation.Show(homePage);
         }
 
         private void SetStyle()
         {
-            btnAbout.Text = "\uE946 About";
-            // Some color styling
-            BackColor = Color.FromArgb(243, 243, 243);
+            BackColor = Ui.Surface;
+            pnlRail.BackColor = Ui.RailSurface;
+            pnlStatusBar.BackColor = Ui.RailSurface;
+
+            // The form's own Font is deliberately NOT set. Assigning it here cascades into every
+            // child that inherits, and the hosted UserControls scale their layout against the font
+            // they were designed with - ConfPageView's tree and log pane collapsed to a narrow
+            // column when it was set. Fonts are applied per control instead, and PR 9's theme pass
+            // is where a coordinated sweep belongs.
+
+            lblDiskSpace.Font = Ui.Body();
+            lblDiskSpace.ForeColor = Ui.Muted;
+
+            checkVersion.Font = Ui.Body();
+            checkVersion.ForeColor = Color.Black;
+            checkVersion.BackColor = Ui.RailSurface;
+            checkVersion.FlatAppearance.CheckedBackColor = Ui.RailSurface;
+
+            // Text only. A Button draws its whole caption in one font, so a Segoe Fluent Icons glyph
+            // prefixed to a word either renders the word in the icon font or renders the glyph as a
+            // fallback square - which is exactly what it did. Icons on the rail are PR 9's problem,
+            // when the labels can carry a real glyph control beside them.
+            StyleRailButton(btnHome, "Home");
+            StyleRailButton(btnBackUp, "Back up");
+            StyleRailButton(btnRestore, "Restore");
+            StyleRailButton(btnAbout, "About");
         }
 
-        private void GetCodeIcons()
+        private static void StyleRailButton(Button button, string text)
         {
-            string imageQR = Path.Combine(Data.DataRootDir, "qr.png");
-            string imageAppIcon = Path.Combine(Data.DataRootDir, "AppIcon.png");
-
-            if (File.Exists(imageQR))
-            {
-                picQR.Visible =
-                lblQRInfo.Visible = true;
-                picQR.Image = Image.FromFile(imageQR);
-            }
-            else
-            {
-                picQR.Visible =
-                lblQRInfo.Visible = false;
-            }
-
-            if (File.Exists(imageAppIcon))
-            {
-                picAppIcon.Visible = true;
-                picAppIcon.Image = Image.FromFile(imageAppIcon);
-            }
-            else
-            {
-                picAppIcon.Visible = false;
-            }
-
-            // Set up QR code timer
-            picQR.MouseEnter += picQR_MouseEnter;
-            picQR.MouseLeave += picQR_MouseLeave;
-
-            timer = new System.Timers.Timer();
-            timer.Interval = 500;
-            // Without this the Elapsed handler runs on a thread-pool thread and its MessageBox has no
-            // owner, so it can paint behind the main window while the app stays clickable.
-            timer.SynchronizingObject = this;
-            timer.Elapsed += QRTimerElapsed;
-
-            // FormClosed, not FormClosing: a FormClosing handler runs even when the close is
-            // cancelled, so tearing the timer down there would permanently kill the QR prompt for
-            // a session that carried on running.
-            this.FormClosed += MainForm_FormClosed;
+            button.Text = text;
+            button.Font = Ui.Body();
+            button.ForeColor = Color.Black;
+            button.BackColor = Ui.RailSurface;
+            button.FlatAppearance.BorderSize = 0;
         }
 
-        private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
+        // -----------------------------------------------------------------------------------------
+        // Rail
+        // -----------------------------------------------------------------------------------------
+
+        private void btnHome_Click(object sender, EventArgs e)
+            => navigation.Show(homePage);
+
+        private void btnBackUp_Click(object sender, EventArgs e)
+            => navigation.Show(configPage);
+
+        /// <summary>
+        /// Restore from the rail, which still has to pass through choosing what to restore.
+        /// </summary>
+        /// <remarks>
+        /// The restore SET is chosen in ConfPageView and the FOLDER in RestPageView, in that order -
+        /// RestPageView's OK button runs the restore against configPage.selectedConfigs. Sending the
+        /// rail straight to the folder picker would therefore offer to run a restore of nothing.
+        /// So the rail asks the backup page for its current selection first and, when there is none,
+        /// lands the user on the page where the choice is made, with the same message that button has
+        /// always shown.
+        /// </remarks>
+        private void btnRestore_Click(object sender, EventArgs e)
         {
-            // The mouse handlers must go first: a MouseLeave raised while the form tears down would
-            // otherwise touch the disposed timer.
-            picQR.MouseEnter -= picQR_MouseEnter;
-            picQR.MouseLeave -= picQR_MouseLeave;
-
-            if (timer != null)
+            if (configPage.TryCollectRestoreSelection())
             {
-                timer.Stop();
-                timer.Elapsed -= QRTimerElapsed;
-                timer.Dispose();
-                timer = null;
+                navigation.Show(restorePage);
+                return;
             }
+
+            navigation.Show(configPage);
+
+            MessageBox.Show("Please choose a configuration to restore beforehand.", "",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
-        private void picQR_MouseEnter(object sender, EventArgs e)
+        private void btnAbout_Click(object sender, EventArgs e)
         {
-            isMouseOverQRCode = true;
-            timer?.Start();
+            if (aboutPage == null)
+                aboutPage = new AboutPageView(navigation);
+
+            navigation.Push(aboutPage);
         }
 
-        private void picQR_MouseLeave(object sender, EventArgs e)
+        // -----------------------------------------------------------------------------------------
+        // Home's actions
+        // -----------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Home's "Back up again": go to the backup page, re-ticking what the last run recorded.
+        /// </summary>
+        /// <remarks>
+        /// A null list means the last backup had no readable manifest, so there is nothing to
+        /// re-select and the navigation is plain. Inventing a selection there would tick items the
+        /// user never chose.
+        /// </remarks>
+        private void GoToBackUp(IReadOnlyList<string> moduleTypeNames)
         {
-            isMouseOverQRCode = false;
-            timer?.Stop();
+            if (moduleTypeNames != null)
+                configPage.SelectModulesByTypeName(moduleTypeNames);
+
+            navigation.Show(configPage);
         }
 
-        private void QRTimerElapsed(object sender, ElapsedEventArgs e)
+        private void GoToRestoreFor(string backupFolderName)
         {
-            // This method will be called when timer elapses
-            timer?.Stop();
+            restorePage.LoadBackups();
+            restorePage.SelectBackup(backupFolderName);
 
-            // Marshalled to the UI thread by SynchronizingObject, but an Elapsed already queued when
-            // the form closed still arrives after teardown - hence the null timer check below.
-            // .NET Framework swallowed exceptions thrown by Elapsed handlers; .NET 8 does not, so
-            // anything escaping this method terminates the process. Nothing in here is worth losing
-            // the app over - not even the dialog itself, which can fail on a machine with no
-            // interactive window station.
-            try
-            {
-                if (isMouseOverQRCode && timer != null)
-                {
-                    DialogResult result = MessageBox.Show("Do you want to view the introduction directly in your Desktop Browser?", "Intro", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-
-                    if (result == DialogResult.Yes)
-                    {
-                        Utils.OpenUrl(Data.Uri.URL_GITREPO);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Utils.LogQuietly($"QR code prompt failed: {ex.Message}");
-            }
+            navigation.Show(restorePage);
         }
+
+        // -----------------------------------------------------------------------------------------
+        // Version and update check - unchanged behavior
+        // -----------------------------------------------------------------------------------------
 
         private string GetMinorVersion(string version)
         {
@@ -200,33 +207,5 @@ namespace Appcopier
                 UpdateCheck.CheckForUpdates();
             }
         }
-
-        public static string GetDesktopWallpaper()
-        {
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop"))
-                {
-                    if (key != null)
-                    {
-                        object wallpaperPath = key.GetValue("Wallpaper");
-                        if (wallpaperPath != null)
-                        {
-                            return wallpaperPath.ToString();
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-   
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-
-            return string.Empty;
-        }
-
-        private void btnAbout_Click(object sender, EventArgs e)
-           => ViewHelper.SwitchView.SetView(new AboutPageView());
     }
 }

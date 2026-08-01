@@ -4,6 +4,38 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Changed — the app opens on a Home screen, with a navigation rail (Phase 4, PR 4)
+
+The window now has a list down the left — **Home**, **Back up**, **Restore**, with **About** at the
+bottom — and opens on a new Home screen instead of dropping you straight into the list of items.
+
+Home answers "am I okay?": the name of this PC, how long ago the last backup was and which folder it is
+in, how many items it contained and how many failed, and **the failure reason for each failed item,
+quoted in full and pinned above everything else**. Those reasons sit in boxes you can select and copy,
+so the text can go straight into a bug report. Below that: how many undo points (pre-restore snapshots)
+exist and how much room is left on the drive your backups are written to.
+
+**A backup Home cannot describe is shown as "details unavailable", never as a result.** Backups made
+before the previous entry's `backup_manifest.json` existed have nothing to describe them, and neither
+does a run that was interrupted. Guessing at those could show you a clean result that was never true,
+so Home says it does not know. Those backups are intact and restore exactly as before.
+
+"Back up again" on Home takes you to the Back up screen with the same items ticked that the last backup
+recorded. If that backup named an item this version no longer has, it is skipped without complaint.
+
+**The screens themselves have not changed yet.** Back up and Restore are the existing pages, moved
+behind the rail unchanged — the redesigned versions, with presets and a restore wizard, come in later
+releases. Restore still asks you to tick what you want to bring back before it offers the list of
+backups, and the confirmation dialog before a restore is untouched.
+
+The window is wider than before, by the width of the rail, so the existing pages keep the room they
+were built for.
+
+**Removed:** the desktop-wallpaper picture shown for half a second at startup, and the QR code that
+offered to open the introduction in a browser. Both were decoration on a screen that no longer exists.
+The version number, the update check and the storage estimate are unchanged and now sit along the
+bottom.
+
 ### Added — backups now record what happened, in a file the app can read back (Phase 4, PR 3)
 
 Every backup writes a `backup_manifest.json` next to the existing `backup_log.txt`. It lists each item
