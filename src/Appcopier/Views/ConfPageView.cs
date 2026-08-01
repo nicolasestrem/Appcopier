@@ -126,10 +126,23 @@ namespace Views
             return parentNode;
         }
 
+        /// <summary>
+        /// Raised with true while a backup or restore is running, and false when it ends.
+        /// </summary>
+        /// <remarks>
+        /// This page disables ITSELF for the duration, which was sufficient when every control that
+        /// could touch its state lived on it. The navigation rail does not: it stays live on the
+        /// form while this control is disabled, so its buttons could navigate away mid-run or reach
+        /// back into this page while a run was suspended at an await. The shell listens here and
+        /// shuts the rail for the duration.
+        /// </remarks>
+        internal Action<bool> RunStateChanged = _ => { };
+
         private async void btnBackup_Click(object sender, EventArgs e)
         {
             btnBackup.Enabled = false;
             this.Enabled = false;
+            RunStateChanged(true);
 
             // The whole body is wrapped so the window is re-enabled in a finally. This is an async
             // void handler that disables the form on its first two lines: anything escaping it is
@@ -143,6 +156,7 @@ namespace Views
             {
                 this.Enabled = true;
                 btnBackup.Enabled = true;
+                RunStateChanged(false);
             }
         }
 
@@ -193,17 +207,26 @@ namespace Views
                     }
                 }
 
+                // A private copy for the run. RunModulesBackup enumerates this list across awaits,
+                // and selectedConfigs is a FIELD that other handlers rebuild - so anything reaching
+                // TryCollectRestoreSelection while the run is suspended would clear the collection
+                // mid-foreach and the enumerator would throw out of an async void handler, killing
+                // the backup partway. The rail is shut for the duration, which closes the known
+                // route; this closes the class. The results are paired against the same copy, so
+                // the summary describes what actually ran.
+                List<BackupBase> running = new List<BackupBase>(selectedConfigs);
+
                 List<ModuleResult> results =
-                    await RunModulesBackup(selectedConfigs, CurrentBackupPath, "Backing up");
+                    await RunModulesBackup(running, CurrentBackupPath, "Backing up");
 
                 // Log backed-up elements
-                LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
+                LogBackedUpElements(CurrentBackupPath, running, results);
 
                 // Write backup_manifest.json - the machine-readable companion to the log above.
-                WriteBackupManifest(CurrentBackupPath, selectedConfigs, results);
+                WriteBackupManifest(CurrentBackupPath, running, results);
 
                 ShowSummary(
-                    RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Backup),
+                    RunSummary.For(ModuleOutcome.Pair(running, results), true, RunVerb.Backup),
                     "Backup");
             }
             else
@@ -734,6 +757,7 @@ namespace Views
             // while the first is still writing, and the snapshot this phase adds makes a restore
             // long enough for that to be reachable by hand rather than merely possible.
             this.Enabled = false;
+            RunStateChanged(true);
 
             try
             {
@@ -742,6 +766,7 @@ namespace Views
             finally
             {
                 this.Enabled = true;
+                RunStateChanged(false);
             }
         }
 

@@ -35,6 +35,10 @@ backups, and the confirmation dialog before a restore is untouched.
 The window is wider than before, by the width of the rail, so the existing pages keep the room they
 were built for.
 
+**The list on the left is greyed out while a backup or restore is running**, and comes back when the
+run finishes. Navigating away mid-run would hide the very screen reporting progress, and some of those
+buttons change the selection the run is working from.
+
 **Removed:** the desktop-wallpaper picture shown for half a second at startup, and the QR code that
 offered to open the introduction in a browser. Both were decoration on a screen that no longer exists.
 The version number, the update check and the storage estimate are unchanged and now sit along the

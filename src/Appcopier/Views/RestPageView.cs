@@ -44,6 +44,11 @@ namespace Views
         /// </remarks>
         public void RefreshView()
         {
+            // What is selected right now, before the reload throws it away. Returning from About
+            // pops back to this view and refreshes it again, and without this the folder the user
+            // had chosen - and its log - would vanish because they glanced at the About page.
+            string current = listRestoration.SelectedItem?.ToString();
+
             LoadBackups();
 
             // The list reload clears the selection, but the log pane and its header are not part of
@@ -53,7 +58,9 @@ namespace Views
             rtbLog.Clear();
             linkISubHeader.Visible = false;
 
-            string wanted = pendingSelection;
+            // An explicit request from Home wins over what happened to be selected; re-selecting the
+            // previous folder is only a fallback, and only while it still exists.
+            string wanted = pendingSelection ?? current;
             pendingSelection = null;
 
             ApplySelection(wanted);
@@ -147,6 +154,16 @@ namespace Views
             // which reaches this view for reading and not for restoring. Without it, OK from a
             // fresh launch walks the user through snapshot creation and the consent dialog to
             // restore nothing at all.
+            //
+            // What this checks is that a set EXISTS, not that it was chosen for this backup. Coming
+            // from Home's "View details", the ticks can be left over from an earlier visit to the
+            // backup page, and OK would then restore those modules from this folder. That is
+            // deliberate for now and it is not silent: RestoreConfirmForm still stops everything,
+            // still lists every module by name in words RestorePlan alone authors, still opens with
+            // its consent boxes unticked and Cancel focused. Nothing can be applied without the user
+            // reading the exact list first. Binding the choice to one restore flow means asking
+            // which contents to restore FROM THIS BACKUP, which is PR 7's step 2 - and a half-built
+            // version of it here is state that PR would have to delete.
             if (!configPage.TryCollectRestoreSelection())
             {
                 // Navigate first, so the warning is dismissed onto the page that answers it.

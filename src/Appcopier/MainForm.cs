@@ -55,6 +55,11 @@ namespace Appcopier
             // not the shell.
             configPage.ShowRestoreView = () => navigation.Push(restorePage);
 
+            // The backup page disables itself while a run is going, but the rail lives on the form
+            // and stayed live - so its buttons could navigate away from a running backup, or reach
+            // back into that page's state while the run was suspended at an await.
+            configPage.RunStateChanged = running => SetRailEnabled(!running);
+
             navigation.Root = homePage;
 
             SetStyle();
@@ -105,6 +110,24 @@ namespace Appcopier
             button.ForeColor = Color.Black;
             button.BackColor = Ui.RailSurface;
             button.FlatAppearance.BorderSize = 0;
+        }
+
+        /// <summary>
+        /// Shuts the rail while a backup or restore is running, and opens it again afterwards.
+        /// </summary>
+        /// <remarks>
+        /// The whole rail, not just Restore. Navigating away mid-run would take the page reporting
+        /// progress off screen and leave the user watching a screen that cannot tell them what is
+        /// happening, and Home's "Back up again" re-ticks the tree a running backup is reading.
+        /// About is included for consistency: there is no reason to browse to it during a restore,
+        /// and a half-disabled rail invites the question of which half.
+        /// </remarks>
+        private void SetRailEnabled(bool enabled)
+        {
+            btnHome.Enabled = enabled;
+            btnBackUp.Enabled = enabled;
+            btnRestore.Enabled = enabled;
+            btnAbout.Enabled = enabled;
         }
 
         // -----------------------------------------------------------------------------------------
