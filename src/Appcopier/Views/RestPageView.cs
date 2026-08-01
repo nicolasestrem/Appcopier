@@ -1,4 +1,4 @@
-﻿﻿using Appcopier;
+﻿using Appcopier;
 using DataHelper;
 using System;
 using System.Diagnostics;
@@ -8,10 +8,20 @@ using System.Windows.Forms;
 
 namespace Views
 {
-    public partial class RestPageView : UserControl
+    public partial class RestPageView : UserControl, IRefreshableView
     {
         private readonly ConfPageView configPage;
         private readonly NavigationService navigation;
+
+        /// <summary>
+        /// A folder name to select once the list has been rebuilt, or null.
+        /// </summary>
+        /// <remarks>
+        /// Deferred rather than applied directly, because the list is reloaded every time this view
+        /// is shown and that reload clears the selection. Home asks for a folder BEFORE navigating;
+        /// the request is honoured on the far side of the refresh.
+        /// </remarks>
+        private string pendingSelection;
 
         internal RestPageView(ConfPageView cp, NavigationService navigation)
         {
@@ -21,6 +31,25 @@ namespace Views
 
             LoadBackups();
             SetStyle();
+        }
+
+        /// <summary>
+        /// Re-reads the backup directory. Called by NavigationService on every visit.
+        /// </summary>
+        /// <remarks>
+        /// This view used to be constructed fresh on each navigation, so its constructor's
+        /// LoadBackups was also its refresh. It is now a reused instance, and without this a backup
+        /// taken after startup would not appear in the list until the app was restarted - the folder
+        /// the user just created being precisely the one they are most likely to want.
+        /// </remarks>
+        public void RefreshView()
+        {
+            LoadBackups();
+
+            string wanted = pendingSelection;
+            pendingSelection = null;
+
+            ApplySelection(wanted);
         }
 
         // Some UI nicety
@@ -60,6 +89,15 @@ namespace Views
         /// </remarks>
         internal void SelectBackup(string folderName)
         {
+            pendingSelection = folderName;
+
+            // Also applied immediately, so the method still works on a view that is already on
+            // screen rather than only on the way in.
+            ApplySelection(folderName);
+        }
+
+        private void ApplySelection(string folderName)
+        {
             if (string.IsNullOrEmpty(folderName))
                 return;
 
@@ -74,6 +112,23 @@ namespace Views
             if (listRestoration.SelectedItems.Count != 1)
             {
                 MessageBox.Show("Please select exactly one backup folder for restore.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // The module SET is chosen on the backup page and the FOLDER here. Enforced at the point
+            // the restore actually starts rather than only on the paths that lead here: this is the
+            // single place HandleRestorationAfterSelection is invoked, so guarding it covers every
+            // entry route - the rail, the backup page's own button, and Home's "View details",
+            // which reaches this view for reading and not for restoring. Without it, OK from a
+            // fresh launch walks the user through snapshot creation and the consent dialog to
+            // restore nothing at all.
+            if (!configPage.TryCollectRestoreSelection())
+            {
+                // Navigate first, so the warning is dismissed onto the page that answers it.
+                navigation.Show(configPage);
+
+                MessageBox.Show("Please choose a configuration to restore beforehand.", "",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 

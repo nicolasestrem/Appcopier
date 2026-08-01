@@ -20,6 +20,10 @@ before the previous entry's `backup_manifest.json` existed have nothing to descr
 does a run that was interrupted. Guessing at those could show you a clean result that was never true,
 so Home says it does not know. Those backups are intact and restore exactly as before.
 
+**An item with no recorded outcome is counted separately, as "not recorded".** It is not folded into
+"none failed": a run where an item never reported back is not the same as a run where it went fine, and
+the reason it gives is shown in full just like a failure.
+
 "Back up again" on Home takes you to the Back up screen with the same items ticked that the last backup
 recorded. If that backup named an item this version no longer has, it is skipped without complaint.
 

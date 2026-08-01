@@ -47,10 +47,17 @@ namespace Appcopier
 
         internal static readonly Color Muted = Color.DimGray;
 
-        /// <summary>
-        /// Failure text. Amber is reserved for Skipped and is never green - the styling has to keep
-        /// the distinction the engine's three-state result fought for.
-        /// </summary>
+        /// <summary>Failure text.</summary>
         internal static readonly Color Danger = Color.FromArgb(168, 34, 34);
+
+        /// <summary>
+        /// An outcome that is not a success and not a failure either - skipped, or not recorded.
+        /// </summary>
+        /// <remarks>
+        /// Amber and deliberately never green: the styling has to keep the distinction the engine's
+        /// three-state result fought for, and an item with no recorded outcome must not read as one
+        /// that went fine.
+        /// </remarks>
+        internal static readonly Color Caution = Color.FromArgb(150, 92, 0);
     }
 }

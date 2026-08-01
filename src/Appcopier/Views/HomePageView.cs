@@ -136,30 +136,56 @@ namespace Views
             rows.Controls.Add(Actions(latest, manifest));
         }
 
+        /// <summary>
+        /// The counts line, plus one verbatim row per outcome that is not a success.
+        /// </summary>
+        /// <remarks>
+        /// Three buckets, not two. A row is failed, or it is a state this build recognises as an
+        /// outcome (succeeded/skipped), or it is neither - and the third bucket is real: Compose
+        /// writes state "unknown" for a module that produced no result at all, and a manifest from a
+        /// later build can carry a literal this one has never heard of. Folding those into "none
+        /// failed" would report an item with NO recorded outcome as an item that went fine, which is
+        /// the same inferred-green this screen refuses to do for a whole missing manifest. An
+        /// unrecorded item is not evidence of success; it is the absence of evidence.
+        /// </remarks>
         private void BuildManifestSummary(ManifestData manifest)
         {
             List<ManifestModule> failed = new List<ManifestModule>();
+            List<ManifestModule> unrecorded = new List<ManifestModule>();
 
             foreach (ManifestModule module in manifest.Modules)
             {
                 if (module.State == BackupManifest.StateFailed)
                     failed.Add(module);
+                else if (module.State != BackupManifest.StateSucceeded
+                         && module.State != BackupManifest.StateSkipped)
+                    unrecorded.Add(module);
             }
 
             string counts = manifest.Modules.Count + " item" + (manifest.Modules.Count == 1 ? "" : "s");
 
-            if (failed.Count == 0)
+            if (failed.Count == 0 && unrecorded.Count == 0)
             {
                 rows.Controls.Add(Line(counts + " · none failed", Ui.Body(), Color.Black));
                 return;
             }
 
-            rows.Controls.Add(Line(counts + " · " + failed.Count + " failed", Ui.BodyBold(), Ui.Danger));
+            if (failed.Count > 0)
+                counts += " · " + failed.Count + " failed";
+
+            if (unrecorded.Count > 0)
+                counts += " · " + unrecorded.Count + " not recorded";
+
+            rows.Controls.Add(Line(counts, Ui.BodyBold(),
+                failed.Count > 0 ? Ui.Danger : Ui.Caution));
 
             // Pinned above everything else and quoted verbatim. A rollup here would hide the only
-            // text that says what actually went wrong.
+            // text that says what actually went wrong. Failures first, then the unrecorded ones.
             foreach (ManifestModule module in failed)
-                rows.Controls.Add(Reason(module));
+                rows.Controls.Add(Reason(module, "FAILED", Ui.Danger));
+
+            foreach (ManifestModule module in unrecorded)
+                rows.Controls.Add(Reason(module, "NOT RECORDED", Ui.Caution));
         }
 
         private Control Actions(BackupFolder latest, ManifestData manifest)
@@ -215,32 +241,52 @@ namespace Views
             };
 
         /// <summary>
-        /// One failed module, as a selectable read-only row.
+        /// One non-success module, as a selectable read-only row sized to its whole reason.
         /// </summary>
         /// <remarks>
         /// A TextBox and not a Label, on purpose: the reason is the text a user needs to paste into
         /// an issue, and Label text cannot be selected. ReadOnly rather than disabled so the caret
         /// and Ctrl+C still work; BorderStyle.None and the parent colour so it does not read as an
         /// input someone is meant to type into.
+        ///
+        /// The height is MEASURED rather than fixed. It was 40px with no scrollbars, which is about
+        /// two lines - and real reasons run longer than that (the registry modules quote whole key
+        /// paths). The overflow was clipped silently, so someone copying the visible text would have
+        /// pasted a truncated reason into a bug report without knowing it, which defeats the entire
+        /// point of making the row selectable. Fixed width plus a measurement at that same width
+        /// means what is laid out is what is drawn.
         /// </remarks>
-        private static TextBox Reason(ManifestModule module)
-            => new TextBox
+        private static TextBox Reason(ManifestModule module, string label, Color color)
+        {
+            const int RowWidth = 720;
+
+            string text = "! " + (module.Title ?? module.Type ?? "Unknown item") + " " + label + " - "
+                + (module.Reason ?? "no reason was recorded");
+
+            Font font = Ui.Body();
+
+            Size measured = TextRenderer.MeasureText(
+                text, font, new Size(RowWidth, int.MaxValue), TextFormatFlags.WordBreak);
+
+            return new TextBox
             {
-                Text = "! " + (module.Title ?? module.Type ?? "Unknown item") + " FAILED - "
-                    + (module.Reason ?? "no reason was recorded"),
-                Font = Ui.Body(),
-                ForeColor = Ui.Danger,
+                Text = text,
+                Font = font,
+                ForeColor = color,
                 BackColor = Ui.Surface,
                 ReadOnly = true,
                 BorderStyle = BorderStyle.None,
                 Multiline = true,
                 ScrollBars = ScrollBars.None,
                 WordWrap = true,
-                Height = 40,
-                Width = 720,
-                Margin = new Padding(Ui.SpaceM, 0, 0, Ui.SpaceXs),
-                Dock = DockStyle.Top
+                Width = RowWidth,
+                // One line of slack: TextRenderer and the TextBox's own wrapping can disagree by a
+                // word at a boundary, and this is the direction where being wrong is invisible
+                // rather than silently lossy.
+                Height = measured.Height + font.Height,
+                Margin = new Padding(Ui.SpaceM, 0, 0, Ui.SpaceXs)
             };
+        }
 
         private static Button Button(string text, EventHandler onClick)
         {

@@ -170,9 +170,20 @@ namespace Appcopier
             navigation.Show(configPage);
         }
 
+        /// <summary>
+        /// Home's "View details": open the backup list with that folder selected.
+        /// </summary>
+        /// <remarks>
+        /// Reading, not restoring - so no module selection is required to get here, and none is
+        /// invented. The restore itself is gated inside RestPageView's OK, which is the single place
+        /// it can start; a gate on this navigation would refuse to SHOW a backup because of what the
+        /// user had not yet ticked.
+        ///
+        /// The list is reloaded by NavigationService through IRefreshableView on the way in, which
+        /// is why the selection is requested first and applied on the far side of that refresh.
+        /// </remarks>
         private void GoToRestoreFor(string backupFolderName)
         {
-            restorePage.LoadBackups();
             restorePage.SelectBackup(backupFolderName);
 
             navigation.Show(restorePage);
