@@ -126,10 +126,23 @@ namespace Views
             return parentNode;
         }
 
+        /// <summary>
+        /// Raised with true while a backup or restore is running, and false when it ends.
+        /// </summary>
+        /// <remarks>
+        /// This page disables ITSELF for the duration, which was sufficient when every control that
+        /// could touch its state lived on it. The navigation rail does not: it stays live on the
+        /// form while this control is disabled, so its buttons could navigate away mid-run or reach
+        /// back into this page while a run was suspended at an await. The shell listens here and
+        /// shuts the rail for the duration.
+        /// </remarks>
+        internal Action<bool> RunStateChanged = _ => { };
+
         private async void btnBackup_Click(object sender, EventArgs e)
         {
             btnBackup.Enabled = false;
             this.Enabled = false;
+            RunStateChanged(true);
 
             // The whole body is wrapped so the window is re-enabled in a finally. This is an async
             // void handler that disables the form on its first two lines: anything escaping it is
@@ -143,6 +156,7 @@ namespace Views
             {
                 this.Enabled = true;
                 btnBackup.Enabled = true;
+                RunStateChanged(false);
             }
         }
 
@@ -193,17 +207,29 @@ namespace Views
                     }
                 }
 
+                // A private copy for the run. RunModulesBackup enumerates this list across awaits,
+                // and selectedConfigs is a FIELD that other handlers rebuild - so anything reaching
+                // TryCollectRestoreSelection while the run is suspended would clear the collection
+                // mid-foreach and the enumerator would throw out of an async void handler, killing
+                // the backup partway. The rail is shut for the duration, which closes the known
+                // route; this closes the class. The results are paired against the same copy, so
+                // the summary describes what actually ran.
+                List<BackupBase> running = new List<BackupBase>(selectedConfigs);
+
                 List<ModuleResult> results =
-                    await RunModulesBackup(selectedConfigs, CurrentBackupPath, "Backing up");
+                    await RunModulesBackup(running, CurrentBackupPath, "Backing up");
 
                 // Log backed-up elements
-                LogBackedUpElements(CurrentBackupPath, selectedConfigs, results);
+                LogBackedUpElements(CurrentBackupPath, running, results);
+
+                // Write backup_manifest.json - the machine-readable companion to the log above.
+                WriteBackupManifest(CurrentBackupPath, running, results);
 
                 // Write backup_manifest.json - the machine-readable companion to the log above.
                 WriteBackupManifest(CurrentBackupPath, selectedConfigs, results);
 
                 ShowSummary(
-                    RunSummary.For(ModuleOutcome.Pair(selectedConfigs, results), true, RunVerb.Backup),
+                    RunSummary.For(ModuleOutcome.Pair(running, results), true, RunVerb.Backup),
                     "Backup");
             }
             else
@@ -734,6 +760,7 @@ namespace Views
             // while the first is still writing, and the snapshot this phase adds makes a restore
             // long enough for that to be reachable by hand rather than merely possible.
             this.Enabled = false;
+            RunStateChanged(true);
 
             try
             {
@@ -742,6 +769,7 @@ namespace Views
             finally
             {
                 this.Enabled = true;
+                RunStateChanged(false);
             }
         }
 
@@ -904,36 +932,93 @@ namespace Views
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
-            bool isAtLeastOneChecked = treeConfigurations.Nodes
-                   .Cast<TreeNode>()
-                   .Any(parentNode => parentNode.Nodes.Cast<TreeNode>().Any(childNode => childNode.Checked));
-
-            // At least one node is checked, then proceed!
-            if (isAtLeastOneChecked)
+            if (TryCollectRestoreSelection())
             {
-                // Clear selectedConfigs list before populating it
-                selectedConfigs.Clear();
+                ShowRestoreView();
+                return;
+            }
 
-                foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
+        /// <summary>
+        /// Navigates to the folder picker. Supplied by the shell, which owns that view.
+        /// </summary>
+        /// <remarks>
+        /// A delegate rather than a NavigationService reference, matching how the engine's other
+        /// UI seams are wired: this page needs exactly one navigation, and handing it the whole
+        /// service would let any future edit here reach every screen in the app.
+        /// </remarks>
+        internal Action ShowRestoreView = () => { };
+
+        /// <summary>
+        /// Populates <see cref="selectedConfigs"/> from the ticked tree nodes, reporting whether
+        /// anything was ticked at all.
+        /// </summary>
+        /// <remarks>
+        /// The restore SET is chosen here and the FOLDER on the next page, and RestPageView's OK
+        /// button runs the restore against this list - so this must have succeeded before that page
+        /// is shown, whether the user got there from this page's button or from the rail. Returning
+        /// a bool rather than showing the warning itself: the two callers land the user in different
+        /// places, and only one of them is already on this page.
+        /// </remarks>
+        internal bool TryCollectRestoreSelection()
+        {
+            selectedConfigs.Clear();
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
                 {
-                    foreach (TreeNode childNode in parentNode.Nodes)
+                    if (childNode.Checked)
                     {
-                        if (childNode.Checked)
+                        BackupBase configuration = childNode.Tag as BackupBase;
+                        if (configuration != null)
                         {
-                            BackupBase configuration = childNode.Tag as BackupBase;
-                            if (configuration != null)
-                            {
-                                selectedConfigs.Add(configuration);
-                            }
+                            selectedConfigs.Add(configuration);
                         }
                     }
                 }
-
-                ViewHelper.SwitchView.SetView(new RestPageView(this));
             }
-            else
+
+            return selectedConfigs.Count > 0;
+        }
+
+        /// <summary>
+        /// Ticks exactly the modules named by their CLR type name, unticking everything else.
+        /// </summary>
+        /// <remarks>
+        /// Drives Home's "Back up again" from the names in a backup_manifest.json. Unknown names are
+        /// ignored in silence and that is deliberate, not lax: a manifest written by an older build
+        /// can name a module this one retired - the browser modules Phase 3a removed, for instance -
+        /// and a warning about it would be an error message about someone else's past decision, on a
+        /// button whose entire promise is "the same as last time".
+        ///
+        /// Exact, ordinal type-name match. Titles are user-facing prose and have been reworded
+        /// between releases; type names are what the manifest records for precisely this reason.
+        /// </remarks>
+        internal void SelectModulesByTypeName(IReadOnlyList<string> moduleTypeNames)
+        {
+            HashSet<string> wanted = new HashSet<string>(StringComparer.Ordinal);
+
+            if (moduleTypeNames != null)
             {
-                MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                foreach (string name in moduleTypeNames)
+                {
+                    if (!string.IsNullOrEmpty(name))
+                        wanted.Add(name);
+                }
+            }
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    BackupBase configuration = childNode.Tag as BackupBase;
+
+                    childNode.Checked = configuration != null
+                        && wanted.Contains(configuration.GetType().Name);
+                }
             }
         }
 

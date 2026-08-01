@@ -7,10 +7,14 @@ namespace Views
 {
     public partial class AboutPageView : UserControl
     {
+        private readonly NavigationService navigation;
+
         private Stargazers github;
 
-        public AboutPageView()
+        internal AboutPageView(NavigationService navigation)
         {
+            this.navigation = navigation;
+
             InitializeComponent();
             SetStyle();
 
@@ -28,7 +32,7 @@ namespace Views
         }
 
         private void btnBack_Click(object sender, EventArgs e)
-            => ViewHelper.SwitchView.SetMainFormAsView();
+            => navigation.Pop();
 
         private void GetGitHubStargazers()
         {
