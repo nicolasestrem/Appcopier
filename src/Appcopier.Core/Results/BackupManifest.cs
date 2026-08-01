@@ -160,6 +160,15 @@ namespace Appcopier
                 if (type == null || title == null || state == null || reason == null)
                     return null;
 
+                // state has a CLOSED domain in this schema version, so a value outside it is a
+                // malformed row rather than a value to pass along. A typo like "success" would
+                // otherwise arrive at a reader that compares against "failed", match nothing, and
+                // be counted as an item that did not fail - the same inferred green a row of nulls
+                // produced. A genuinely new literal is a new shape and belongs to a new
+                // manifest_version, which is what that field is for.
+                if (!IsKnownState(state))
+                    return null;
+
                 modules.Add(new ManifestModule(type, title, state, reason));
             }
 
@@ -219,6 +228,19 @@ namespace Appcopier
         /// </remarks>
         private static string Text(JToken token)
             => token != null && token.Type == JTokenType.String ? token.Value<string>() : null;
+
+        /// <summary>
+        /// The complete set of state literals a version-1 manifest may carry.
+        /// </summary>
+        /// <remarks>
+        /// Ordinal and case-sensitive. Compose writes these exact lowercase strings, so a differing
+        /// case is a differing value written by something that is not this app.
+        /// </remarks>
+        private static bool IsKnownState(string state)
+            => state == StateSucceeded
+                || state == StateSkipped
+                || state == StateFailed
+                || state == StateUnknown;
 
         private static string Label(ResultState state)
         {

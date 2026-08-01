@@ -292,6 +292,56 @@ namespace Appcopier.Tests
             Assert.Equal("", data.Modules[0].Reason);
         }
 
+        [Theory]
+        [InlineData("success")]     // plausible typo
+        [InlineData("Succeeded")]   // wrong case
+        [InlineData("partial")]     // a state the engine deliberately does not have
+        [InlineData("")]
+        public void TryParse_UnrecognisedState_ReturnsNull(string state)
+        {
+            // state has a closed domain in this schema version. A value outside it reaches a reader
+            // that compares against "failed", matches nothing, and gets counted as an item that did
+            // not fail - inferred green from a row nobody can interpret. A genuinely new literal is
+            // a new shape and belongs to a new manifest_version.
+            Assert.Null(BackupManifest.TryParse(
+                @"{ ""manifest_version"": 1, ""modules"": [ { ""type"": ""DMouse"", ""title"": ""Mouse"",
+                     ""state"": """ + state + @""", ""reason"": ""x"" } ] }"));
+        }
+
+        [Theory]
+        [InlineData("succeeded")]
+        [InlineData("skipped")]
+        [InlineData("failed")]
+        [InlineData("unknown")]
+        public void TryParse_EveryStateComposeCanWrite_IsAccepted(string state)
+        {
+            // The closed domain must contain everything Compose emits - including "unknown", which
+            // it writes for a module that produced no result. Rejecting that would make the very
+            // documents this app writes unreadable.
+            ManifestData data = BackupManifest.TryParse(
+                @"{ ""manifest_version"": 1, ""modules"": [ { ""type"": ""DMouse"", ""title"": ""Mouse"",
+                     ""state"": """ + state + @""", ""reason"": ""x"" } ] }");
+
+            Assert.Equal(state, Assert.Single(data.Modules).State);
+        }
+
+        [Fact]
+        public void TryParse_AcceptsEveryDocumentComposeProduces()
+        {
+            // The round trip that stops the two halves drifting apart: whatever Compose writes,
+            // including the ragged-list unknown row, TryParse must accept.
+            string json = BackupManifest.Compose(
+                new List<BackupBase> { new DMouse(), new DTouchpad(), new DKeyboard() },
+                new List<ModuleResult> { Ok(), Skip() },   // third module has no result -> unknown
+                When, "m", "u", "b", "0.31.0");
+
+            ManifestData data = BackupManifest.TryParse(json);
+
+            Assert.NotNull(data);
+            Assert.Equal(3, data.Modules.Count);
+            Assert.Equal("unknown", data.Modules[2].State);
+        }
+
         [Fact]
         public void TryParse_AbsentProvenanceFields_StillParses()
         {
