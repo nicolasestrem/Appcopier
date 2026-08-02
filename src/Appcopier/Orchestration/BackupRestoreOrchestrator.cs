@@ -91,10 +91,15 @@ namespace Appcopier
             LogBackedUpElements(backupPath, running, results);
 
             // Write backup_manifest.json - the machine-readable companion to the log above.
+            //
+            // From `running`, never from `selection`. This used to be called twice, the second time
+            // with the caller's mutable list, which is the exact hazard the snapshot above exists to
+            // remove: `selection` is a field the view rebuilds, read here AFTER the awaits. If the
+            // two ever diverged the manifest would record a different module set than the folder
+            // actually holds - and a different one than the RunSummary below reports, since that
+            // pairs against `running`. The manifest is the artifact readers are told to trust, so it
+            // has to agree with what ran. Flagged in review on PR #14 and fixed here.
             WriteBackupManifest(backupPath, running, results);
-
-            // Write backup_manifest.json - the machine-readable companion to the log above.
-            WriteBackupManifest(backupPath, selection, results);
 
             IReadOnlyList<ModuleOutcome> outcomes = ModuleOutcome.Pair(running, results);
 
