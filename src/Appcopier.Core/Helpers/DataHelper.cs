@@ -43,7 +43,7 @@ namespace DataHelper
         // is off. Turn that on for some unrelated content-file reason and BaseDirectory silently
         // becomes a temp directory: the build succeeds, every test passes because none of them
         // publishes single-file, and the release writes every backup under
-        // %TEMP%\.net\Appcopier\<hash>\app\ - where the next temp clean deletes them and RestPageView
+        // %TEMP%\.net\Appcopier\<hash>\app\ - where the next temp clean deletes them and History
         // shows an empty list, so the user believes they have backups they do not have. ProcessPath
         // is the path of the running executable and cannot move like that.
         //

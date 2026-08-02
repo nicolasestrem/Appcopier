@@ -23,7 +23,7 @@ namespace Appcopier
     /// </remarks>
     public static class SnapshotNaming
     {
-        /// <summary>Marks the folder as a snapshot in RestPageView, which lists directory names verbatim.</summary>
+        /// <summary>Marks the folder as a snapshot; BackupFolders.IsSnapshot is the sole reader.</summary>
         public const string Suffix = " (pre-restore)";
 
         private const string TimestampFormat = "yyyy-MM-dd - HH.mm.ss";

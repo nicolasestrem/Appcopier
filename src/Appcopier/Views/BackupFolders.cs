@@ -11,7 +11,7 @@ namespace Views
     /// The backup directory, split into the user's own backups and the pre-restore snapshots.
     /// </summary>
     /// <remarks>
-    /// RestPageView lists these folder names verbatim in one flat list, which is fine for picking a
+    /// The retired picker listed these folder names verbatim in one flat list, which was fine for picking a
     /// folder to restore from but wrong for a dashboard: "last backup: 4 minutes ago" naming a
     /// snapshot the app took by itself, immediately before overwriting something, answers a question
     /// nobody asked. SnapshotNaming is the sole authority on which is which.

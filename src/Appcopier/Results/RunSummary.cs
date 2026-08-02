@@ -65,7 +65,7 @@ namespace Appcopier
 
         /// <param name="because">
         /// Why the run never started, when <paramref name="ran"/> is false. Defaults to the missing
-        /// backup folder that RestPageView hits. The backup path passes its own cause rather than
+        /// backup folder the restore wizard hits. The backup path passes its own cause rather than
         /// accepting that default: telling the user a folder "could not be found" when in fact it
         /// could not be CREATED is the same category of untruth this phase exists to remove.
         /// </param>

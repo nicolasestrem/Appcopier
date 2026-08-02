@@ -51,7 +51,7 @@ namespace Conf
         protected override string RegFileNameFor(string key) => Title + ".reg";
 
         // Path.Combine rather than concatenation. Produces byte-identical paths today because
-        // Data.DataRootDir and RestPageView both hand us a trailing separator, but that is a field
+        // Data.DataRootDir and the restore wizard both hand us a trailing separator, but that is a field
         // contract to honour, not a coincidence to depend on.
         private string FileFor(string path) => Path.Combine(path, RegFileNameFor(Key));
     }

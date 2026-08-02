@@ -231,7 +231,7 @@ namespace Conf
         /// created in the SYSTEM TEMP directory, not in the backup folder, for two reasons: the
         /// restore path also needs a capture (the /getactivescheme read-back) and must not write into
         /// the backup it is restoring from, and the backup folder is enumerated by other modules and
-        /// by RestPageView, so a scratch file there is a stray artifact somebody has to reason about.
+        /// by the History timeline, so a scratch file there is a stray artifact somebody has to reason about.
         ///
         /// It is removed in a finally. A removal that fails is logged and dropped: it leaves a few
         /// hundred bytes in %TEMP% and must never displace the real result of the run.

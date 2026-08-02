@@ -26,7 +26,7 @@ namespace Appcopier
 
         private readonly BackupPageView backupPage;
         private readonly HomePageView homePage;
-        private readonly RestPageView restorePage;
+        private readonly HistoryPageView historyPage;
         private readonly RestoreWizardStep1View wizardStep1;
         private readonly RestoreWizardStep2View wizardStep2;
 
@@ -47,12 +47,12 @@ namespace Appcopier
             navigation = new NavigationService(pnlForm);
 
             backupPage = new BackupPageView();
-            restorePage = new RestPageView(navigation);
+            historyPage = new HistoryPageView(OnRestoreSourcePicked);
 
-            wizardStep1 = new RestoreWizardStep1View(navigation, OnBackupPicked, () => navigation.Show(backupPage));
+            wizardStep1 = new RestoreWizardStep1View(navigation, OnRestoreSourcePicked, () => navigation.Show(backupPage));
             wizardStep2 = new RestoreWizardStep2View(navigation, running => SetRailEnabled(!running));
 
-            homePage = new HomePageView(GoToBackUp, GoToRestoreFor);
+            homePage = new HomePageView(GoToBackUp, GoToHistory);
 
             // The backup page's Restore button opens the wizard (step 1). A delegate rather than a
             // reference to this form: the view needs one navigation, not the shell.
@@ -102,6 +102,7 @@ namespace Appcopier
             StyleRailButton(btnHome, "Home");
             StyleRailButton(btnBackUp, "Back up");
             StyleRailButton(btnRestore, "Restore");
+            StyleRailButton(btnHistory, "History");
             StyleRailButton(btnAbout, "About");
         }
 
@@ -129,6 +130,7 @@ namespace Appcopier
             btnHome.Enabled = enabled;
             btnBackUp.Enabled = enabled;
             btnRestore.Enabled = enabled;
+            btnHistory.Enabled = enabled;
             btnAbout.Enabled = enabled;
         }
 
@@ -149,6 +151,9 @@ namespace Appcopier
         private void btnRestore_Click(object sender, EventArgs e)
             => navigation.Show(wizardStep1);
 
+        private void btnHistory_Click(object sender, EventArgs e)
+            => navigation.Show(historyPage);
+
         private void btnAbout_Click(object sender, EventArgs e)
         {
             if (aboutPage == null)
@@ -162,9 +167,10 @@ namespace Appcopier
         // -----------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Wizard step 1 -> step 2: load the picked folder's contents and push step 2.
+        /// A restore source was picked - from wizard step 1, or from a History row. Load its
+        /// contents into step 2 and push, so Back returns to wherever the user came from.
         /// </summary>
-        private void OnBackupPicked(BackupFolder folder)
+        private void OnRestoreSourcePicked(BackupFolder folder)
         {
             wizardStep2.LoadFolder(folder);
             navigation.Push(wizardStep2);
@@ -187,20 +193,18 @@ namespace Appcopier
         }
 
         /// <summary>
-        /// Home's "View details": open the backup list with that folder selected.
+        /// Home's "View details": open History with that folder's row selected.
         /// </summary>
         /// <remarks>
-        /// Reading, not restoring - so no selection is required. RestPageView remains as a read-only
-        /// log viewer for this path until the History page (PR 8) replaces it.
-        ///
-        /// The list is reloaded by NavigationService through IRefreshableView on the way in, which
-        /// is why the selection is requested first and applied on the far side of that refresh.
+        /// Reading, not restoring - so no selection is required. The timeline is rebuilt by
+        /// NavigationService through IRefreshableView on the way in, which is why the selection is
+        /// requested first and applied on the far side of that refresh.
         /// </remarks>
-        private void GoToRestoreFor(string backupFolderName)
+        private void GoToHistory(string backupFolderName)
         {
-            restorePage.SelectBackup(backupFolderName);
+            historyPage.SelectFolder(backupFolderName);
 
-            navigation.Show(restorePage);
+            navigation.Show(historyPage);
         }
 
         // -----------------------------------------------------------------------------------------
