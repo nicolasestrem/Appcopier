@@ -63,7 +63,8 @@ namespace Appcopier
                 // no-op: the user asked for a backup and got nothing, and they need to be
                 // told which of those two it was.
                 ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Backup,
-                    "the backup folder could not be created: " + createError), "Backup");
+                    "the backup folder could not be created: " + createError), "Backup",
+                    new List<ModuleOutcome>());
                 return;
             }
 
@@ -95,9 +96,11 @@ namespace Appcopier
             // Write backup_manifest.json - the machine-readable companion to the log above.
             WriteBackupManifest(backupPath, selection, results);
 
+            IReadOnlyList<ModuleOutcome> outcomes = ModuleOutcome.Pair(running, results);
+
             ui.ShowSummary(
-                RunSummary.For(ModuleOutcome.Pair(running, results), true, RunVerb.Backup),
-                "Backup");
+                RunSummary.For(outcomes, true, RunVerb.Backup),
+                "Backup", outcomes);
         }
 
         /// <summary>
@@ -613,7 +616,8 @@ namespace Appcopier
         {
             if (currentRestorePath == "" || !Directory.Exists(currentRestorePath))
             {
-                ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore), "Restore");
+                ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore), "Restore",
+                    new List<ModuleOutcome>());
                 return;
             }
 
@@ -724,7 +728,7 @@ namespace Appcopier
                     // would be the misreport this phase exists to remove.
                     ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore,
                         "the pre-restore snapshot did not complete and you chose not to continue." +
-                        DescribeAlreadyClosed(closedUpFront)), "Restore");
+                        DescribeAlreadyClosed(closedUpFront)), "Restore", new List<ModuleOutcome>());
                     return;
                 }
             }
@@ -750,9 +754,11 @@ namespace Appcopier
             // later step would hide the very button its own warning tells the user to press.
             ui.SetExplorerRestartVisible(ExplorerRestartPrompt.IsNeeded(restoredModules, results));
 
+            IReadOnlyList<ModuleOutcome> outcomes = ModuleOutcome.Pair(restoredModules, results);
+
             ui.ShowSummary(
-                RunSummary.For(ModuleOutcome.Pair(restoredModules, results), true, RunVerb.Restore),
-                "Restore");
+                RunSummary.For(outcomes, true, RunVerb.Restore),
+                "Restore", outcomes);
         }
     }
 }

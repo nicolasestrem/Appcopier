@@ -23,7 +23,7 @@ namespace Appcopier
         IWin32Window Owner { get; }
 
         /// <summary>Renders a run result. Replaces ShowSummary's log+MessageBox pair.</summary>
-        void ShowSummary(RunSummary summary, string caption);
+        void ShowSummary(RunSummary summary, string caption, IReadOnlyList<ModuleOutcome> outcomes);
 
         /// <summary>
         /// Modal consent. Returns the consented process names, or null when the user cancelled.

@@ -1,11 +1,11 @@
 ---
 name: new-backup-module
-description: Scaffold a new Appcopier backup module - creates the Conf/ class, the restore-safety declarations, and the ConfPageView tree registration that is easy to miss. Use when adding support for backing up a new Windows setting, app, or device area.
+description: Scaffold a new Appcopier backup module - creates the Conf/ class, the restore-safety declarations, and the ModuleCatalog registration that is easy to miss. Use when adding support for backing up a new Windows setting, app, or device area.
 ---
 
 # New Backup Module
 
-Adding a backup module requires **two synchronized edits**, plus declarations the restore path depends on. The SDK-style project globs `**/*.cs`, so the file is compiled automatically — but registration in the UI tree is not, and missing it means the module silently never appears.
+Adding a backup module requires **two synchronized edits**, plus declarations the restore path depends on. The SDK-style project globs `**/*.cs`, so the file is compiled automatically — but registration in the module catalog is not, and missing it means the module silently never appears.
 
 Read `CLAUDE.md`'s "Reporting outcomes" and "Restore safety" sections before writing any of this. The rules there are not style preferences; each was written after the corresponding mistake shipped.
 
@@ -172,21 +172,21 @@ The file goes in **`src/Appcopier.Core/Conf/`** — the engine library, not the 
 
 Do **not** add a `<Compile Include>` entry to any csproj — the SDK projects glob `**/*.cs`.
 
-## Step 2 — Register in the UI tree
+## Step 2 — Register in the module catalog
 
-In `src/Appcopier/Views/ConfPageView.cs`, method `InitializeConfigurations()`, add next to its category siblings:
+In `src/Appcopier.Core/Conf/ModuleCatalog.cs`, method `CreateAll()`, add a `ModuleRegistration` next to its category siblings, in tree order:
 
 ```csharp
-AddConfiguration(new WExample(), "Settings");
+new ModuleRegistration(new WExample(), "Settings"),
 ```
 
-The second argument must exactly match the tree node name from the table above (a typo silently creates a new top-level category; a genuinely new category is created by spelling it consistently on every module that belongs to it).
+The category string must exactly match the tree node name from the table above (a typo silently creates a new top-level category; a genuinely new category is created by spelling it consistently on every module that belongs to it). `ConfPageView.InitializeConfigurations` now just loops over `ModuleCatalog.CreateAll()`, so this single edit is what puts the module in the tree.
 
 ## Step 3 — Update the hand-kept test rosters
 
 The declaration tests enumerate modules by reflection, but a few assertions are hand-kept and **will fail until updated** — that is their job:
 
-- `RestoreDeclarationTests`: the total module count, the RegistryModule-subclass count, and the close-requirements roster if your module declares one.
+- `RestoreDeclarationTests`: the total module count, the RegistryModule-subclass count, and the close-requirements roster if your module declares one. `ModuleCatalogTests` pins the same 29 — update both counts together when you add a module.
 - `ModuleShapeTests.EveryRegisteredModule_HasATitle`: append your module to the array.
 - `BackupFileNamingTests`: nothing to edit for a new module, but your keys must not collide with any existing `.reg` filename — the global uniqueness sweep catches it.
 

@@ -4,9 +4,7 @@ using DataHelper;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.Drawing;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -38,9 +36,13 @@ namespace Views
         /// <summary>
         /// Runs a backup or restore, routing every progress update, result, consent prompt and
         /// Explorer-restart toggle back here through <see cref="IRunUi"/>. Constructed once with this
-        /// control as the UI surface; Phase 4 PR 5 moved the orchestration bodies out verbatim.
+        /// control as the UI surface.
         /// </summary>
         private readonly BackupRestoreOrchestrator runner;
+
+        // root TableLayoutPanel row indices for the collapsible sections.
+        private const int ResultsRow = 4;
+        private const int LogRow = 6;
 
         private bool isSelectAll = false;
 
@@ -49,70 +51,51 @@ namespace Views
             InitializeComponent();
             InitializeConfigurations();
             SetStyle();
+
             runner = new BackupRestoreOrchestrator(this);
+
+            // A hidden docked/row control must not reserve space. Both results and the activity log
+            // are collapsed by default and expand only when shown, so the row they live in follows.
+            resultsPanel.VisibleChanged += (s, e) => SetRowCollapsed(root, ResultsRow, !resultsPanel.Visible);
+            rtbLog.VisibleChanged += (s, e) => SetRowCollapsed(root, LogRow, !rtbLog.Visible);
+            rtbLog.Visible = false;
+            SetRowCollapsed(root, ResultsRow, !resultsPanel.Visible);
         }
 
         private void SetStyle()
         {
-            // Segoe MDL2 Assets
-            btnMenu.Text = "\uEA8A";
+            BackColor = Ui.Surface;
+
+            headerLabel.Font = Ui.Title();
+            headerLabel.ForeColor = Color.Black;
+
+            linkSubHeader.Font = Ui.BodyBold();
+            linkSubHeader.ForeColor = Color.Black;
+
+            treeConfigurations.Font = Ui.Body();
+
+            txtInfo.Font = Ui.Body();
+            txtInfo.BackColor = Ui.Surface;
+            txtInfo.ForeColor = Color.Black;
+
+            logToggle.Font = Ui.Body();
+
+            // Segoe MDL2 Assets glyphs on the icon buttons.
             btnMenuMore.Text = "\uE712";
             btnMenuRestore.Text = "\uE777";
-            // Some color styling
-            pnlNav.BackColor = Color.FromArgb(245, 241, 249);
-            BackColor =
-            rtbLog.BackColor = Color.FromArgb(250, 250, 250);
-            // Dynamically set OS information
-            rtbLog.Text = string.Format(IntroTemplate, OsHelper.GetVersion());
-            // Log messages to target rtbLog
+
+            rtbLog.BackColor = Ui.Surface;
+            txtInfo.Text = string.Format(IntroTemplate, OsHelper.GetVersion());
             logger.SetTarget(rtbLog);
         }
 
         private void InitializeConfigurations()
         {
-            AddConfiguration(new WPersonalization(), "Settings");
-            AddConfiguration(new WVisualEffects(), "Settings");
-            AddConfiguration(new WTaskbar(), "Settings");
-            AddConfiguration(new WPrivacy(), "Settings");
-            AddConfiguration(new WAPrivacy(), "Settings");
-            AddConfiguration(new WTelemetry(), "Settings");
-            AddConfiguration(new WNetworkConf(), "Settings");
-            AddConfiguration(new WMappedDrives(), "Settings");
-            AddConfiguration(new WUpdates(), "Settings");
-            AddConfiguration(new WPowerPlans(), "Settings");
-            AddConfiguration(new WThemes(), "Settings");
-            AddConfiguration(new WFonts(), "Settings");
-            AddConfiguration(new WAccessibility(), "Settings");
-            AddConfiguration(new WRegional(), "Settings");
-            AddConfiguration(new WOther(), "Settings");
-            AddConfiguration(new AppStoreApps(), "Apps");
-            AddConfiguration(new APinnedApps(), "Apps");
-            // The browser modules (Chrome, Edge, Firefox) were retired in Phase 3a: they copied
-            // whole profile directories - caches, GPU data, live locked databases - and browser
-            // sync solves the problem better than a local export can. Backups made with earlier
-            // versions keep their browser folders on disk; this app no longer restores them.
-            AddConfiguration(new DPrinters(), "Devices");
-            AddConfiguration(new DMouse(), "Devices");
-            AddConfiguration(new DKeyboard(), "Devices");
-            AddConfiguration(new DTouchpad(), "Devices");
-            AddConfiguration(new GGaming(), "Gaming");
-            AddConfiguration(new CWiFiConf(), "Credentials");
-            AddConfiguration(new ETerminal(), "Developer");
-            AddConfiguration(new EVSCode(), "Developer");
-            AddConfiguration(new ESsh(), "Developer");
-            AddConfiguration(new EEnvironment(), "Developer");
-
-            // Directly after EEnvironment on purpose: the two read one key and differ only in what
-            // they keep, and the tree checkbox is the opt-in. Adjacent rows are what makes that a
-            // choice the user can see rather than one buried in the list.
-            AddConfiguration(new EEnvironmentFiltered(), "Developer");
-
-            AddConfiguration(new EHosts(), "Developer");
-
-            // Add event handler for button click
-            btnRestartExplorer.Click += btnRestartExplorer_Click;
+            foreach (ModuleRegistration registration in ModuleCatalog.CreateAll())
+            {
+                AddConfiguration(registration.Module, registration.Category);
+            }
         }
-
         private void AddConfiguration(BackupBase configuration, string parentNodeText)
         {
             TreeNode parentNode = FindOrCreateNode(parentNodeText);
@@ -180,6 +163,7 @@ namespace Views
             // At least one node is checked, then proceed!
             if (!isAtLeastOneChecked)
             {
+                // Input validation, not a result: this stays a MessageBox.
                 MessageBox.Show("Nothing has been selected for backup. Please choose your settings to be backed up beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -223,21 +207,23 @@ namespace Views
         }
 
         // ---------------------------------------------------------------------------------------------
-        //  IRunUi - the UI surface the orchestrator talks back through. Every member is a direct
-        //  replacement for the inline view code Phase 4 PR 5 moved out; zero visual change.
+        //  IRunUi - the UI surface the orchestrator talks back through. Results render in-page via
+        //  resultsPanel; the summary MessageBox is gone. Consent prompts stay modal (consent modality
+        //  is the feature; what was removed is modal spam).
         // ---------------------------------------------------------------------------------------------
 
         void IRunUi.SetProgressText(string text) => linkSubHeader.Text = text;
 
         IWin32Window IRunUi.Owner => FindForm();
 
-        void IRunUi.ShowSummary(RunSummary summary, string caption)
+        void IRunUi.ShowSummary(RunSummary summary, string caption, IReadOnlyList<ModuleOutcome> outcomes)
         {
+            // Keep the log record (it is no longer the primary surface, but it is still the audit
+            // trail), then render in-page. No MessageBox: a 24-ok/1-failed run must not read as green.
             logger.LogMessage(summary.Headline);
             logger.LogMessage(summary.Detail);
 
-            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
-                caption, MessageBoxButtons.OK, summary.Icon);
+            resultsPanel.ShowRun(summary, caption, outcomes);
         }
 
         IReadOnlyList<string> IRunUi.ShowConsentDialog(RestorePlan plan)
@@ -263,7 +249,7 @@ namespace Views
         void IRunUi.ShowPlanCompositionError(string text, string caption)
             => MessageBox.Show(FindForm(), text, caption, MessageBoxButtons.OK, MessageBoxIcon.Error);
 
-        void IRunUi.SetExplorerRestartVisible(bool visible) => btnRestartExplorer.Visible = visible;
+        void IRunUi.SetExplorerRestartVisible(bool visible) => resultsPanel.SetExplorerRestartVisible(visible);
 
         private void btnRestore_Click(object sender, EventArgs e)
         {
@@ -273,6 +259,7 @@ namespace Views
                 return;
             }
 
+            // Input validation, not a result: this stays a MessageBox.
             MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
@@ -384,31 +371,21 @@ namespace Views
             }
         }
 
+        // The info pane replaces the rtbLog dual-use for browsing: selecting a node shows its title,
+        // info, version and - inline, no modal - its warning. Nothing consent-relevant is lost: the
+        // consent dialog still re-carries every warning via RestorePlan.
         private void treeConfigurations_AfterSelect(object sender, TreeViewEventArgs e)
         {
-            if (treeConfigurations.SelectedNode != null && treeConfigurations.SelectedNode.Tag is BackupBase selectedConfiguration)
+            if (treeConfigurations.SelectedNode != null &&
+                treeConfigurations.SelectedNode.Tag is BackupBase selected)
             {
-                // Display the warning message
-                if (!string.IsNullOrEmpty(selectedConfiguration.WarningMessage))
-                {
-                    ShowWarningMessage(selectedConfiguration.WarningMessage);
-                }
+                string warning = selected.WarningMessage;
 
-                logger.ClearLog();
-
-                BackupBase selectedConfig = treeConfigurations.SelectedNode.Tag as BackupBase;
-                if (selectedConfig != null)
-                {
-                    logger.Log((selectedConfig.Title + "\r\n\n" +
-                        selectedConfig.Info + "\r\n" +
-                        selectedConfig.Version));
-                }
+                txtInfo.Text = selected.Title + "\r\n\r\n" +
+                               selected.Info + "\r\n" +
+                               selected.Version +
+                               (string.IsNullOrEmpty(warning) ? "" : "\r\n\r\n\u26A0 " + warning);
             }
-        }
-
-        private void ShowWarningMessage(string warningMessage)
-        {
-            MessageBox.Show(warningMessage, "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         private void btnMenuMore_Click(object sender, EventArgs e)
@@ -426,37 +403,17 @@ namespace Views
             SelectAll(isSelectAll);
         }
 
-        /// <remarks>
-        /// Off the UI thread because the close carries a five-second budget, and the button is hidden
-        /// only when a shell actually came back: hiding it unconditionally, as this did, removed the
-        /// user's only way to retry precisely when the retry was needed.
-        /// </remarks>
-        private async void btnRestartExplorer_Click(object sender, EventArgs e)
-        {
-            btnRestartExplorer.Enabled = false;
-
-            try
-            {
-                ExplorerRestartResult outcome = await Task.Run(() => Utils.RestartExplorer());
-
-                if (outcome.Shell == ShellOutcome.Restarted || outcome.Shell == ShellOutcome.RestartedByWindows)
-                    btnRestartExplorer.Visible = false;
-                else
-                    MessageBox.Show(this, outcome.Describe(), "Restart File Explorer",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            finally
-            {
-                btnRestartExplorer.Enabled = true;
-            }
-        }
-
         private void treeConfigurations_AfterCheck(object sender, TreeViewEventArgs e)
         {
             foreach (TreeNode child in e.Node.Nodes)
             {
                 child.Checked = e.Node.Checked;
             }
+        }
+
+        private void logToggle_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+        {
+            rtbLog.Visible = !rtbLog.Visible;
         }
 
         private void menuOpenAppBackups_Click(object sender, EventArgs e)
@@ -466,7 +423,17 @@ namespace Views
         }
 
         private void menuOpenBackupFolder_Click(object sender, EventArgs e)
-
            => Process.Start(new ProcessStartInfo("explorer.exe", DataHelper.Data.DataRootDir) { UseShellExecute = true });
+
+        /// <summary>
+        /// Collapses (or expands) a row of a <see cref="TableLayoutPanel"/> by switching its row
+        /// style, so a hidden results panel or activity log does not reserve blank space.
+        /// </summary>
+        private static void SetRowCollapsed(TableLayoutPanel tlp, int row, bool collapsed)
+        {
+            tlp.RowStyles[row].SizeType = collapsed ? SizeType.Absolute : SizeType.AutoSize;
+            if (collapsed)
+                tlp.RowStyles[row].Height = 0;
+        }
     }
 }
