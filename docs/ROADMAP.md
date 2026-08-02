@@ -363,9 +363,15 @@ non-portable). `APinnedApps` copies a build-specific Start menu database that is
 non-portable between machines — kept, with its warning strengthened in 3c rather than retired, because
 same-machine restore is its honest use case.
 
-## Phase 4 — UI revamp and modernization
+## Phase 4 — UI revamp and modernization (done)
 
 Full design: [`superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
+
+**Implementation notes, written after the phase closed:**
+[`phase4-completion-implementation-notes.md`](phase4-completion-implementation-notes.md).
+Read that one before changing any of this — it records the decisions the design deferred, the traps
+(the theme walker, the single DPI source of truth, the amber-not-green rule), and, most importantly,
+**what has not yet been verified in an elevated session**.
 
 Phase 4 was originally scoped as the four modernization items at the bottom of this section. It opened
 instead with a **complete UI/UX revamp**, decided 2026-07-21 after a four-direction design pass. The
