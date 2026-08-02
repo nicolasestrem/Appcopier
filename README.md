@@ -1,3 +1,36 @@
+# Appcopier (archived)
+
+Active development has moved to **WinRestoreKit**:
+
+https://github.com/nicolasestrem/WinRestoreKit
+
+WinRestoreKit is the independently maintained and substantially rebuilt
+successor to this fork. This repository remains available for its pull
+requests, issues, release history and development record.
+
+Existing Appcopier backups remain compatible with WinRestoreKit. The backup
+format did not change: the `app\` directory, `backup_manifest.json` and every
+key in it, module identifiers, snapshot and backup folder naming and `.reg`
+file naming are all unchanged. Place `WinRestoreKit.exe` beside your existing
+`app\` directory, or copy that directory beside the executable. Copy it rather
+than experimenting on your only backup.
+
+Appcopier binaries check update endpoints that do not know about WinRestoreKit,
+so they will not offer it to you automatically. Download it once by hand from
+the link above. See
+[MIGRATION.md](https://github.com/nicolasestrem/WinRestoreKit/blob/main/MIGRATION.md)
+for the full record of what changed and what did not.
+
+This repository is not deleted and is not detached from its fork network, so
+every existing link, issue and release stays reachable.
+
+---
+
+## Original README (historical)
+
+The text below is the README as it stood before the move. It is kept unchanged
+as a record and is no longer maintained.
+
 # Appcopier
 ### Back up key things on your Windows PC, perform a reset or simply go back in time.
 
