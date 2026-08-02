@@ -92,7 +92,7 @@ namespace Views
 
         private void Build()
         {
-            rows.Controls.Add(Line("This PC: " + Environment.MachineName, Ui.Title(), Color.Black));
+            rows.Controls.Add(Line("This PC: " + Environment.MachineName, Ui.Title(), Ui.TextPrimary));
 
             BackupFolders folders = BackupFolders.Read();
 
@@ -140,7 +140,7 @@ namespace Views
 
         private void BuildNoBackups()
         {
-            rows.Controls.Add(Line("No backups yet.", Ui.Heading(), Color.Black));
+            rows.Controls.Add(Line("No backups yet.", Ui.Heading(), Ui.TextPrimary));
             rows.Controls.Add(Line("Nothing on this PC has been backed up with Appcopier.", Ui.Body(), Ui.Muted));
             rows.Controls.Add(Button("Back up this PC", (s, e) => backUpAgain(null)));
         }
@@ -149,7 +149,7 @@ namespace Views
         {
             ManifestData manifest = latest.ReadManifest();
 
-            rows.Controls.Add(Line("Last backup: " + Ago(latest.Created), Ui.Heading(), Color.Black));
+            rows.Controls.Add(Line("Last backup: " + Ago(latest.Created), Ui.Heading(), Ui.TextPrimary));
             rows.Controls.Add(Line(latest.Name, Ui.Body(), Ui.Muted));
 
             if (manifest == null)
@@ -157,7 +157,7 @@ namespace Views
                 // Absent, unreadable, or refused by TryParse - all the same answer. Saying anything
                 // else here would mean deriving a verdict from a file this app is not willing to
                 // trust, which is the one thing the manifest exists to prevent.
-                rows.Controls.Add(Line("Details unavailable for this backup.", Ui.BodyBold(), Color.Black));
+                rows.Controls.Add(Line("Details unavailable for this backup.", Ui.BodyBold(), Ui.TextPrimary));
                 rows.Controls.Add(Line(
                     "It carries no readable record of what was captured - backups made before this "
                         + "version have none, and neither does a run that was interrupted. The backup "
@@ -202,7 +202,7 @@ namespace Views
 
             if (failed.Count == 0 && unrecorded.Count == 0)
             {
-                rows.Controls.Add(Line(counts + " · none failed", Ui.Body(), Color.Black));
+                rows.Controls.Add(Line(counts + " · none failed", Ui.Body(), Ui.TextPrimary));
                 return;
             }
 

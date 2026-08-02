@@ -1,7 +1,8 @@
-using System;
-using System.Net;
-using System.Windows.Forms;
 using DataHelper;
+using System;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace Appcopier
 {
@@ -15,41 +16,51 @@ namespace Appcopier
     /// WinForms; and it calls <see cref="Program"/>, which is the application entry point and cannot
     /// be reached from a library the application itself depends on.
     ///
-    /// It moved verbatim, and then took exactly one change: the WebClient below is now disposed.
-    /// Everything a deployed client depends on is untouched - the URL, the parse, and all five
-    /// message texts.
+    /// Phase 4 retargeted it at the GitHub Releases API and replaced WebClient with HttpClient. The
+    /// Releases API is the PRIMARY source and Properties/AssemblyInfo.cs is the FALLBACK, taken on
+    /// any primary failure at all - non-2xx (including the rate-limit 403 that shared IPs hit),
+    /// timeout, malformed JSON, or an empty tag. The fallback is the exact pre-Phase-4 behaviour, so
+    /// a rate-limited client is no worse off than before rather than being told "no update".
     ///
-    /// What stayed behind on Data is the part with no UI and no back-reference: ParseLatestVersion,
-    /// IsInet, and the Uri constants. ParseLatestVersion in particular is pinned by
-    /// VersionParsingTests against the real Properties/AssemblyInfo.cs, and that pairing - remote
-    /// parse against local reflection - is the invariant that keeps the update checker honest.
+    /// All five message texts are unchanged, and both sides of the comparison still go through
+    /// Program.NormalizeVersion - normalizing only one side makes an up-to-date client report a
+    /// phantom update on every check.
     /// </remarks>
     internal static class UpdateCheck
     {
-        public static void CheckForUpdates()
+        /// <summary>
+        /// One client for the whole process; a new one per call leaks sockets in TIME_WAIT.
+        /// </summary>
+        /// <remarks>
+        /// The User-Agent is not optional: api.github.com answers 403 to a request without one.
+        /// </remarks>
+        private static readonly HttpClient Client = CreateClient();
+
+        private static HttpClient CreateClient()
         {
-            if (Data.IsInet() == true)
+            HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Appcopier");
+            return client;
+        }
+
+        internal static async Task CheckForUpdatesAsync()
+        {
+            // Probed ONCE, and the else below must stay an else. IsInet returns bool, not bool?, so
+            // an "else if (IsInet() == false)" is not a third case - it is a second five-second
+            // synchronous probe on the UI thread, and it only ever runs for the offline user who
+            // already waited out the first one. That doubled the freeze to ten seconds before the
+            // "problem on Internet connection" message appeared.
+            if (Data.IsInet())
             {
                 try
                 {
-                    // Disposed, which the pre-move code did not do. DownloadString has already
-                    // returned the whole body by the time this block exits, so nothing here reads
-                    // the client afterwards - and Data.IsInet, ten lines below in the file this
-                    // moved out of, already wrapped its own WebClient exactly this way.
-                    string assemblyInfo;
-
-                    using (WebClient client = new WebClient())
-                    {
-                        assemblyInfo = client.DownloadString(Data.Uri.URL_ASSEMBLY);
-                    }
-
-                    string parsed = Data.ParseLatestVersion(assemblyInfo);
+                    string parsed = await ReadLatestVersionAsync();
 
                     if (string.IsNullOrWhiteSpace(parsed))
                     {
-                        // The file downloaded but held no AssemblyFileVersion we could read. Saying
-                        // so beats the old behavior, which compared "" against the current version,
-                        // found them unequal, and offered a download for a nonexistent release.
+                        // Neither source held a version we could read. Saying so beats the old
+                        // behavior, which compared "" against the current version, found them
+                        // unequal, and offered a download for a nonexistent release.
                         MessageBox.Show(
                             "Could not read the latest version number from the update file.",
                             "Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -78,10 +89,38 @@ namespace Appcopier
                     MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
                 }
             }
-            else if (Data.IsInet() == false)
+            else
             {
                 MessageBox.Show($"Problem on Internet connection: Checking for App updates failed");
             }
+        }
+
+        /// <summary>
+        /// The newest published version: the Releases API tag, or the AssemblyInfo version when that
+        /// path fails for any reason.
+        /// </summary>
+        private static async Task<string> ReadLatestVersionAsync()
+        {
+            try
+            {
+                using (HttpResponseMessage response = await Client.GetAsync(Data.Uri.URL_GITAPI_LATEST))
+                {
+                    response.EnsureSuccessStatusCode();
+
+                    string tag = Data.ParseLatestReleaseTag(await response.Content.ReadAsStringAsync());
+
+                    if (!string.IsNullOrWhiteSpace(tag))
+                        return tag;
+                }
+            }
+            catch (Exception)
+            {
+                // Any primary failure falls through to the file the deployed clients already read.
+                // Swallowed deliberately and narrowly: the fallback below reports its own failure to
+                // the caller's catch, so a total outage is still surfaced rather than hidden.
+            }
+
+            return Data.ParseLatestVersion(await Client.GetStringAsync(Data.Uri.URL_ASSEMBLY));
         }
     }
 }

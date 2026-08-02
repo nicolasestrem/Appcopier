@@ -43,6 +43,26 @@ namespace Appcopier
         public virtual bool HasBackupIn(string restorePath) => true;
 
         /// <summary>
+        /// Whether <paramref name="backupPath"/> demonstrably holds this module's artifacts:
+        /// TRUE when they are there, FALSE when they provably are not, and NULL when this module
+        /// cannot tell.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately NOT <see cref="HasBackupIn"/>, despite asking a similar-sounding question.
+        /// That one decides whether to CLOSE AN APPLICATION for a restore, so it fails open: its
+        /// documented default is true and two subclasses answer true without probing whenever no
+        /// process has to die. Correct there, and useless here - the restore wizard asks "what is
+        /// actually in this folder", and a seam that says yes by default answers every module yes,
+        /// which is the same as not asking.
+        ///
+        /// Hence three states rather than two. A module that has not been taught to look says NULL
+        /// and the caller decides what silence means; it must never be forced to guess, because
+        /// both guesses are wrong in a way the user pays for - false hides a restore they asked
+        /// for, true offers one that was never there.
+        /// </remarks>
+        public virtual bool? HasArtifactIn(string backupPath) => null;
+
+        /// <summary>
         /// The backup file this module writes for one registry key.
         /// </summary>
         /// <remarks>
@@ -59,6 +79,64 @@ namespace Appcopier
         /// </remarks>
         protected virtual string RegFileNameFor(string key)
             => $"{Title}_{GetSafeFileName(key)}.reg";
+
+        /// <summary>
+        /// The directory name a module writes one backed-up folder under: <c>{Title}_{leaf}</c>.
+        /// </summary>
+        /// <remarks>
+        /// The folder-side twin of <see cref="RegFileNameFor"/>, and extracted for the same reason
+        /// that one was: WFonts, WTaskbar and WThemes each built this expression inline, four sites
+        /// between them plus a private helper, and <see cref="HasArtifactIn"/> needed a fifth. A
+        /// probe that spells the name even slightly differently from the writer reports "nothing in
+        /// this backup" over a folder that is full, and disables the checkbox saying so - a silent
+        /// wrong answer of exactly the kind RegFileNameFor's remarks were written about.
+        /// </remarks>
+        protected string BackupFolderNameFor(string folder)
+            => $"{Title}_{GetSafeFileName(Path.GetFileName(folder))}";
+
+        /// <summary>
+        /// <see cref="HasArtifactIn"/> for the modules that back up a list of folders plus a list of
+        /// registry keys: true when any one of those artifacts is present.
+        /// </summary>
+        /// <remarks>
+        /// ANY, not all. These modules aggregate independently restorable halves - WThemes' wallpaper
+        /// folder and its Control Panel keys - and a machine that had one but not the other still
+        /// produced a backup worth offering.
+        ///
+        /// A folder must be non-empty to count, because Utils.CopyFolder creates its destination
+        /// before copying: a run where every file failed leaves the directory behind.
+        /// </remarks>
+        protected bool HasFolderOrKeyArtifactIn(string backupPath, List<string> folders, List<string> keys)
+        {
+            if (string.IsNullOrWhiteSpace(backupPath))
+                return false;
+
+            if (folders != null)
+            {
+                foreach (string folder in folders)
+                {
+                    string dir = Path.Combine(backupPath, BackupFolderNameFor(folder));
+
+                    if (!Directory.Exists(dir))
+                        continue;
+
+                    // foreach so the enumerator - which holds a directory handle - is disposed.
+                    foreach (string unused in Directory.EnumerateFileSystemEntries(dir))
+                        return true;
+                }
+            }
+
+            if (keys != null)
+            {
+                foreach (string key in keys)
+                {
+                    if (File.Exists(Path.Combine(backupPath, RegFileNameFor(key))))
+                        return true;
+                }
+            }
+
+            return false;
+        }
 
         // There is deliberately no RegFileNamesToTryOnRestore companion to the above.
         //

@@ -45,13 +45,20 @@ namespace Conf
                 Utils.ImportRegistryKey(FileFor(path), Key)
             });
 
+        /// <remarks>
+        /// One key, one .reg file, and its name is fixed - so presence is a straight File.Exists
+        /// and this module never has to answer "cannot tell".
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => !string.IsNullOrWhiteSpace(backupPath) && File.Exists(FileFor(backupPath));
+
         // One key, so one file, and the name does not need to encode which key it holds. Overriding
         // rather than inheriting the key-derived default keeps the filenames these ten modules have
         // always written, so existing backups stay restorable.
         protected override string RegFileNameFor(string key) => Title + ".reg";
 
         // Path.Combine rather than concatenation. Produces byte-identical paths today because
-        // Data.DataRootDir and RestPageView both hand us a trailing separator, but that is a field
+        // Data.DataRootDir and the restore wizard both hand us a trailing separator, but that is a field
         // contract to honour, not a coincidence to depend on.
         private string FileFor(string path) => Path.Combine(path, RegFileNameFor(Key));
     }

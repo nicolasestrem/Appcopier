@@ -26,8 +26,11 @@
     <!--
       Leave ApplicationHighDpiMode / ApplicationVisualStyles / ApplicationUseCompatibleTextRendering
       / ApplicationDefaultFont UNSET, and do not introduce ApplicationConfiguration.Initialize()
-      in Program.cs: any of those would emit a competing config that silently flips DPI awareness
-      from the System-aware mode declared in app.manifest to PerMonitorV2.
+      in Program.cs. DPI awareness is now set in exactly ONE place - the
+      Application.SetHighDpiMode(PerMonitorV2) call at the top of Program.Main (Phase 4 PR 9), with
+      the app.manifest <dpiAware> element deliberately removed because a manifest setting overrides
+      the runtime call. Any of the properties above would emit a competing generated config and give
+      this two sources of truth again.
     -->
   </PropertyGroup>
 

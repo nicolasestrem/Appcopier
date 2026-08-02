@@ -92,5 +92,24 @@ namespace Conf
 
             return ModuleResult.Aggregate(steps);
         }
+
+        /// <remarks>
+        /// ANY key's file counts. A partial export - some keys absent on the source machine, which
+        /// AbsenceIsNormal makes a routine outcome - still leaves a restorable backup, so requiring
+        /// all of them would hide it.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+        {
+            if (string.IsNullOrWhiteSpace(backupPath))
+                return false;
+
+            foreach (string k in Keys)
+            {
+                if (File.Exists(Path.Combine(backupPath, RegFileNameFor(k))))
+                    return true;
+            }
+
+            return false;
+        }
     }
 }

@@ -208,5 +208,19 @@ namespace Conf
 
             return ModuleResult.Aggregate(steps);
         }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// The same content-based selection the restore uses, and it has to be: netsh names exports
+        /// "&lt;interface&gt;-&lt;SSID&gt;.xml" with a machine-specific localised interface name, so
+        /// no filename pattern identifies them, and these land in the SHARED backup root beside every
+        /// other module's files. A bare "any *.xml here" probe would answer yes for a folder whose
+        /// only XML belongs to something else.
+        ///
+        /// FindIn is already total - blank path, missing directory and any IO fault all return an
+        /// empty array rather than throwing - so this cannot escape into the wizard's load.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => WlanProfile.FindIn(backupPath).Length > 0;
     }
 }

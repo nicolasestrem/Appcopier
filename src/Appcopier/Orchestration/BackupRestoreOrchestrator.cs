@@ -1,241 +1,111 @@
-﻿using Appcopier;
-using Conf;
 using DataHelper;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
-namespace Views
+namespace Appcopier
 {
-    public partial class ConfPageView : UserControl
+    /// <summary>
+    /// Runs a backup or restore, reporting back through an <see cref="IRunUi"/>.
+    /// </summary>
+    /// <remarks>
+    /// Moved verbatim out of <c>ConfPageView</c> in Phase 4 PR 5. Every method body is the view's
+    /// former code with only the mechanical substitutions the PR lists: progress text, summary,
+    /// consent, snapshot override, plan-composition error and Explorer-restart visibility are now
+    /// routed through <see cref="IRunUi"/> instead of being read off controls and shown directly.
+    /// The tree/selection reads stayed in the view; this class receives the final
+    /// <see cref="BackupBase"/> selection and the paths as parameters.
+    /// </remarks>
+    internal sealed class BackupRestoreOrchestrator
     {
         private static readonly LogHelper logger = LogHelper.Instance;
 
-        /// <summary>
-        /// The greeting shown in the log pane. {0} is the OS build string from OsHelper.GetVersion.
-        /// </summary>
-        /// <remarks>
-        /// A const rather than an inline interpolation so the composition is testable without
-        /// constructing the control. GetVersion degrades to a self-describing token rather than to
-        /// an empty string precisely so this sentence cannot come out with a double space or a
-        /// stray " ." in it; OsVersionTests asserts that for every degraded shape.
-        /// </remarks>
-        internal const string IntroTemplate =
-            "This app supports you in backing up, sharing, and restoring your key settings of your Windows 11 {0} on this or another system.";
-
-        internal string CurrentBackupPath = Data.DataRootDir + Data.NowShort + "\\";
-        internal string CurrentRestorePath = "";
-
-        internal List<BackupBase> selectedConfigs = new List<BackupBase>();
-
-        private bool isSelectAll = false;
-
-        public ConfPageView()
-        {
-            InitializeComponent();
-            InitializeConfigurations();
-            SetStyle();
-        }
-
-        private void SetStyle()
-        {
-            // Segoe MDL2 Assets
-            btnMenu.Text = "\uEA8A";
-            btnMenuMore.Text = "\uE712";
-            btnMenuRestore.Text = "\uE777";
-            // Some color styling
-            pnlNav.BackColor = Color.FromArgb(245, 241, 249);
-            BackColor =
-            rtbLog.BackColor = Color.FromArgb(250, 250, 250);
-            // Dynamically set OS information
-            rtbLog.Text = string.Format(IntroTemplate, OsHelper.GetVersion());
-            // Log messages to target rtbLog
-            logger.SetTarget(rtbLog);
-        }
-
-        private void InitializeConfigurations()
-        {
-            AddConfiguration(new WPersonalization(), "Settings");
-            AddConfiguration(new WVisualEffects(), "Settings");
-            AddConfiguration(new WTaskbar(), "Settings");
-            AddConfiguration(new WPrivacy(), "Settings");
-            AddConfiguration(new WAPrivacy(), "Settings");
-            AddConfiguration(new WTelemetry(), "Settings");
-            AddConfiguration(new WNetworkConf(), "Settings");
-            AddConfiguration(new WMappedDrives(), "Settings");
-            AddConfiguration(new WUpdates(), "Settings");
-            AddConfiguration(new WPowerPlans(), "Settings");
-            AddConfiguration(new WThemes(), "Settings");
-            AddConfiguration(new WFonts(), "Settings");
-            AddConfiguration(new WAccessibility(), "Settings");
-            AddConfiguration(new WRegional(), "Settings");
-            AddConfiguration(new WOther(), "Settings");
-            AddConfiguration(new AppStoreApps(), "Apps");
-            AddConfiguration(new APinnedApps(), "Apps");
-            // The browser modules (Chrome, Edge, Firefox) were retired in Phase 3a: they copied
-            // whole profile directories - caches, GPU data, live locked databases - and browser
-            // sync solves the problem better than a local export can. Backups made with earlier
-            // versions keep their browser folders on disk; this app no longer restores them.
-            AddConfiguration(new DPrinters(), "Devices");
-            AddConfiguration(new DMouse(), "Devices");
-            AddConfiguration(new DKeyboard(), "Devices");
-            AddConfiguration(new DTouchpad(), "Devices");
-            AddConfiguration(new GGaming(), "Gaming");
-            AddConfiguration(new CWiFiConf(), "Credentials");
-            AddConfiguration(new ETerminal(), "Developer");
-            AddConfiguration(new EVSCode(), "Developer");
-            AddConfiguration(new ESsh(), "Developer");
-            AddConfiguration(new EEnvironment(), "Developer");
-
-            // Directly after EEnvironment on purpose: the two read one key and differ only in what
-            // they keep, and the tree checkbox is the opt-in. Adjacent rows are what makes that a
-            // choice the user can see rather than one buried in the list.
-            AddConfiguration(new EEnvironmentFiltered(), "Developer");
-
-            AddConfiguration(new EHosts(), "Developer");
-
-            // Add event handler for button click
-            btnRestartExplorer.Click += btnRestartExplorer_Click;
-        }
-
-        private void AddConfiguration(BackupBase configuration, string parentNodeText)
-        {
-            TreeNode parentNode = FindOrCreateNode(parentNodeText);
-            TreeNode childNode = new TreeNode(configuration.Title);
-            childNode.Tag = configuration;
-            parentNode.Nodes.Add(childNode);
-        }
-
-        private TreeNode FindOrCreateNode(string text)
-        {
-            TreeNode parentNode = treeConfigurations.Nodes.Cast<TreeNode>()
-                .FirstOrDefault(node => node.Text == text);
-
-            if (parentNode == null)
-            {
-                parentNode = new TreeNode(text);
-                treeConfigurations.Nodes.Add(parentNode);
-            }
-
-            return parentNode;
-        }
+        private readonly IRunUi ui;
 
         /// <summary>
-        /// Raised with true while a backup or restore is running, and false when it ends.
+        /// The folder being restored from, for the duration of a <see cref="RunRestore"/> call.
         /// </summary>
         /// <remarks>
-        /// This page disables ITSELF for the duration, which was sufficient when every control that
-        /// could touch its state lived on it. The navigation rail does not: it stays live on the
-        /// form while this control is disabled, so its buttons could navigate away mid-run or reach
-        /// back into this page while a run was suspended at an await. The shell listens here and
-        /// shuts the rail for the duration.
+        /// Set once at the entry of <see cref="RunRestore"/> and read by the restore helpers, exactly
+        /// as the view's former <c>CurrentRestorePath</c> field was. Backup and restore never run
+        /// concurrently: the page disables itself and the rail is shut for the whole run.
         /// </remarks>
-        internal Action<bool> RunStateChanged = _ => { };
+        private string currentRestorePath;
 
-        private async void btnBackup_Click(object sender, EventArgs e)
+        internal BackupRestoreOrchestrator(IRunUi ui)
         {
-            btnBackup.Enabled = false;
-            this.Enabled = false;
-            RunStateChanged(true);
-
-            // The whole body is wrapped so the window is re-enabled in a finally. This is an async
-            // void handler that disables the form on its first two lines: anything escaping it is
-            // unhandled AND leaves the main window permanently dead, with no way back short of
-            // killing the process.
-            try
-            {
-                await RunBackup();
-            }
-            finally
-            {
-                this.Enabled = true;
-                btnBackup.Enabled = true;
-                RunStateChanged(false);
-            }
+            this.ui = ui;
         }
 
-        private async Task RunBackup()
+        internal Task RunBackup(IReadOnlyList<BackupBase> selection, string backupPath)
+            => RunBackupCore(selection, backupPath);
+
+        internal Task RunRestore(IReadOnlyList<BackupBase> selection, string restorePath)
         {
-            selectedConfigs.Clear();
+            currentRestorePath = restorePath;
+            return RunRestoreCore(selection);
+        }
 
-            bool isAtLeastOneChecked = treeConfigurations.Nodes
-                .Cast<TreeNode>()
-                .Any(parentNode => parentNode.Nodes.Cast<TreeNode>().Any(childNode => childNode.Checked));
+        // ---------------------------------------------------------------------------------------------
+        //  Backup
+        // ---------------------------------------------------------------------------------------------
 
-            // At least one node is checked, then proceed!
-            if (isAtLeastOneChecked)
+        private async Task RunBackupCore(IReadOnlyList<BackupBase> selection, string backupPath)
+        {
+            string createError;
+
+            if (!TryCreateBackupFolder(backupPath, out createError))
             {
-                string createError;
-
-                if (!TryCreateBackupFolder(CurrentBackupPath, out createError))
-                {
-                    // Reported as a run that DID NOT RUN, not as a crash and not as a silent
-                    // no-op: the user asked for a backup and got nothing, and they need to be
-                    // told which of those two it was.
-                    ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Backup,
-                        "the backup folder could not be created: " + createError), "Backup");
-                    return;
-                }
-
-                // Before a single module writes anything. CurrentBackupPath is built from
-                // Data.NowShort, stamped once per process, so a second Backup click in the same
-                // session runs into the SAME folder - and the first run's manifest would otherwise
-                // survive alongside files the second run has already replaced. That is the
-                // confidently-green failure the whole-and-last write exists to prevent, arriving by
-                // a different route: an interrupted second run must read as unknown, not as the
-                // first run's verdict.
-                InvalidateBackupManifest(CurrentBackupPath);
-
-                foreach (TreeNode parentNode in treeConfigurations.Nodes)
-                {
-                    foreach (TreeNode childNode in parentNode.Nodes)
-                    {
-                        if (childNode.Checked)
-                        {
-                            BackupBase configuration = childNode.Tag as BackupBase;
-                            if (configuration != null)
-                            {
-                                selectedConfigs.Add(configuration);
-                            }
-                        }
-                    }
-                }
-
-                // A private copy for the run. RunModulesBackup enumerates this list across awaits,
-                // and selectedConfigs is a FIELD that other handlers rebuild - so anything reaching
-                // TryCollectRestoreSelection while the run is suspended would clear the collection
-                // mid-foreach and the enumerator would throw out of an async void handler, killing
-                // the backup partway. The rail is shut for the duration, which closes the known
-                // route; this closes the class. The results are paired against the same copy, so
-                // the summary describes what actually ran.
-                List<BackupBase> running = new List<BackupBase>(selectedConfigs);
-
-                List<ModuleResult> results =
-                    await RunModulesBackup(running, CurrentBackupPath, "Backing up");
-
-                // Log backed-up elements
-                LogBackedUpElements(CurrentBackupPath, running, results);
-
-                // Write backup_manifest.json - the machine-readable companion to the log above.
-                WriteBackupManifest(CurrentBackupPath, running, results);
-
-                // Write backup_manifest.json - the machine-readable companion to the log above.
-                WriteBackupManifest(CurrentBackupPath, selectedConfigs, results);
-
-                ShowSummary(
-                    RunSummary.For(ModuleOutcome.Pair(running, results), true, RunVerb.Backup),
-                    "Backup");
+                // Reported as a run that DID NOT RUN, not as a crash and not as a silent
+                // no-op: the user asked for a backup and got nothing, and they need to be
+                // told which of those two it was.
+                ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Backup,
+                    "the backup folder could not be created: " + createError), "Backup",
+                    new List<ModuleOutcome>());
+                return;
             }
-            else
-            {
-                MessageBox.Show("Nothing has been selected for backup. Please choose your settings to be backed up beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+
+            // Before a single module writes anything. The backup path is built from Data.NowShort
+            // by the caller, stamped once per process, so a second Backup click in the same session
+            // runs into the SAME folder - and the first run's manifest would otherwise survive
+            // alongside files the second run has already replaced. That is the confidently-green
+            // failure the whole-and-last write exists to prevent, arriving by a different route: an
+            // interrupted second run must read as unknown, not as the first run's verdict.
+            InvalidateBackupManifest(backupPath);
+
+            // A private copy for the run. RunModulesBackup enumerates this list across awaits, and
+            // the caller's selection list is mutable - so a re-entrant handler that rebuilt it while
+            // the run is suspended would clear the collection mid-foreach and the enumerator would
+            // throw out of an async void handler, killing the backup partway. The rail is shut for
+            // the duration, which closes the known route; this closes the class. The results are
+            // paired against the same copy, so the summary describes what actually ran.
+            List<BackupBase> running = new List<BackupBase>(selection);
+
+            List<ModuleResult> results =
+                await RunModulesBackup(running, backupPath, "Backing up");
+
+            // Log backed-up elements
+            LogBackedUpElements(backupPath, running, results);
+
+            // Write backup_manifest.json - the machine-readable companion to the log above.
+            //
+            // From `running`, never from `selection`. This used to be called twice, the second time
+            // with the caller's mutable list, which is the exact hazard the snapshot above exists to
+            // remove: `selection` is a field the view rebuilds, read here AFTER the awaits. If the
+            // two ever diverged the manifest would record a different module set than the folder
+            // actually holds - and a different one than the RunSummary below reports, since that
+            // pairs against `running`. The manifest is the artifact readers are told to trust, so it
+            // has to agree with what ran. Flagged in review on PR #14 and fixed here.
+            WriteBackupManifest(backupPath, running, results);
+
+            IReadOnlyList<ModuleOutcome> outcomes = ModuleOutcome.Pair(running, results);
+
+            ui.ShowSummary(
+                RunSummary.For(outcomes, true, RunVerb.Backup),
+                "Backup", outcomes);
         }
 
         /// <summary>
@@ -280,7 +150,7 @@ namespace Views
 
             foreach (BackupBase module in modules)
             {
-                linkSubHeader.Text = progressVerb + ": " + module.Title;
+                ui.SetProgressText(progressVerb + ": " + module.Title);
 
                 ModuleResult outcome;
 
@@ -301,19 +171,10 @@ namespace Views
 
                 results.Add(outcome);
 
-                linkSubHeader.Text = "Choose settings";
+                ui.SetProgressText("Choose settings");
             }
 
             return results;
-        }
-
-        private static void ShowSummary(RunSummary summary, string caption)
-        {
-            logger.LogMessage(summary.Headline);
-            logger.LogMessage(summary.Detail);
-
-            MessageBox.Show(summary.Headline + "\r\n\r\n" + summary.Detail,
-                caption, MessageBoxButtons.OK, summary.Icon);
         }
 
         // Write a backup_log.txt that records outcomes, not just the selection.
@@ -340,7 +201,7 @@ namespace Views
         /// <remarks>
         /// The whole-and-last write guarantees a manifest describes a COMPLETED run, but only for a
         /// folder that started empty. Backing up twice in one session reuses the folder, because
-        /// CurrentBackupPath is built from Data.NowShort and that is stamped once per process. Then
+        /// the backup path is built from Data.NowShort and that is stamped once per process. Then
         /// the first run's manifest sits beside files the second run has already overwritten, and if
         /// the second run is interrupted the reader trusts a verdict for data that is no longer
         /// there - a stale green, which is the failure this file exists to make impossible.
@@ -488,6 +349,10 @@ namespace Views
             }
         }
 
+        // ---------------------------------------------------------------------------------------------
+        //  Restore
+        // ---------------------------------------------------------------------------------------------
+
         /// <summary>
         /// Runs one module's restore, having first dealt with the process that owns the files it is
         /// about to overwrite.
@@ -573,7 +438,7 @@ namespace Views
                     closeSteps.Add(DescribeJustInTimeClose(config.Title, requirement, closed));
                 }
 
-                ModuleResult outcome = await config.RestoreAsync(CurrentRestorePath);
+                ModuleResult outcome = await config.RestoreAsync(currentRestorePath);
 
                 foreach (StepResult closeStep in closeSteps)
                     outcome = RestoreDispatch.Fold(closeStep, outcome);
@@ -583,9 +448,8 @@ namespace Views
             catch (Exception ex)
             {
                 // Rule 6, and it matters more here than on the backup path: this method is awaited
-                // by HandleRestorationAfterSelection, which is itself awaited from an async void
-                // handler in RestPageView, and AppStoreApps.Restore opens a dialog from a
-                // thread-pool thread with no message pump.
+                // by the restore flow, which is itself awaited from an async void handler, and
+                // AppStoreApps.Restore opens a dialog from a thread-pool thread with no message pump.
                 return ModuleResult.Aggregate(new[]
                 {
                     StepResult.Failed(config.Title, "unhandled error: " + ex.GetType().Name + ": " + ex.Message)
@@ -612,7 +476,7 @@ namespace Views
                 // RestoreScope's, deliberately not a second copy: this asks the same question of
                 // the same modules that Evaluate asks moments later, and the two must not be able
                 // to disagree. See the remarks on RestoreScope.HasBackup.
-                if (!RestoreScope.HasBackup(module, CurrentRestorePath))
+                if (!RestoreScope.HasBackup(module, currentRestorePath))
                     continue;
 
                 foreach (RestoreCloseRequirement requirement in
@@ -688,11 +552,11 @@ namespace Views
 
             foreach (RestoreScopeEntry entry in scope)
             {
-                linkSubHeader.Text = "Restoring: " + entry.Module.Title;
+                ui.SetProgressText("Restoring: " + entry.Module.Title);
 
                 results.Add(await RestoreOne(entry, consented));
 
-                linkSubHeader.Text = "Choose settings";
+                ui.SetProgressText("Choose settings");
             }
 
             return results;
@@ -720,7 +584,7 @@ namespace Views
 
             LogBackedUpElements(snapshotFolderPath, snapshotSet, results, new[]
             {
-                "# Pre-restore snapshot, taken before restoring from " + CurrentRestorePath,
+                "# Pre-restore snapshot, taken before restoring from " + currentRestorePath,
                 "# " + RestorePlan.FidelityCaveat
             });
 
@@ -735,13 +599,13 @@ namespace Views
             bool haveSnapshotFolder = snapshotFolderPath != null && Directory.Exists(snapshotFolderPath);
 
             string text = RestoreLog.Compose(configurations, results, DateTime.Now.ToString(),
-                CurrentRestorePath, snapshot, haveSnapshotFolder ? snapshotFolderPath : null);
+                currentRestorePath, snapshot, haveSnapshotFolder ? snapshotFolderPath : null);
 
             // Beside the rollback artifact when there is one. When the gate was overridden after the
             // folder could not be created there is nowhere else but the folder just restored from.
             string logFilePath = haveSnapshotFolder
                 ? Path.Combine(snapshotFolderPath, RestoreLog.FileName)
-                : Path.Combine(CurrentRestorePath, RestoreLog.FallbackFileName(DateTime.Now));
+                : Path.Combine(currentRestorePath, RestoreLog.FallbackFileName(DateTime.Now));
 
             try
             {
@@ -753,31 +617,12 @@ namespace Views
             }
         }
 
-        // Asynchronous method to handle restoration after the user selects restoration path
-        public async Task HandleRestorationAfterSelection()
+        private async Task RunRestoreCore(IReadOnlyList<BackupBase> selection)
         {
-            // The window is disabled for the whole run. Without it a second restore can be started
-            // while the first is still writing, and the snapshot this phase adds makes a restore
-            // long enough for that to be reachable by hand rather than merely possible.
-            this.Enabled = false;
-            RunStateChanged(true);
-
-            try
+            if (currentRestorePath == "" || !Directory.Exists(currentRestorePath))
             {
-                await RunRestore();
-            }
-            finally
-            {
-                this.Enabled = true;
-                RunStateChanged(false);
-            }
-        }
-
-        private async Task RunRestore()
-        {
-            if (CurrentRestorePath == "" || !Directory.Exists(CurrentRestorePath))
-            {
-                ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore), "Restore");
+                ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore), "Restore",
+                    new List<ModuleOutcome>());
                 return;
             }
 
@@ -810,38 +655,28 @@ namespace Views
 
             try
             {
-                plan = new RestorePlan(selectedConfigs, CurrentRestorePath,
+                plan = new RestorePlan(selection, currentRestorePath,
                     snapshotFolderPath ?? "(no snapshot folder could be named)");
             }
             catch (Exception ex)
             {
                 logger.LogMessage("Could not describe what this restore would overwrite: " + ex.Message);
 
-                MessageBox.Show(FindForm(),
+                ui.ShowPlanCompositionError(
                     "What this restore would overwrite could not be described, so you were not asked " +
                     "to confirm it and nothing has been changed.\r\n\r\n" + ex.Message,
-                    "Restore", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    "Restore");
 
                 return;
             }
 
             // Stage 2: informed consent, on the UI thread, before anything is created.
-            IReadOnlyList<string> consented;
+            IReadOnlyList<string> consented = ui.ShowConsentDialog(plan);
 
-            // The owner is the Form, not this control: a UserControl is not something CenterParent
-            // can centre on, and a modal owned by a control this pipeline has already disabled is
-            // the shape that fails to come forward.
-            Form owner = FindForm();
-
-            using (RestoreConfirmForm confirm = new RestoreConfirmForm(plan))
+            if (consented == null)
             {
-                if (confirm.ShowDialog(owner) != DialogResult.OK)
-                {
-                    logger.LogMessage("Restore cancelled - nothing was changed.");
-                    return;
-                }
-
-                consented = confirm.ConsentedProcessNames;
+                logger.LogMessage("Restore cancelled - nothing was changed.");
+                return;
             }
 
             // Stage 3: close the consented processes once, up front, so the snapshot's own backup
@@ -855,7 +690,7 @@ namespace Views
             Dictionary<string, CloseResult> closedUpFront =
                 new Dictionary<string, CloseResult>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (string processName in ProcessesWorthClosing(selectedConfigs, consented))
+            foreach (string processName in ProcessesWorthClosing(selection, consented))
             {
                 string name = processName;
                 CloseResult closed = await Task.Run(() => Utils.CloseProcess(name));
@@ -870,7 +705,7 @@ namespace Views
             // twice from two readings of the process state is what previously let a module be left
             // out of the snapshot and then restored anyway.
             IReadOnlyList<RestoreScopeEntry> scope =
-                RestoreScope.For(selectedConfigs, consented, closedUpFront, CurrentRestorePath);
+                RestoreScope.For(selection, consented, closedUpFront, currentRestorePath);
 
             List<BackupBase> snapshotSet = scope
                 .Where(entry => entry.NeedsSnapshot)
@@ -885,21 +720,20 @@ namespace Views
 
             if (snapshot.RequiresOverride)
             {
-                DialogResult answer = MessageBox.Show(owner,
+                bool proceed = ui.ConfirmSnapshotOverride(
                     snapshot.Describe() + "\r\n" + RestorePlan.FidelityCaveat +
                     "\r\n\r\nRestore anyway, without being able to undo it?",
-                    "Pre-restore snapshot", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
+                    "Pre-restore snapshot");
 
-                if (answer != DialogResult.Yes)
+                if (!proceed)
                 {
                     // Names the processes that were already closed. They were closed to take the
                     // snapshot, and the snapshot is what just failed - so the user gave up an open
                     // browser for a restore that then did not happen, and "nothing ran" on its own
                     // would be the misreport this phase exists to remove.
-                    ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore,
+                    ui.ShowSummary(RunSummary.For(new List<ModuleOutcome>(), false, RunVerb.Restore,
                         "the pre-restore snapshot did not complete and you chose not to continue." +
-                        DescribeAlreadyClosed(closedUpFront)), "Restore");
+                        DescribeAlreadyClosed(closedUpFront)), "Restore", new List<ModuleOutcome>());
                     return;
                 }
             }
@@ -909,7 +743,7 @@ namespace Views
 
             // Stage 7. Reported against the modules the restore actually walked, not against the
             // list it was asked to walk. `results` is built one-per-scope-entry, and RestoreScope.For
-            // drops nulls - so pairing them with selectedConfigs pairs two lists that are only equal
+            // drops nulls - so pairing them with the selection pairs two lists that are only equal
             // in length by coincidence of upstream filtering. Whenever they were not, every outcome
             // after the dropped module would be attributed to the wrong one, in the summary and in
             // restore_log.txt both. Projecting from scope makes the alignment structural.
@@ -923,215 +757,13 @@ namespace Views
             // the reason the folded verdict is the wrong input is written down: Aggregate lets one
             // failed step dominate, so a hybrid that restored the taskbar pins and then failed a
             // later step would hide the very button its own warning tells the user to press.
-            btnRestartExplorer.Visible = ExplorerRestartPrompt.IsNeeded(restoredModules, results);
+            ui.SetExplorerRestartVisible(ExplorerRestartPrompt.IsNeeded(restoredModules, results));
 
-            ShowSummary(
-                RunSummary.For(ModuleOutcome.Pair(restoredModules, results), true, RunVerb.Restore),
-                "Restore");
+            IReadOnlyList<ModuleOutcome> outcomes = ModuleOutcome.Pair(restoredModules, results);
+
+            ui.ShowSummary(
+                RunSummary.For(outcomes, true, RunVerb.Restore),
+                "Restore", outcomes);
         }
-
-        private void btnRestore_Click(object sender, EventArgs e)
-        {
-            if (TryCollectRestoreSelection())
-            {
-                ShowRestoreView();
-                return;
-            }
-
-            MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-
-        /// <summary>
-        /// Navigates to the folder picker. Supplied by the shell, which owns that view.
-        /// </summary>
-        /// <remarks>
-        /// A delegate rather than a NavigationService reference, matching how the engine's other
-        /// UI seams are wired: this page needs exactly one navigation, and handing it the whole
-        /// service would let any future edit here reach every screen in the app.
-        /// </remarks>
-        internal Action ShowRestoreView = () => { };
-
-        /// <summary>
-        /// Populates <see cref="selectedConfigs"/> from the ticked tree nodes, reporting whether
-        /// anything was ticked at all.
-        /// </summary>
-        /// <remarks>
-        /// The restore SET is chosen here and the FOLDER on the next page, and RestPageView's OK
-        /// button runs the restore against this list - so this must have succeeded before that page
-        /// is shown, whether the user got there from this page's button or from the rail. Returning
-        /// a bool rather than showing the warning itself: the two callers land the user in different
-        /// places, and only one of them is already on this page.
-        /// </remarks>
-        internal bool TryCollectRestoreSelection()
-        {
-            selectedConfigs.Clear();
-
-            foreach (TreeNode parentNode in treeConfigurations.Nodes)
-            {
-                foreach (TreeNode childNode in parentNode.Nodes)
-                {
-                    if (childNode.Checked)
-                    {
-                        BackupBase configuration = childNode.Tag as BackupBase;
-                        if (configuration != null)
-                        {
-                            selectedConfigs.Add(configuration);
-                        }
-                    }
-                }
-            }
-
-            return selectedConfigs.Count > 0;
-        }
-
-        /// <summary>
-        /// Ticks exactly the modules named by their CLR type name, unticking everything else.
-        /// </summary>
-        /// <remarks>
-        /// Drives Home's "Back up again" from the names in a backup_manifest.json. Unknown names are
-        /// ignored in silence and that is deliberate, not lax: a manifest written by an older build
-        /// can name a module this one retired - the browser modules Phase 3a removed, for instance -
-        /// and a warning about it would be an error message about someone else's past decision, on a
-        /// button whose entire promise is "the same as last time".
-        ///
-        /// Exact, ordinal type-name match. Titles are user-facing prose and have been reworded
-        /// between releases; type names are what the manifest records for precisely this reason.
-        /// </remarks>
-        internal void SelectModulesByTypeName(IReadOnlyList<string> moduleTypeNames)
-        {
-            HashSet<string> wanted = new HashSet<string>(StringComparer.Ordinal);
-
-            if (moduleTypeNames != null)
-            {
-                foreach (string name in moduleTypeNames)
-                {
-                    if (!string.IsNullOrEmpty(name))
-                        wanted.Add(name);
-                }
-            }
-
-            foreach (TreeNode parentNode in treeConfigurations.Nodes)
-            {
-                foreach (TreeNode childNode in parentNode.Nodes)
-                {
-                    BackupBase configuration = childNode.Tag as BackupBase;
-
-                    childNode.Checked = configuration != null
-                        && wanted.Contains(configuration.GetType().Name);
-                }
-            }
-        }
-
-        private void SelectInstalled()
-        {
-            foreach (TreeNode parentNode in treeConfigurations.Nodes)
-            {
-                foreach (TreeNode childNode in parentNode.Nodes)
-                {
-                    BackupBase configuration = childNode.Tag as BackupBase;
-                    if (configuration != null)
-                    {
-                        bool isConfigInstalled = configuration.IsInstalled();
-                        childNode.Checked = isConfigInstalled;
-                    }
-                }
-            }
-        }
-
-        private void SelectAll(bool flag)
-        {
-            foreach (TreeNode parentNode in treeConfigurations.Nodes)
-            {
-                foreach (TreeNode childNode in parentNode.Nodes)
-                {
-                    childNode.Checked = flag;
-                }
-            }
-        }
-
-        private void treeConfigurations_AfterSelect(object sender, TreeViewEventArgs e)
-        {
-            if (treeConfigurations.SelectedNode != null && treeConfigurations.SelectedNode.Tag is BackupBase selectedConfiguration)
-            {
-                // Display the warning message
-                if (!string.IsNullOrEmpty(selectedConfiguration.WarningMessage))
-                {
-                    ShowWarningMessage(selectedConfiguration.WarningMessage);
-                }
-
-                logger.ClearLog();
-
-                BackupBase selectedConfig = treeConfigurations.SelectedNode.Tag as BackupBase;
-                if (selectedConfig != null)
-                {
-                    logger.Log((selectedConfig.Title + "\r\n\n" +
-                        selectedConfig.Info + "\r\n" +
-                        selectedConfig.Version));
-                }
-            }
-        }
-
-        private void ShowWarningMessage(string warningMessage)
-        {
-            MessageBox.Show(warningMessage, "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
-
-        private void btnMenuMore_Click(object sender, EventArgs e)
-            => this.contextMenu.Show(Cursor.Position.X, Cursor.Position.Y);
-
-        private void menuSelectInstalled_Click(object sender, EventArgs e)
-        {
-            SelectAll(false);
-            SelectInstalled();
-        }
-
-        private void menuSelectAll_Click(object sender, EventArgs e)
-        {
-            isSelectAll = !isSelectAll;
-            SelectAll(isSelectAll);
-        }
-
-        /// <remarks>
-        /// Off the UI thread because the close carries a five-second budget, and the button is hidden
-        /// only when a shell actually came back: hiding it unconditionally, as this did, removed the
-        /// user's only way to retry precisely when the retry was needed.
-        /// </remarks>
-        private async void btnRestartExplorer_Click(object sender, EventArgs e)
-        {
-            btnRestartExplorer.Enabled = false;
-
-            try
-            {
-                ExplorerRestartResult outcome = await Task.Run(() => Utils.RestartExplorer());
-
-                if (outcome.Shell == ShellOutcome.Restarted || outcome.Shell == ShellOutcome.RestartedByWindows)
-                    btnRestartExplorer.Visible = false;
-                else
-                    MessageBox.Show(this, outcome.Describe(), "Restart File Explorer",
-                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-            finally
-            {
-                btnRestartExplorer.Enabled = true;
-            }
-        }
-
-        private void treeConfigurations_AfterCheck(object sender, TreeViewEventArgs e)
-        {
-            foreach (TreeNode child in e.Node.Nodes)
-            {
-                child.Checked = e.Node.Checked;
-            }
-        }
-
-        private void menuOpenAppBackups_Click(object sender, EventArgs e)
-        {
-            RestAppsForm f = new RestAppsForm();
-            f.ShowDialog();
-        }
-
-        private void menuOpenBackupFolder_Click(object sender, EventArgs e)
-
-           => Process.Start(new ProcessStartInfo("explorer.exe", DataHelper.Data.DataRootDir) { UseShellExecute = true });
     }
 }

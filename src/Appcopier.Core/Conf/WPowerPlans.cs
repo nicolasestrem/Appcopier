@@ -82,6 +82,15 @@ namespace Conf
         public static string ManifestPathIn(string backupFolder)
             => Path.Combine(backupFolder, ManifestFileName);
 
+        /// <inheritdoc/>
+        /// <remarks>
+        /// The manifest, not the .pow files. Restore is driven entirely from it - it is what maps a
+        /// scheme GUID to its exported file and records which plan was active - so a folder holding
+        /// .pow files without it has nothing this module can act on.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => !string.IsNullOrWhiteSpace(backupPath) && File.Exists(ManifestPathIn(backupPath));
+
         /// <summary>
         /// The exported file for one power scheme.
         /// </summary>
@@ -231,7 +240,7 @@ namespace Conf
         /// created in the SYSTEM TEMP directory, not in the backup folder, for two reasons: the
         /// restore path also needs a capture (the /getactivescheme read-back) and must not write into
         /// the backup it is restoring from, and the backup folder is enumerated by other modules and
-        /// by RestPageView, so a scratch file there is a stray artifact somebody has to reason about.
+        /// by the History timeline, so a scratch file there is a stray artifact somebody has to reason about.
         ///
         /// It is removed in a finally. A removal that fails is logged and dropped: it leaves a few
         /// hundred bytes in %TEMP% and must never displace the real result of the run.

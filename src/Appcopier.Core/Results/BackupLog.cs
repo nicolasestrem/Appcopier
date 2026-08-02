@@ -10,8 +10,8 @@ namespace Appcopier
     /// v1 listed what was SELECTED, which is the same category of lie as the old success dialog: it
     /// described an intention as though it were an outcome. v2 records what happened per module.
     ///
-    /// Safe to change format: the only reader (RestPageView) dumps the file verbatim into a textbox
-    /// and never parses it, and the restore SET is chosen before that view is shown. The version
+    /// Safe to change format: the only reader (the History timeline) dumps the file verbatim into a
+    /// textbox and never parses it. The version
     /// header is cheap insurance in case anything ever does parse it.
     /// </remarks>
     internal static class BackupLog

@@ -66,10 +66,12 @@ namespace Views
         // Some UI nicety
         private void SetStyle()
         {
-            // Some color styling
+            // Built after startup, so it is not in the shell's tree and themes itself.
+            Theme.Apply(this);
+
             BackColor =
             listApps.BackColor =
-                Color.FromArgb(245, 241, 249);
+                Ui.RailSurface;
         }
 
         internal void LoadBackups()

@@ -40,6 +40,7 @@ namespace Appcopier
             this.btnHome = new System.Windows.Forms.Button();
             this.btnBackUp = new System.Windows.Forms.Button();
             this.btnRestore = new System.Windows.Forms.Button();
+            this.btnHistory = new System.Windows.Forms.Button();
             this.railSpacer = new System.Windows.Forms.Panel();
             this.btnAbout = new System.Windows.Forms.Button();
             this.pnlContentArea = new System.Windows.Forms.TableLayoutPanel();
@@ -77,12 +78,14 @@ namespace Appcopier
             this.pnlRail.Controls.Add(this.btnHome, 0, 0);
             this.pnlRail.Controls.Add(this.btnBackUp, 0, 1);
             this.pnlRail.Controls.Add(this.btnRestore, 0, 2);
-            this.pnlRail.Controls.Add(this.railSpacer, 0, 3);
-            this.pnlRail.Controls.Add(this.btnAbout, 0, 4);
+            this.pnlRail.Controls.Add(this.btnHistory, 0, 3);
+            this.pnlRail.Controls.Add(this.railSpacer, 0, 4);
+            this.pnlRail.Controls.Add(this.btnAbout, 0, 5);
             this.pnlRail.Dock = System.Windows.Forms.DockStyle.Fill;
             this.pnlRail.Name = "pnlRail";
             this.pnlRail.Padding = new System.Windows.Forms.Padding(8);
-            this.pnlRail.RowCount = 5;
+            this.pnlRail.RowCount = 6;
+            this.pnlRail.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.pnlRail.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.pnlRail.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
             this.pnlRail.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
@@ -137,6 +140,22 @@ namespace Appcopier
             this.btnRestore.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
             this.btnRestore.UseVisualStyleBackColor = false;
             this.btnRestore.Click += new System.EventHandler(this.btnRestore_Click);
+            //
+            // btnHistory
+            //
+            this.btnHistory.AutoSize = true;
+            this.btnHistory.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.btnHistory.Cursor = System.Windows.Forms.Cursors.Hand;
+            this.btnHistory.Dock = System.Windows.Forms.DockStyle.Top;
+            this.btnHistory.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnHistory.Margin = new System.Windows.Forms.Padding(0, 0, 0, 4);
+            this.btnHistory.Name = "btnHistory";
+            this.btnHistory.Padding = new System.Windows.Forms.Padding(12, 8, 12, 8);
+            this.btnHistory.TabIndex = 3;
+            this.btnHistory.Text = "History";
+            this.btnHistory.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            this.btnHistory.UseVisualStyleBackColor = false;
+            this.btnHistory.Click += new System.EventHandler(this.btnHistory_Click);
             // 
             // railSpacer
             // 
@@ -260,6 +279,7 @@ namespace Appcopier
         private System.Windows.Forms.Button btnHome;
         private System.Windows.Forms.Button btnBackUp;
         private System.Windows.Forms.Button btnRestore;
+        private System.Windows.Forms.Button btnHistory;
         private System.Windows.Forms.Panel railSpacer;
         private System.Windows.Forms.Button btnAbout;
         private System.Windows.Forms.TableLayoutPanel pnlContentArea;

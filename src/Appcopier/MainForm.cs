@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -11,23 +12,24 @@ namespace Appcopier
     /// </summary>
     /// <remarks>
     /// Rail entries are constructed once and reused rather than rebuilt on each visit. That is what
-    /// makes ConfPageView's checkbox selection, its log pane and its LogHelper target survive a trip
-    /// to Home and back - the same lifetime the single configPage field already had before the rail
-    /// existed. Home is the exception in spirit only: the instance is reused, but it re-reads the
+    /// makes the backup page's checkbox selection, its log pane and its LogHelper target survive a
+    /// trip to Home and back - the same lifetime the single backupPage field already had before the
+    /// rail existed. Home is the exception in spirit only: the instance is reused, but it re-reads the
     /// backup directory every time it is shown, via IRefreshableView.
     ///
-    /// Gone with this change: the wallpaper splash (an Image.FromFile of the user's desktop background,
-    /// shown for a hardcoded 500 ms Task.Delay before the real UI appeared) and the QR-code easter egg
-    /// with its timer, hover handlers and MessageBox. Both were removed by the design rather than
-    /// broken. The update check and its version checkbox are untouched.
+    /// Phase 4 PR 7 inverted the restore flow into a wizard (step 1 picks the backup, step 2 its
+    /// contents), so the rail's Restore and the backup page's Restore button both open the wizard
+    /// rather than the old module-set-first picker.
     /// </remarks>
     public partial class MainForm : Form
     {
         private readonly NavigationService navigation;
 
-        private readonly ConfPageView configPage;
+        private readonly BackupPageView backupPage;
         private readonly HomePageView homePage;
-        private readonly RestPageView restorePage;
+        private readonly HistoryPageView historyPage;
+        private readonly RestoreWizardStep1View wizardStep1;
+        private readonly RestoreWizardStep2View wizardStep2;
 
         /// <summary>
         /// Built on first use, unlike the rail pages.
@@ -43,26 +45,41 @@ namespace Appcopier
         {
             InitializeComponent();
 
+            // Before any view is constructed: the views read Ui.* (which forwards to the active
+            // palette) as they build, so choosing the palette afterwards would leave them light
+            // until the first re-apply.
+            Theme.Use(Theme.IsDarkOs());
+
             navigation = new NavigationService(pnlForm);
 
-            configPage = new ConfPageView();
-            restorePage = new RestPageView(configPage, navigation);
+            backupPage = new BackupPageView();
+            historyPage = new HistoryPageView(OnRestoreSourcePicked);
 
-            homePage = new HomePageView(GoToBackUp, GoToRestoreFor);
+            wizardStep1 = new RestoreWizardStep1View(navigation, OnRestoreSourcePicked, () => navigation.Show(backupPage));
+            wizardStep2 = new RestoreWizardStep2View(navigation, running => SetRailEnabled(!running));
 
-            // ConfPageView's own Restore button picks the module SET; the page that follows picks the
-            // folder. A delegate rather than a reference to this form: the view needs one navigation,
-            // not the shell.
-            configPage.ShowRestoreView = () => navigation.Push(restorePage);
+            homePage = new HomePageView(GoToBackUp, GoToHistory);
+
+            // The backup page's Restore button opens the wizard (step 1). A delegate rather than a
+            // reference to this form: the view needs one navigation, not the shell.
+            backupPage.ShowRestoreView = () => navigation.Push(wizardStep1);
 
             // The backup page disables itself while a run is going, but the rail lives on the form
             // and stayed live - so its buttons could navigate away from a running backup, or reach
             // back into that page's state while the run was suspended at an await.
-            configPage.RunStateChanged = running => SetRailEnabled(!running);
+            backupPage.RunStateChanged = running => SetRailEnabled(!running);
 
             navigation.Root = homePage;
 
             SetStyle();
+
+            // The rail pages are constructed once and swapped in and out of pnlForm, so only the
+            // CURRENT one is in this form's control tree. A live theme change has to reach all of
+            // them, which is why ApplyTheme walks each page rather than just `this`.
+            ApplyTheme();
+
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+            FormClosed += (s, e) => SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         }
 
         private void MainForm_Shown(object sender, EventArgs e)
@@ -71,6 +88,9 @@ namespace Appcopier
             lblDiskSpace.Text = Utils.GetSystemPartitionDiskSpaceInfo();
 
             navigation.Show(homePage);
+
+            // Needs a created handle, so it happens here rather than in the constructor.
+            Theme.ApplyTitleBar(this);
         }
 
         private void SetStyle()
@@ -81,15 +101,14 @@ namespace Appcopier
 
             // The form's own Font is deliberately NOT set. Assigning it here cascades into every
             // child that inherits, and the hosted UserControls scale their layout against the font
-            // they were designed with - ConfPageView's tree and log pane collapsed to a narrow
-            // column when it was set. Fonts are applied per control instead, and PR 9's theme pass
+            // they were designed with. Fonts are applied per control instead, and PR 9's theme pass
             // is where a coordinated sweep belongs.
 
             lblDiskSpace.Font = Ui.Body();
             lblDiskSpace.ForeColor = Ui.Muted;
 
             checkVersion.Font = Ui.Body();
-            checkVersion.ForeColor = Color.Black;
+            checkVersion.ForeColor = Ui.TextPrimary;
             checkVersion.BackColor = Ui.RailSurface;
             checkVersion.FlatAppearance.CheckedBackColor = Ui.RailSurface;
 
@@ -100,6 +119,7 @@ namespace Appcopier
             StyleRailButton(btnHome, "Home");
             StyleRailButton(btnBackUp, "Back up");
             StyleRailButton(btnRestore, "Restore");
+            StyleRailButton(btnHistory, "History");
             StyleRailButton(btnAbout, "About");
         }
 
@@ -107,7 +127,7 @@ namespace Appcopier
         {
             button.Text = text;
             button.Font = Ui.Body();
-            button.ForeColor = Color.Black;
+            button.ForeColor = Ui.TextPrimary;
             button.BackColor = Ui.RailSurface;
             button.FlatAppearance.BorderSize = 0;
         }
@@ -127,7 +147,66 @@ namespace Appcopier
             btnHome.Enabled = enabled;
             btnBackUp.Enabled = enabled;
             btnRestore.Enabled = enabled;
+            btnHistory.Enabled = enabled;
             btnAbout.Enabled = enabled;
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Theme
+        // -----------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Paints the shell and every page with the active palette.
+        /// </summary>
+        /// <remarks>
+        /// Each page is walked explicitly because only the page currently in pnlForm is part of this
+        /// form's control tree - the others are held by fields and re-inserted on navigation, so a
+        /// walk of `this` alone would leave them in the previous palette until they were rebuilt.
+        /// SetStyle runs afterwards to re-assert the rail's own colours over the generic walk.
+        /// </remarks>
+        private void ApplyTheme()
+        {
+            Theme.Apply(this);
+
+            Theme.Apply(backupPage);
+            Theme.Apply(homePage);
+            Theme.Apply(historyPage);
+            Theme.Apply(wizardStep1);
+            Theme.Apply(wizardStep2);
+
+            if (aboutPage != null)
+                Theme.Apply(aboutPage);
+
+            SetStyle();
+            Theme.ApplyTitleBar(this);
+        }
+
+        /// <summary>
+        /// Follows a live OS light/dark switch.
+        /// </summary>
+        /// <remarks>
+        /// SystemEvents raises this on a system thread, so the work is marshalled onto the UI thread
+        /// before touching a single control. The subscription is static and would otherwise keep this
+        /// form alive for the life of the process, which is why FormClosed unsubscribes.
+        /// </remarks>
+        private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            if (e.Category != UserPreferenceCategory.General)
+                return;
+
+            if (!IsHandleCreated || IsDisposed)
+                return;
+
+            BeginInvoke((Action)(() =>
+            {
+                bool dark = Theme.IsDarkOs();
+
+                if (dark == Theme.IsDark)
+                    return;
+
+                Theme.Use(dark);
+                ApplyTheme();
+            }));
         }
 
         // -----------------------------------------------------------------------------------------
@@ -138,32 +217,17 @@ namespace Appcopier
             => navigation.Show(homePage);
 
         private void btnBackUp_Click(object sender, EventArgs e)
-            => navigation.Show(configPage);
+            => navigation.Show(backupPage);
 
         /// <summary>
-        /// Restore from the rail, which still has to pass through choosing what to restore.
+        /// Restore from the rail opens the wizard. The old module-set-first gate is gone: the wizard
+        /// picks what to restore FROM the chosen backup, so there is nothing to validate first.
         /// </summary>
-        /// <remarks>
-        /// The restore SET is chosen in ConfPageView and the FOLDER in RestPageView, in that order -
-        /// RestPageView's OK button runs the restore against configPage.selectedConfigs. Sending the
-        /// rail straight to the folder picker would therefore offer to run a restore of nothing.
-        /// So the rail asks the backup page for its current selection first and, when there is none,
-        /// lands the user on the page where the choice is made, with the same message that button has
-        /// always shown.
-        /// </remarks>
         private void btnRestore_Click(object sender, EventArgs e)
-        {
-            if (configPage.TryCollectRestoreSelection())
-            {
-                navigation.Show(restorePage);
-                return;
-            }
+            => navigation.Show(wizardStep1);
 
-            navigation.Show(configPage);
-
-            MessageBox.Show("Please choose a configuration to restore beforehand.", "",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+        private void btnHistory_Click(object sender, EventArgs e)
+            => navigation.Show(historyPage);
 
         private void btnAbout_Click(object sender, EventArgs e)
         {
@@ -174,8 +238,18 @@ namespace Appcopier
         }
 
         // -----------------------------------------------------------------------------------------
-        // Home's actions
+        // Wizard wiring + Home's actions
         // -----------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// A restore source was picked - from wizard step 1, or from a History row. Load its
+        /// contents into step 2 and push, so Back returns to wherever the user came from.
+        /// </summary>
+        private void OnRestoreSourcePicked(BackupFolder folder)
+        {
+            wizardStep2.LoadFolder(folder);
+            navigation.Push(wizardStep2);
+        }
 
         /// <summary>
         /// Home's "Back up again": go to the backup page, re-ticking what the last run recorded.
@@ -188,28 +262,24 @@ namespace Appcopier
         private void GoToBackUp(IReadOnlyList<string> moduleTypeNames)
         {
             if (moduleTypeNames != null)
-                configPage.SelectModulesByTypeName(moduleTypeNames);
+                backupPage.SelectModulesByTypeName(moduleTypeNames);
 
-            navigation.Show(configPage);
+            navigation.Show(backupPage);
         }
 
         /// <summary>
-        /// Home's "View details": open the backup list with that folder selected.
+        /// Home's "View details": open History with that folder's row selected.
         /// </summary>
         /// <remarks>
-        /// Reading, not restoring - so no module selection is required to get here, and none is
-        /// invented. The restore itself is gated inside RestPageView's OK, which is the single place
-        /// it can start; a gate on this navigation would refuse to SHOW a backup because of what the
-        /// user had not yet ticked.
-        ///
-        /// The list is reloaded by NavigationService through IRefreshableView on the way in, which
-        /// is why the selection is requested first and applied on the far side of that refresh.
+        /// Reading, not restoring - so no selection is required. The timeline is rebuilt by
+        /// NavigationService through IRefreshableView on the way in, which is why the selection is
+        /// requested first and applied on the far side of that refresh.
         /// </remarks>
-        private void GoToRestoreFor(string backupFolderName)
+        private void GoToHistory(string backupFolderName)
         {
-            restorePage.SelectBackup(backupFolderName);
+            historyPage.SelectFolder(backupFolderName);
 
-            navigation.Show(restorePage);
+            navigation.Show(historyPage);
         }
 
         // -----------------------------------------------------------------------------------------
@@ -227,7 +297,12 @@ namespace Appcopier
             return $"Version {version}";
         }
 
-        private void checkVersion_CheckedChanged(object sender, EventArgs e)
+        /// <remarks>
+        /// async void because it is an event handler, which makes the try/catch mandatory rather
+        /// than defensive: an exception escaping an async void handler is unhandled and takes the
+        /// process down. The message matches the one the update check shows for its own failures.
+        /// </remarks>
+        private async void checkVersion_CheckedChanged(object sender, EventArgs e)
         {
             // Get full version
             string fullVersion = Program.GetCurrentVersionTostring();
@@ -238,7 +313,14 @@ namespace Appcopier
             // Optionally, check for updates when checked
             if (checkVersion.Checked)
             {
-                UpdateCheck.CheckForUpdates();
+                try
+                {
+                    await UpdateCheck.CheckForUpdatesAsync();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
+                }
             }
         }
     }

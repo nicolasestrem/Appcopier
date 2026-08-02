@@ -89,9 +89,15 @@ namespace Views
         // Some UI nicety
         private void SetStyle()
         {
+            // Themed as a whole, then the plan pane keeps the rail tint it has always had. Apply
+            // only changes colours - it never touches focus or a checkbox's Checked state, so the
+            // consent facts (Cancel focused, boxes unticked) are unaffected by it. ActiveControl is
+            // still assigned AFTER this in the constructor, so nothing here can outrank it.
+            Theme.Apply(this);
+
             BackColor =
             txtPlan.BackColor =
-                Color.FromArgb(245, 241, 249);
+                Ui.RailSurface;
         }
 
         private void btnRestore_Click(object sender, EventArgs e)

@@ -207,7 +207,11 @@ namespace Conf
         }
 
         private string BackupFolderPath(string path, string folder)
-            => Path.Combine(path, $"{Title}_{GetSafeFileName(Path.GetFileName(folder))}");
+            => Path.Combine(path, BackupFolderNameFor(folder));
+
+        /// <inheritdoc/>
+        public override bool? HasArtifactIn(string backupPath)
+            => HasFolderOrKeyArtifactIn(backupPath, Folders, Keys);
 
         // False for both keys: Explorer\Advanced is a core shell key whose absence means a broken
         // profile, and Taskband was measured present on this standard Windows 11 install. Stated as

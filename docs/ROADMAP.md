@@ -363,9 +363,15 @@ non-portable). `APinnedApps` copies a build-specific Start menu database that is
 non-portable between machines — kept, with its warning strengthened in 3c rather than retired, because
 same-machine restore is its honest use case.
 
-## Phase 4 — UI revamp and modernization
+## Phase 4 — UI revamp and modernization (done)
 
 Full design: [`superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
+
+**Implementation notes, written after the phase closed:**
+[`superpowers/specs/2026-08-02-phase4-completion-implementation-notes.md`](superpowers/specs/2026-08-02-phase4-completion-implementation-notes.md).
+Read that one before changing any of this — it records the decisions the design deferred, the traps
+(the theme walker, the single DPI source of truth, the amber-not-green rule), and, most importantly,
+**what has not yet been verified in an elevated session**.
 
 Phase 4 was originally scoped as the four modernization items at the bottom of this section. It opened
 instead with a **complete UI/UX revamp**, decided 2026-07-21 after a four-direction design pass. The
@@ -408,6 +414,19 @@ count pins — was answered differently: a single test asserting the app assembl
 `BackupBase` subclass pins the membership rule directly, never needs renumbering, and does not depend on
 `RestoreDeclarationTests`' `Assert.Equal(29, …)` surviving a future edit.
 
+**PRs 3–9 shipped, completing the phase.** PR 3 added `backup_manifest.json` (engine only). PR 4 added
+the shell, `NavigationService` and Home. PR 5 moved the backup/restore orchestration out of the view
+into `BackupRestoreOrchestrator` behind an `IRunUi` seam — a verbatim move, so the safety reviewer
+could confirm every stage comment and consent invariant travelled with it. PR 6 rebuilt the Back up page
+(module registration extracted to `ModuleCatalog`, presets, the in-page `RunResultsPanel`, warnings
+inline instead of modal). PR 7 inverted Restore into the two-step wizard over `RestoreContents` and
+renamed `ConfPageView` to `BackupPageView`. PR 8 added the History timeline and deleted `RestPageView`.
+PR 9 added the `Theme` token class with light and dark palettes, the live `SystemEvents` switch, and —
+only after the last absolute-positioned Designer was converted — the PerMonitorV2 flip.
+
+Both consent constraints below survived unchanged, and both were checked by `windows-safety-reviewer`
+on the two diffs that touch destructive paths (PR 5 and PR 7), which returned no findings on either.
+
 Two constraints worth restating here because they bind everything else:
 
 - **Informed consent does not move.** `RestoreConfirmForm` stays modal, Cancel-defaulted, with unchecked
@@ -421,10 +440,14 @@ Two constraints worth restating here because they bind everything else:
 
 ### Modernization items
 
-- Rewrite the update checker against the GitHub Releases API. It currently downloads `AssemblyInfo.cs` and
-  string-parses it with raw index arithmetic; any reformat breaks it. Note the compatibility constraint in
-  the Phase 1 spec — deployed clients still parse that file, so the format must survive the change.
-- Replace obsolete `WebClient` with `HttpClient` (the two `SYSLIB0014` warnings).
+- ~~Rewrite the update checker against the GitHub Releases API~~ — **done.** `UpdateCheck` now reads
+  `tag_name` from the Releases API and falls back to the old `AssemblyInfo.cs` parse on *any* primary
+  failure (non-2xx including the shared-IP rate-limit 403, timeout, malformed JSON, empty tag). The
+  Phase 1 compatibility constraint holds: deployed clients still parse that file, so both the file
+  format and `ParseLatestVersion` are untouched, and the fallback keeps exercising them.
+- ~~Replace obsolete `WebClient` with `HttpClient`~~ — **done.** Both `SYSLIB0014` warnings are gone and
+  `WebClient` no longer appears anywhere in the solution; `Data.IsInet` uses a shared static
+  `HttpClient` with a 5s timeout and the synchronous `Send`.
 - ~~Per-monitor DPI awareness~~ — absorbed into the UI revamp. It has to land *after* the layout work
   rather than beside it: absolute positions do not survive a `WM_DPICHANGED` rescale, and layout
   containers do, so flipping the manifest first would only produce fallout attributable to two causes.

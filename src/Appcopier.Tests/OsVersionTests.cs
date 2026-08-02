@@ -242,7 +242,7 @@ namespace Appcopier.Tests
             // The point of the const template: a degraded build string must not leave the greeting
             // with a double space where the version should be, or a stray " ." before the period.
             string greeting = string.Format(
-                global::Views.ConfPageView.IntroTemplate,
+                global::Views.BackupPageView.IntroTemplate,
                 global::DataHelper.OsHelper.ComposeVersion(build, ubr));
 
             Assert.DoesNotContain("  ", greeting);
