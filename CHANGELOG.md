@@ -4,6 +4,81 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Changed — dark mode, and the app follows Windows (Phase 4, PR 9)
+
+Appcopier now reads your Windows "app mode" setting and paints itself to match, **including the title
+bar**. Flip Windows between light and dark while the app is open and it changes with you — no restart.
+
+Everything that carried meaning keeps carrying it in both themes. In particular, an item that was
+**skipped is still amber and never green**: "there was nothing to back up" and "it worked" are
+different answers and the colours keep saying so.
+
+Message boxes and the file-picker style dialogs stay light in dark mode. That is a Windows limitation
+rather than an oversight, and it is a small surface now that results are shown on the page instead of
+in a popup.
+
+The app is also **per-monitor DPI aware**. On a multi-monitor setup with different scaling — a 4K
+laptop screen next to a 1080p monitor — dragging the window between them now re-renders it crisply at
+the new scale instead of showing a blurry bitmap stretch.
+
+### Changed — the update check asks GitHub for the actual release (Phase 4)
+
+Checking for updates now asks GitHub for the latest published **release** rather than reading a version
+number out of a source file. The practical difference: you are only told about a version that actually
+exists as a download. If GitHub cannot be reached or rate-limits the request, it silently falls back to
+the old source-file check, so the feature never gets worse than it was.
+
+### Added — History: every backup and every undo point, on one timeline (Phase 4, PR 8)
+
+A new **History** entry on the left lists everything Appcopier has written, newest first: your backups,
+and the **undo points** it takes automatically before each restore. Selecting a row shows its full log.
+
+Every row offers "Restore from this backup" — or, on an undo point, **"Undo this restore"**, which
+reopens the restore screen pointed at that snapshot. Rolling back a restore has always been possible;
+this is the first release where you can actually see and click it.
+
+### Changed — Restore now starts from the backup, not from a checklist (Phase 4, PR 7)
+
+Restore used to make you tick items *before* it would show you your backups, then restore those items
+from whichever folder you picked — whether or not that folder contained them. It now runs the other way
+round, in two steps:
+
+1. **Pick a backup.** Each one is a card showing when it was made, how many items it holds, how many
+   failed, and which PC and account it came from.
+2. **Pick what to bring back from it.** Every item in the list is marked with what that backup actually
+   holds for it: "OK in backup", "failed in backup", "skipped", or nothing at all when the backup is too
+   old to say. **Items the backup holds nothing for are greyed out and cannot be ticked** — that
+   surprise used to arrive only after the restore had run.
+
+If the backup came from a different PC or a different user account, a line at the top says so, because
+some settings will not resolve anywhere else.
+
+The confirmation dialog is unchanged: it still lists exactly what will be overwritten in the same words,
+still opens with its consent boxes unticked and **Cancel** focused, and the "restore anyway without an
+undo point" prompt still defaults to **No**.
+
+### Changed — the Back up screen has presets, and results appear on the page (Phase 4, PR 6)
+
+Back up now opens on four choices instead of a 29-item checklist: **Everything on this PC** (with a live
+count of what was found), **Developer machine**, **Minimal privacy-safe** (which leaves out the Windows
+Update identity, your environment variables and your Wi-Fi keys), and **Custom**. The full item tree is
+still there, one click away under "Advanced: full module list", and touching any tick switches you to
+Custom.
+
+**Results no longer arrive as a popup.** When a run finishes, every item appears on the page with a
+coloured state chip and its own reason, **failed items first**. A run where 24 items worked and one
+failed now looks like exactly that, instead of one dismissible paragraph that read as broadly green.
+The reasons are selectable text, so you can copy one straight into a bug report.
+
+An item's warning is now shown **inline, next to the item, while you are choosing** — it used to
+interrupt you with a popup the moment you clicked the item, which is when you could least act on it. A
+line above the list counts how many of your ticked items carry one. Nothing is lost: the confirmation
+dialog before a restore still repeats every warning.
+
+The "restart File Explorer" prompt is now a normal highlighted row in the results instead of a hot-pink
+banner button, and the activity log has moved behind an "Activity log" toggle so it stops doubling as
+the help text.
+
 ### Changed — the app opens on a Home screen, with a navigation rail (Phase 4, PR 4)
 
 The window now has a list down the left — **Home**, **Back up**, **Restore**, with **About** at the
