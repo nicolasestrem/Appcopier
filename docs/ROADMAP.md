@@ -368,7 +368,7 @@ same-machine restore is its honest use case.
 Full design: [`superpowers/specs/2026-07-21-phase4-ui-revamp-design.md`](superpowers/specs/2026-07-21-phase4-ui-revamp-design.md).
 
 **Implementation notes, written after the phase closed:**
-[`phase4-completion-implementation-notes.md`](phase4-completion-implementation-notes.md).
+[`superpowers/specs/2026-08-02-phase4-completion-implementation-notes.md`](superpowers/specs/2026-08-02-phase4-completion-implementation-notes.md).
 Read that one before changing any of this — it records the decisions the design deferred, the traps
 (the theme walker, the single DPI source of truth, the amber-not-green rule), and, most importantly,
 **what has not yet been verified in an elevated session**.

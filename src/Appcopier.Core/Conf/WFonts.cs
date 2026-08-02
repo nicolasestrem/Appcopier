@@ -113,8 +113,7 @@ namespace Conf
 
             foreach (string folder in Folders)
             {
-                string folderName = Path.GetFileName(folder);
-                string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
+                string backupFolderPath = Path.Combine(path, BackupFolderNameFor(folder));
 
                 CopyResult copy = await Utils.CopyFolder(folder, backupFolderPath).ConfigureAwait(true);
                 // Title, not the full filesystem path: Aggregate renders the target into
@@ -136,8 +135,7 @@ namespace Conf
 
             foreach (string folder in Folders)
             {
-                string folderName = Path.GetFileName(folder);
-                string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
+                string backupFolderPath = Path.Combine(path, BackupFolderNameFor(folder));
 
                 // absenceIsNormal is true on this side regardless of the backup-side flag: the
                 // source being read here is a folder this app wrote, and a backup taken before this
@@ -175,5 +173,9 @@ namespace Conf
         /// different reason.
         /// </remarks>
         protected virtual bool AbsenceIsNormal(string key) => false;
+
+        /// <inheritdoc/>
+        public override bool? HasArtifactIn(string backupPath)
+            => HasFolderOrKeyArtifactIn(backupPath, Folders, Keys);
     }
 }

@@ -82,6 +82,34 @@ namespace Conf
                    && Directory.Exists(Path.Combine(restorePath, Title));
         }
 
+        /// <remarks>
+        /// Unconditional, unlike <see cref="HasBackupIn"/> above: that one only earns a real probe
+        /// when a process would be killed, because there its false negative cancels a restore. Here
+        /// a wrong answer only mis-paints a checkbox, so every folder module can afford to look.
+        ///
+        /// The directory must also be NON-EMPTY. Utils.CopyFolder creates its destination before
+        /// copying, so a backup where every file failed still leaves an empty {Title}\ behind -
+        /// exactly the shape FileModule's remarks warn about, and existence alone would call it a
+        /// backup.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+        {
+            if (string.IsNullOrWhiteSpace(backupPath))
+                return false;
+
+            string dir = Path.Combine(backupPath, Title);
+
+            if (!Directory.Exists(dir))
+                return false;
+
+            // foreach, not GetEnumerator().MoveNext() - the enumerator holds a directory handle and
+            // has to be disposed. Stops after the first entry either way.
+            foreach (string unused in Directory.EnumerateFileSystemEntries(dir))
+                return true;
+
+            return false;
+        }
+
         public sealed override async Task<ModuleResult> BackupAsync(string path)
         {
             CopyResult copy = await Utils.CopyFolder(Folder, Path.Combine(path, Title));

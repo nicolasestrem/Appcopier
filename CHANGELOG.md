@@ -4,6 +4,40 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — the restore wizard now really does grey out what a backup does not contain
+
+Picking a backup and being shown *every* item, all pre-ticked, is what the previous build did — and the
+greying that was supposed to prevent it never fired. Restoring from a backup that held one item's
+settings would take a snapshot for all thirty, close applications for them, and report thirty results.
+
+Now a backup shows only what it actually holds. Everything else is greyed and unticked with **"(nothing
+in this backup)"** beside it, and the warning text under an item appears only when that item can
+actually be restored — so the list is a screen shorter and the things you *can* restore are visible
+without scrolling past a dozen notices that do not apply.
+
+The wizard trusts the backup's own record of what it wrote, and looks in the folder for anything that
+record does not mention. An older backup taken before that record existed is still fully restorable.
+
+### Fixed — the Back button in the restore wizard was invisible
+
+On step 2 of the restore wizard, "Back" was painted underneath "Next" and could not be seen or clicked,
+so the only way out of that screen was the navigation rail. Both buttons now sit side by side.
+
+### Fixed — cancelling a restore no longer strands you
+
+Backing out of the confirmation dialog returned you to your ticked list with "Next" greyed out, and the
+only way to get it back was to leave the wizard and pick the folder again. It comes back now.
+
+### Fixed — the update check froze for ten seconds instead of five when offline
+
+Checking for updates with no connection probed for one twice, back to back, before saying so.
+
+### Fixed — amber and grey text after switching Windows themes
+
+Flipping Windows between light and dark while Appcopier was open left warning and secondary text in the
+outgoing theme's colour, which on the dark surface meant dark amber on near-black. Those colours now
+move with the theme and keep their meaning.
+
 ### Changed — dark mode, and the app follows Windows (Phase 4, PR 9)
 
 Appcopier now reads your Windows "app mode" setting and paints itself to match, **including the title

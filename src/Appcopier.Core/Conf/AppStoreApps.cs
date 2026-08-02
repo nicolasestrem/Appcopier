@@ -56,6 +56,17 @@ namespace Conf
         // user whose selected folder happens to hold no export, while the dialog itself would have
         // been perfectly able to offer every other backup. It would also break
         // RestoreDeclarationTests.ModulesThatCloseNothing_AssumeTheBackupHasSomethingForThem.
+        //
+        // The same reasoning binds HasArtifactIn, added later for the restore wizard, and binds it
+        // HARDER: where HasBackupIn made RestoreScope drop the module after the fact, the wizard
+        // greys the checkbox out in front of the user and labels it "(nothing in this backup)".
+        // That would be a false statement about a dialog that reads a folder of its own choosing.
+        //
+        // So it is overridden to a flat TRUE rather than left at the null default. Null would mean
+        // "cannot tell", and the wizard resolves that to false whenever a manifest exists without
+        // naming this module - which happens on any second backup within one app session. This is
+        // not uncertainty; it is a module for which folder contents are the wrong question.
+        public override bool? HasArtifactIn(string backupPath) => true;
 
         public override IReadOnlyList<RestoreTarget> RestoreTargets
             => new[]

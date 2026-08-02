@@ -30,7 +30,7 @@ namespace Views
         private readonly Label provenanceBanner;
         private readonly FlowLayoutPanel rows;
         private readonly Label progressLabel;
-        private readonly Panel actionRow;
+        private readonly FlowLayoutPanel actionRow;
         private readonly Button btnBack;
         private readonly Button btnNext;
         private readonly RunResultsPanel resultsPanel;
@@ -99,9 +99,21 @@ namespace Views
             };
             btnNext.Click += btnNext_Click;
 
-            actionRow = new Panel { AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(Ui.SpaceM) };
-            actionRow.Controls.Add(btnNext);
+            // FlowLayoutPanel, not Panel. A plain Panel lays nothing out, so both buttons kept their
+            // default (0,0) and Next - added first, so topmost in z-order - covered Back completely,
+            // leaving no way back to the picker except the rail. Back is added first here so it
+            // reads left-to-right.
+            actionRow = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top,
+                FlowDirection = FlowDirection.LeftToRight,
+                Padding = new Padding(Ui.SpaceM),
+                WrapContents = false,
+            };
             actionRow.Controls.Add(btnBack);
+            actionRow.Controls.Add(btnNext);
 
             resultsPanel = new RunResultsPanel { Dock = DockStyle.Top };
 
@@ -183,7 +195,11 @@ namespace Views
             }
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
 
-            if (!string.IsNullOrEmpty(row.Warning))
+            // Only for rows that can actually run. A warning describes what restoring this WOULD do,
+            // which is noise under a row the folder holds nothing for - and expensive noise: before
+            // the presence check was fixed nothing was ever greyed, so this never showed, and now
+            // twelve inert warnings would push the one restorable row off the bottom of the screen.
+            if (row.HasBackup && !string.IsNullOrEmpty(row.Warning))
             {
                 TextBox warning = new TextBox
                 {
@@ -316,6 +332,12 @@ namespace Views
             finally
             {
                 Enabled = true;
+                // Next has to come back too - the backup page already does this for its own button.
+                // Cancelling the consent dialog returns here normally, and without this the user
+                // lands back on their still-valid ticked list with the only way forward greyed out,
+                // recoverable only by leaving the wizard and re-picking the folder. Via
+                // RefreshNextEnabled rather than a bare true so an empty selection stays disabled.
+                RefreshNextEnabled();
                 runStateChanged?.Invoke(false);
             }
         }

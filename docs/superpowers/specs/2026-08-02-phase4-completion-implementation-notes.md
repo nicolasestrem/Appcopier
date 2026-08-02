@@ -232,6 +232,37 @@ cross-checks the catalog against the concrete `BackupBase` subclasses in the ass
 fails by name. Then ask whether the module belongs in a `BackupPresets` list — the skill's checklist now
 asks this.
 
+**`HasBackupIn` and `HasArtifactIn` ask different questions, and swapping them is a live hazard.**
+Both take a backup folder and return whether there is something in it, which is exactly why the first
+version of the restore wizard used the wrong one.
+
+- `HasBackupIn` decides **whether to close an application**. It fails open — the base default is
+  `true`, and `FolderModule`/`FileModule` return `true` without probing whenever nothing needs
+  killing — because a false negative there cancels a restore the user asked for.
+- `HasArtifactIn` decides **what the wizard offers**. It is `bool?`: true, false, or null for
+  "cannot tell". Nothing may guess on a module's behalf.
+
+Reading the fail-open seam as a content check meant all thirty modules answered yes, so a backup
+holding one module's files rendered thirty enabled, pre-ticked rows and the run snapshotted and
+attempted every one. The greying users saw was decorative.
+
+Two rules follow, and both are enforced by tests rather than by memory:
+
+1. **Every module must give a definite answer.** `ArtifactProbeTests.EveryCatalogModuleGivesADefiniteAnswer`
+   sweeps the whole catalog and fails by name on a null. A module that genuinely cannot look must
+   override to a literal and say why — `AppStoreApps` is the only one, because its restore opens a
+   dialog with its own folder picker, so the folder being examined is not the one it reads.
+2. **A probe must spell artifact names the way the writer does.** A probe that looks for
+   `Themes_Themes\` while the backup wrote `Themes-Themes\` reports "(nothing in this backup)" over a
+   full folder *and disables the checkbox*, which is worse than the bug it replaced. This is why
+   `BackupFolderNameFor` now exists beside `RegFileNameFor`: three modules were each composing that
+   name inline and the probe would have been the fifth copy.
+
+The rule the wizard applies: the manifest decides for every module it names, and the probe decides
+for the rest. Manifest-silent plus a null probe means "not part of that run" — which is why rule 1
+matters. Get it wrong and a module vanishes from the wizard on any second backup in one app session,
+because that reuses the folder and rewrites the manifest to describe only the latest run.
+
 ## Known rough edges
 
 The cosmetic ones below are not blocking and were left alone as outside what the plan asked for. The
@@ -257,12 +288,20 @@ the once-per-process stamping the manifest-invalidation comment reasons about at
 each module's prior artifacts means teaching the app to delete backup data, which deserves its own
 review. Pick one deliberately; do not let it be decided by whoever touches `RunBackupCore` next.
 
+**Partly contained since, from an unrelated direction.** The PR #15 review rewrote how the restore
+wizard decides what a folder holds (see below), and the rule it landed on is that the manifest wins
+for every module it names. A module the manifest calls `skipped` is therefore not offered *even when
+stale files for it are sitting in the folder*, which is this exact scenario. That narrows the blast
+radius to the wizard only — it is not a fix. The backup folder still accumulates, `RestoreScope` still
+probes the filesystem, and anything that restores without going through step 2 is unchanged.
+
 ### Cosmetic
 
 - **Warning text in wizard step 2 can clip.** The inline warning under a row is a fixed-width read-only
   `TextBox`; on a narrow window the text runs past the visible area. It is still selectable and the
   consent dialog repeats every warning in full, so nothing is *lost* — it just looks cut off. Making it
-  wrap to the row width is the fix.
+  wrap to the row width is the fix. Much rarer since the PR #15 review: warnings now render only for
+  rows that can actually run, so a typical backup shows one or two instead of a dozen.
 - **`RunResultsPanel` re-renders on every resize.** Multiline `TextBox` height cannot be derived from
   content, so reason heights are measured with `TextRenderer.MeasureText` and the rows are rebuilt when
   the panel resizes. Correct, slightly wasteful, and only noticeable if someone drags the window while

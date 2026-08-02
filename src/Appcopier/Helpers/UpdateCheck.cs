@@ -45,7 +45,12 @@ namespace Appcopier
 
         internal static async Task CheckForUpdatesAsync()
         {
-            if (Data.IsInet() == true)
+            // Probed ONCE, and the else below must stay an else. IsInet returns bool, not bool?, so
+            // an "else if (IsInet() == false)" is not a third case - it is a second five-second
+            // synchronous probe on the UI thread, and it only ever runs for the offline user who
+            // already waited out the first one. That doubled the freeze to ten seconds before the
+            // "problem on Internet connection" message appeared.
+            if (Data.IsInet())
             {
                 try
                 {
@@ -84,7 +89,7 @@ namespace Appcopier
                     MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
                 }
             }
-            else if (Data.IsInet() == false)
+            else
             {
                 MessageBox.Show($"Problem on Internet connection: Checking for App updates failed");
             }

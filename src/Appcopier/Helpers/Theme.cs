@@ -164,7 +164,11 @@ namespace Appcopier
             {
                 case TextBox textBox:
                     textBox.BackColor = textBox.ReadOnly ? p.Surface : p.InputBack;
-                    textBox.ForeColor = p.TextPrimary;
+                    // Remapped, not flattened: the wizard's inline warnings and the results panel's
+                    // reasons are read-only TextBoxes precisely so they stay selectable, and they
+                    // carry Caution and Muted. Assigning TextPrimary here would drop the distinction
+                    // on a live theme switch.
+                    textBox.ForeColor = RemapSemantic(textBox.ForeColor, p);
                     break;
 
                 case RichTextBox richTextBox:
@@ -205,7 +209,9 @@ namespace Appcopier
 
                 case CheckBox check:
                     check.BackColor = Color.Transparent;
-                    check.ForeColor = p.TextPrimary;
+                    // Muted here means the row is inert - "(nothing in this backup)" in restore
+                    // step 2 - so it has to survive a repaint like any other semantic colour.
+                    check.ForeColor = RemapSemantic(check.ForeColor, p);
                     break;
 
                 case RadioButton radio:
@@ -215,13 +221,7 @@ namespace Appcopier
 
                 case Label label:
                     label.BackColor = Color.Transparent;
-                    // Muted and caution labels keep their own semantic colour.
-                    if (label.ForeColor != Light.TextMuted && label.ForeColor != Dark.TextMuted
-                        && label.ForeColor != Light.Caution && label.ForeColor != Dark.Caution
-                        && label.ForeColor != Light.Danger && label.ForeColor != Dark.Danger)
-                    {
-                        label.ForeColor = p.TextPrimary;
-                    }
+                    label.ForeColor = RemapSemantic(label.ForeColor, p);
                     break;
 
                 default:
@@ -232,6 +232,35 @@ namespace Appcopier
 
             foreach (Control child in root.Controls)
                 Apply(child);
+        }
+
+        /// <summary>
+        /// Carries a label's MEANING across a palette change: muted stays muted, caution stays
+        /// caution, danger stays danger, and anything else becomes ordinary body text.
+        /// </summary>
+        /// <remarks>
+        /// This used to skip semantic labels instead of remapping them, on the assumption that the
+        /// view would re-apply its own colours afterwards. No view does - every <c>Ui.Caution</c> is
+        /// read once in a constructor and the views are built once and reused. So on a live OS
+        /// switch a banner built in light mode kept <see cref="Light"/>'s dark amber (150,92,0) and
+        /// sat on dark mode's (32,32,32) surface, which is the one combination the amber was chosen
+        /// to avoid.
+        ///
+        /// Both palettes are checked for each token because this runs AFTER <c>Current</c> has
+        /// already flipped, so the colour being matched is the outgoing one.
+        /// </remarks>
+        private static Color RemapSemantic(Color current, Palette p)
+        {
+            if (current == Light.TextMuted || current == Dark.TextMuted)
+                return p.TextMuted;
+
+            if (current == Light.Caution || current == Dark.Caution)
+                return p.Caution;
+
+            if (current == Light.Danger || current == Dark.Danger)
+                return p.Danger;
+
+            return p.TextPrimary;
         }
 
         // ---------------------------------------------------------------------------------------------

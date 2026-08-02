@@ -82,6 +82,15 @@ namespace Conf
         public static string ManifestPathIn(string backupFolder)
             => Path.Combine(backupFolder, ManifestFileName);
 
+        /// <inheritdoc/>
+        /// <remarks>
+        /// The manifest, not the .pow files. Restore is driven entirely from it - it is what maps a
+        /// scheme GUID to its exported file and records which plan was active - so a folder holding
+        /// .pow files without it has nothing this module can act on.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => !string.IsNullOrWhiteSpace(backupPath) && File.Exists(ManifestPathIn(backupPath));
+
         /// <summary>
         /// The exported file for one power scheme.
         /// </summary>

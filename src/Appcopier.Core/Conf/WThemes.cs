@@ -122,8 +122,7 @@ namespace Conf
 
             foreach (string folder in Folders)
             {
-                string folderName = Path.GetFileName(folder);
-                string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
+                string backupFolderPath = Path.Combine(path, BackupFolderNameFor(folder));
 
                 // No try/catch here any more: CopyFolder does not throw, it returns counts. The
                 // catch this replaced logged the failure and then let the module report success.
@@ -147,8 +146,7 @@ namespace Conf
 
             foreach (string folder in Folders)
             {
-                string folderName = Path.GetFileName(folder);
-                string backupFolderPath = Path.Combine(path, $"{Title}_{GetSafeFileName(folderName)}");
+                string backupFolderPath = Path.Combine(path, BackupFolderNameFor(folder));
 
                 // absenceIsNormal is true on this side: the folder being read is one this app wrote,
                 // and a backup taken before this module existed legitimately does not contain it.
@@ -185,6 +183,15 @@ namespace Conf
             => string.Equals(key, LegacyNamedKey, StringComparison.OrdinalIgnoreCase)
                 ? Title + ".reg"
                 : base.RegFileNameFor(key);
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Goes through HasFolderOrKeyArtifactIn, which composes key filenames via RegFileNameFor -
+        /// so the legacy "Themes.reg" spelling overridden just above is honoured here too, and a
+        /// backup written by an older build stays findable.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => HasFolderOrKeyArtifactIn(backupPath, Folders, Keys);
 
         private const string LegacyNamedKey =
             @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes";

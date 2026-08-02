@@ -90,5 +90,14 @@ namespace Conf
 
             return ModuleResult.Aggregate(new[] { step });
         }
+
+        /// <inheritdoc/>
+        /// <remarks>
+        /// One file, "{Title}.txt", written by netsh dump and read back by the restore - the same
+        /// path both halves compose at lines 30 and 63.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => !string.IsNullOrWhiteSpace(backupPath)
+               && File.Exists(Path.Combine(backupPath, $"{Title}.txt"));
     }
 }

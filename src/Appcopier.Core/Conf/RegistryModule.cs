@@ -45,6 +45,13 @@ namespace Conf
                 Utils.ImportRegistryKey(FileFor(path), Key)
             });
 
+        /// <remarks>
+        /// One key, one .reg file, and its name is fixed - so presence is a straight File.Exists
+        /// and this module never has to answer "cannot tell".
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+            => !string.IsNullOrWhiteSpace(backupPath) && File.Exists(FileFor(backupPath));
+
         // One key, so one file, and the name does not need to encode which key it holds. Overriding
         // rather than inheriting the key-derived default keeps the filenames these ten modules have
         // always written, so existing backups stay restorable.

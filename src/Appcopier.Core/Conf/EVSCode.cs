@@ -122,6 +122,15 @@ namespace Conf
                    && Directory.EnumerateFiles(snippets, "*", SearchOption.AllDirectories).Any();
         }
 
+        /// <inheritdoc/>
+        /// <remarks>
+        /// Delegates, because this module's HasBackupIn is already an unconditional artifact probe -
+        /// it has no "true if nothing needs closing" short-circuit, having earned the real check by
+        /// closing VS Code. The two questions genuinely have the same answer here, and writing it
+        /// twice would let them drift.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath) => HasBackupIn(backupPath);
+
         /// <remarks>
         /// VS Code runs several processes all named Code (the window, the extension host, the
         /// renderers); closing by name closes all of them, which is the intent - the extension host

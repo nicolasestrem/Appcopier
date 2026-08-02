@@ -162,6 +162,29 @@ namespace Conf
             return false;
         }
 
+        /// <remarks>
+        /// The same file-by-file probe <see cref="HasBackupIn"/> runs, minus the short-circuit that
+        /// makes it answer true unconditionally when no process would be killed. Every FileModule
+        /// names every file it would read - the shape the remarks above rely on - so this can always
+        /// give a real answer, and the trade-off argued there (File.Exists over an open attempt)
+        /// applies here for the same reason.
+        /// </remarks>
+        public override bool? HasArtifactIn(string backupPath)
+        {
+            if (string.IsNullOrWhiteSpace(backupPath))
+                return false;
+
+            string backupDir = BackupDirFor(backupPath);
+
+            foreach (string f in Files)
+            {
+                if (File.Exists(Path.Combine(backupDir, BackupFileNameFor(f))))
+                    return true;
+            }
+
+            return false;
+        }
+
         public sealed override async Task<ModuleResult> BackupAsync(string path)
         {
             List<StepResult> steps = new List<StepResult>();
