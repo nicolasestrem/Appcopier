@@ -4,6 +4,40 @@ Notable changes to Appcopier are documented in this file.
 
 ## [Unreleased]
 
+### Fixed — dark mode was largely unreadable
+
+Several things went wrong at once and compounded each other.
+
+**Anything the app drew after starting up came back in light colours.** The theme was applied once when
+the window opened, but the restore lists, the History timeline, the results rows and the Home screen are
+all rebuilt as you move around — and everything rebuilt that way reverted to Windows' default white. The
+warning under an item in the restore wizard was the clearest case: a white block of text in an otherwise
+dark window. All of those screens are re-themed as they are built now.
+
+**Nothing had edges.** Cards, result rows and text boxes were painted a shade so close to the background
+that the boundaries were invisible, and the outlines meant to separate them were fainter still. Both are
+lighter now, so a backup card looks like a card. The text colours were never the problem and have not
+moved.
+
+**Items with nothing to restore could not be read.** Those rows are greyed out on purpose, but Windows
+draws a disabled control's text in its own grey and ignores the colour the app asks for, so on a dark
+background they came out close to invisible. The wording now sits beside the checkbox rather than on it,
+which puts the colour back under the app's control.
+
+Light mode is unchanged.
+
+### Fixed — the History timeline showed nothing at all
+
+Every row was being built and then laid out zero pixels wide, so History was a blank page no matter how
+many backups you had. Rows appear now, and clicking one shows its log — previously only a few pixels of
+background between the rows responded to a click, so the log pane stayed empty however carefully you
+aimed.
+
+### Fixed — long warnings in the restore wizard were cut off mid-sentence
+
+The text box was a fixed height regardless of how much text it held. It is measured now, so warnings are
+shown in full.
+
 ### Fixed — the restore wizard now really does grey out what a backup does not contain
 
 Picking a backup and being shown *every* item, all pre-ticked, is what the previous build did — and the

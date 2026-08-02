@@ -189,6 +189,12 @@ namespace Views
             }
 
             explorerRow.Visible = explorerRestartNeeded;
+
+            // Result rows are built per run, long after MainForm themed this control, so without a
+            // re-walk the reason text boxes come up on WinForms' default white. The walker steps
+            // over AccentLabel/AccentPanel, so the state chips and the caution row keep their own
+            // colours. See the note in RestoreWizardStep2View.LoadFolder.
+            Theme.Apply(this);
         }
 
         private int ReasonContentWidth()

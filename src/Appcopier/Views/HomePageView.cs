@@ -88,6 +88,11 @@ namespace Views
             }
 
             rows.ResumeLayout(true);
+
+            // Home disposes and rebuilds its whole row set on every visit, so the controls the
+            // startup theme pass walked are gone by the second navigation. Without this they come
+            // back on WinForms' light defaults. See the note in RestoreWizardStep2View.LoadFolder.
+            Theme.Apply(this);
         }
 
         private void Build()
