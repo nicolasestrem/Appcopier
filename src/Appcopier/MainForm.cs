@@ -222,7 +222,12 @@ namespace Appcopier
             return $"Version {version}";
         }
 
-        private void checkVersion_CheckedChanged(object sender, EventArgs e)
+        /// <remarks>
+        /// async void because it is an event handler, which makes the try/catch mandatory rather
+        /// than defensive: an exception escaping an async void handler is unhandled and takes the
+        /// process down. The message matches the one the update check shows for its own failures.
+        /// </remarks>
+        private async void checkVersion_CheckedChanged(object sender, EventArgs e)
         {
             // Get full version
             string fullVersion = Program.GetCurrentVersionTostring();
@@ -233,7 +238,14 @@ namespace Appcopier
             // Optionally, check for updates when checked
             if (checkVersion.Checked)
             {
-                UpdateCheck.CheckForUpdates();
+                try
+                {
+                    await UpdateCheck.CheckForUpdatesAsync();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Checking for App updates failed.\n{ex.Message}");
+                }
             }
         }
     }

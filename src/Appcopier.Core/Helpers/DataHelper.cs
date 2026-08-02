@@ -1,7 +1,8 @@
-﻿using System;
+﻿using Newtonsoft.Json.Linq;
+using System;
 using System.IO;
 using System.Linq;
-using System.Net;
+using System.Net.Http;
 
 namespace DataHelper
 {
@@ -75,6 +76,12 @@ namespace DataHelper
             public const string URL_GITREPO = "https://github.com/builtbybel/Appcopier";
             public const string URL_ICONATTRIBUTION = "https://www.flaticon.com/free-icon/backup_10426480";
             public const string URL_GITLATEST = URL_GITREPO + "/releases/latest";
+
+            /// <summary>
+            /// The GitHub Releases API for the newest published release. Primary source for the
+            /// update check; URL_ASSEMBLY stays as the fallback.
+            /// </summary>
+            public const string URL_GITAPI_LATEST = "https://api.github.com/repos/builtbybel/Appcopier/releases/latest";
         }
 
         /// <summary>
@@ -102,13 +109,44 @@ namespace DataHelper
             return latestVersion;
         }
 
+        /// <summary>
+        /// The tag of the newest GitHub release, with one optional leading "v" stripped.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors <see cref="ParseLatestVersion"/>'s no-match contract: a missing or empty
+        /// <c>tag_name</c> yields an empty string, which the caller renders as "could not read the
+        /// latest version number" rather than comparing against and offering a phantom update.
+        /// Malformed JSON throws (JsonReaderException) and the caller catches it to fall back to the
+        /// AssemblyInfo path - a broken API response must not be reported as "no update".
+        ///
+        /// This repo tags bare x.y.z ("0.12", "0.30.0"); the "v" strip is tolerance, pinned by test.
+        /// </remarks>
+        internal static string ParseLatestReleaseTag(string json)
+        {
+            JObject root = JObject.Parse(json);
+
+            string tag = (string)root["tag_name"];
+
+            if (string.IsNullOrEmpty(tag))
+                return "";
+
+            return tag[0] == 'v' || tag[0] == 'V' ? tag.Substring(1) : tag;
+        }
+
+        /// <summary>
+        /// One client for the whole process. HttpClient is designed to be shared; a new one per call
+        /// leaks sockets in TIME_WAIT, which is the documented WebClient-replacement trap.
+        /// </summary>
+        private static readonly HttpClient InetProbe = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+
         // Check Inet
         public static bool IsInet()
         {
             try
             {
-                using (var CheckInternet = new WebClient())
-                using (CheckInternet.OpenRead("http://clients3.google.com/generate_204"))
+                using (HttpRequestMessage request =
+                           new HttpRequestMessage(HttpMethod.Get, "http://clients3.google.com/generate_204"))
+                using (InetProbe.Send(request))
                 {
                     return true;
                 }
