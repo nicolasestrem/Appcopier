@@ -11,23 +11,24 @@ namespace Appcopier
     /// </summary>
     /// <remarks>
     /// Rail entries are constructed once and reused rather than rebuilt on each visit. That is what
-    /// makes ConfPageView's checkbox selection, its log pane and its LogHelper target survive a trip
-    /// to Home and back - the same lifetime the single configPage field already had before the rail
-    /// existed. Home is the exception in spirit only: the instance is reused, but it re-reads the
+    /// makes the backup page's checkbox selection, its log pane and its LogHelper target survive a
+    /// trip to Home and back - the same lifetime the single backupPage field already had before the
+    /// rail existed. Home is the exception in spirit only: the instance is reused, but it re-reads the
     /// backup directory every time it is shown, via IRefreshableView.
     ///
-    /// Gone with this change: the wallpaper splash (an Image.FromFile of the user's desktop background,
-    /// shown for a hardcoded 500 ms Task.Delay before the real UI appeared) and the QR-code easter egg
-    /// with its timer, hover handlers and MessageBox. Both were removed by the design rather than
-    /// broken. The update check and its version checkbox are untouched.
+    /// Phase 4 PR 7 inverted the restore flow into a wizard (step 1 picks the backup, step 2 its
+    /// contents), so the rail's Restore and the backup page's Restore button both open the wizard
+    /// rather than the old module-set-first picker.
     /// </remarks>
     public partial class MainForm : Form
     {
         private readonly NavigationService navigation;
 
-        private readonly ConfPageView configPage;
+        private readonly BackupPageView backupPage;
         private readonly HomePageView homePage;
         private readonly RestPageView restorePage;
+        private readonly RestoreWizardStep1View wizardStep1;
+        private readonly RestoreWizardStep2View wizardStep2;
 
         /// <summary>
         /// Built on first use, unlike the rail pages.
@@ -45,20 +46,22 @@ namespace Appcopier
 
             navigation = new NavigationService(pnlForm);
 
-            configPage = new ConfPageView();
-            restorePage = new RestPageView(configPage, navigation);
+            backupPage = new BackupPageView();
+            restorePage = new RestPageView(navigation);
+
+            wizardStep1 = new RestoreWizardStep1View(navigation, OnBackupPicked, () => navigation.Show(backupPage));
+            wizardStep2 = new RestoreWizardStep2View(navigation, running => SetRailEnabled(!running));
 
             homePage = new HomePageView(GoToBackUp, GoToRestoreFor);
 
-            // ConfPageView's own Restore button picks the module SET; the page that follows picks the
-            // folder. A delegate rather than a reference to this form: the view needs one navigation,
-            // not the shell.
-            configPage.ShowRestoreView = () => navigation.Push(restorePage);
+            // The backup page's Restore button opens the wizard (step 1). A delegate rather than a
+            // reference to this form: the view needs one navigation, not the shell.
+            backupPage.ShowRestoreView = () => navigation.Push(wizardStep1);
 
             // The backup page disables itself while a run is going, but the rail lives on the form
             // and stayed live - so its buttons could navigate away from a running backup, or reach
             // back into that page's state while the run was suspended at an await.
-            configPage.RunStateChanged = running => SetRailEnabled(!running);
+            backupPage.RunStateChanged = running => SetRailEnabled(!running);
 
             navigation.Root = homePage;
 
@@ -81,8 +84,7 @@ namespace Appcopier
 
             // The form's own Font is deliberately NOT set. Assigning it here cascades into every
             // child that inherits, and the hosted UserControls scale their layout against the font
-            // they were designed with - ConfPageView's tree and log pane collapsed to a narrow
-            // column when it was set. Fonts are applied per control instead, and PR 9's theme pass
+            // they were designed with. Fonts are applied per control instead, and PR 9's theme pass
             // is where a coordinated sweep belongs.
 
             lblDiskSpace.Font = Ui.Body();
@@ -138,32 +140,14 @@ namespace Appcopier
             => navigation.Show(homePage);
 
         private void btnBackUp_Click(object sender, EventArgs e)
-            => navigation.Show(configPage);
+            => navigation.Show(backupPage);
 
         /// <summary>
-        /// Restore from the rail, which still has to pass through choosing what to restore.
+        /// Restore from the rail opens the wizard. The old module-set-first gate is gone: the wizard
+        /// picks what to restore FROM the chosen backup, so there is nothing to validate first.
         /// </summary>
-        /// <remarks>
-        /// The restore SET is chosen in ConfPageView and the FOLDER in RestPageView, in that order -
-        /// RestPageView's OK button runs the restore against configPage.selectedConfigs. Sending the
-        /// rail straight to the folder picker would therefore offer to run a restore of nothing.
-        /// So the rail asks the backup page for its current selection first and, when there is none,
-        /// lands the user on the page where the choice is made, with the same message that button has
-        /// always shown.
-        /// </remarks>
         private void btnRestore_Click(object sender, EventArgs e)
-        {
-            if (configPage.TryCollectRestoreSelection())
-            {
-                navigation.Show(restorePage);
-                return;
-            }
-
-            navigation.Show(configPage);
-
-            MessageBox.Show("Please choose a configuration to restore beforehand.", "",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+            => navigation.Show(wizardStep1);
 
         private void btnAbout_Click(object sender, EventArgs e)
         {
@@ -174,8 +158,17 @@ namespace Appcopier
         }
 
         // -----------------------------------------------------------------------------------------
-        // Home's actions
+        // Wizard wiring + Home's actions
         // -----------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Wizard step 1 -> step 2: load the picked folder's contents and push step 2.
+        /// </summary>
+        private void OnBackupPicked(BackupFolder folder)
+        {
+            wizardStep2.LoadFolder(folder);
+            navigation.Push(wizardStep2);
+        }
 
         /// <summary>
         /// Home's "Back up again": go to the backup page, re-ticking what the last run recorded.
@@ -188,19 +181,17 @@ namespace Appcopier
         private void GoToBackUp(IReadOnlyList<string> moduleTypeNames)
         {
             if (moduleTypeNames != null)
-                configPage.SelectModulesByTypeName(moduleTypeNames);
+                backupPage.SelectModulesByTypeName(moduleTypeNames);
 
-            navigation.Show(configPage);
+            navigation.Show(backupPage);
         }
 
         /// <summary>
         /// Home's "View details": open the backup list with that folder selected.
         /// </summary>
         /// <remarks>
-        /// Reading, not restoring - so no module selection is required to get here, and none is
-        /// invented. The restore itself is gated inside RestPageView's OK, which is the single place
-        /// it can start; a gate on this navigation would refuse to SHOW a backup because of what the
-        /// user had not yet ticked.
+        /// Reading, not restoring - so no selection is required. RestPageView remains as a read-only
+        /// log viewer for this path until the History page (PR 8) replaces it.
         ///
         /// The list is reloaded by NavigationService through IRefreshableView on the way in, which
         /// is why the selection is requested first and applied on the far side of that refresh.

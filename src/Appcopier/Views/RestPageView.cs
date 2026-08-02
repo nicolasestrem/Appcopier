@@ -10,7 +10,6 @@ namespace Views
 {
     public partial class RestPageView : UserControl, IRefreshableView
     {
-        private readonly ConfPageView configPage;
         private readonly NavigationService navigation;
 
         /// <summary>
@@ -23,10 +22,9 @@ namespace Views
         /// </remarks>
         private string pendingSelection;
 
-        internal RestPageView(ConfPageView cp, NavigationService navigation)
+        internal RestPageView(NavigationService navigation)
         {
             InitializeComponent();
-            configPage = cp;
             this.navigation = navigation;
 
             LoadBackups();
@@ -141,49 +139,7 @@ namespace Views
                 listRestoration.SelectedIndex = index;
         }
 
-        private async void btnOK_Click(object sender, EventArgs e)
-        {
-            if (listRestoration.SelectedItems.Count != 1)
-            {
-                MessageBox.Show("Please select exactly one backup folder for restore.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
 
-            // The module SET is chosen on the backup page and the FOLDER here. Enforced at the point
-            // the restore actually starts rather than only on the paths that lead here: this is the
-            // single place HandleRestorationAfterSelection is invoked, so guarding it covers every
-            // entry route - the rail, the backup page's own button, and Home's "View details",
-            // which reaches this view for reading and not for restoring. Without it, OK from a
-            // fresh launch walks the user through snapshot creation and the consent dialog to
-            // restore nothing at all.
-            //
-            // What this checks is that a set EXISTS, not that it was chosen for this backup. Coming
-            // from Home's "View details", the ticks can be left over from an earlier visit to the
-            // backup page, and OK would then restore those modules from this folder. That is
-            // deliberate for now and it is not silent: RestoreConfirmForm still stops everything,
-            // still lists every module by name in words RestorePlan alone authors, still opens with
-            // its consent boxes unticked and Cancel focused. Nothing can be applied without the user
-            // reading the exact list first. Binding the choice to one restore flow means asking
-            // which contents to restore FROM THIS BACKUP, which is PR 7's step 2 - and a half-built
-            // version of it here is state that PR would have to delete.
-            if (!configPage.TryCollectRestoreSelection())
-            {
-                // Navigate first, so the warning is dismissed onto the page that answers it.
-                navigation.Show(configPage);
-
-                MessageBox.Show("Please choose a configuration to restore beforehand.", "",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            configPage.CurrentRestorePath = Data.DataRootDir + listRestoration.SelectedItem.ToString() + "\\";
-
-            // Back to the backup page, which owns the log pane the restore reports progress into.
-            navigation.Show(configPage);
-
-            // Call restoration logic after setting path
-            await configPage.HandleRestorationAfterSelection();
-        }
 
         private void btnBack_Click(object sender, EventArgs e)
            => navigation.Pop();

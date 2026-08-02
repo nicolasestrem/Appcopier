@@ -29,7 +29,7 @@
         private void InitializeComponent()
         {
             this.listRestoration = new System.Windows.Forms.ListBox();
-            this.btnOK = new System.Windows.Forms.Button();
+
             this.lblHeader = new System.Windows.Forms.Label();
             this.btnBack = new System.Windows.Forms.Button();
             this.linkSubHeader = new System.Windows.Forms.LinkLabel();
@@ -54,27 +54,10 @@
             this.listRestoration.Size = new System.Drawing.Size(327, 612);
             this.listRestoration.TabIndex = 5;
             this.listRestoration.SelectedIndexChanged += new System.EventHandler(this.listRestoration_SelectedIndexChanged);
-            // 
-            // btnOK
-            // 
-            this.btnOK.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.btnOK.AutoEllipsis = true;
-            this.btnOK.BackColor = System.Drawing.Color.Black;
-            this.btnOK.FlatAppearance.BorderSize = 0;
-            this.btnOK.Font = new System.Drawing.Font("Segoe UI Variable Display", 12F, System.Drawing.FontStyle.Bold);
-            this.btnOK.ForeColor = System.Drawing.Color.White;
-            this.btnOK.Location = new System.Drawing.Point(611, 40);
-            this.btnOK.Name = "btnOK";
-            this.btnOK.Padding = new System.Windows.Forms.Padding(0, 0, 5, 0);
-            this.btnOK.Size = new System.Drawing.Size(127, 34);
-            this.btnOK.TabIndex = 182;
-            this.btnOK.TabStop = false;
-            this.btnOK.Text = "Restore";
-            this.btnOK.UseVisualStyleBackColor = false;
-            this.btnOK.Click += new System.EventHandler(this.btnOK_Click);
-            // 
+            //
             // lblHeader
-            // 
+            //
+
             this.lblHeader.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.lblHeader.AutoEllipsis = true;
@@ -181,7 +164,7 @@
             this.Controls.Add(this.linkSubHeader);
             this.Controls.Add(this.btnBack);
             this.Controls.Add(this.lblHeader);
-            this.Controls.Add(this.btnOK);
+
             this.Controls.Add(this.listRestoration);
             this.Name = "RestorationPageView";
             this.Size = new System.Drawing.Size(942, 759);
@@ -192,7 +175,7 @@
         #endregion
 
         private System.Windows.Forms.ListBox listRestoration;
-        private System.Windows.Forms.Button btnOK;
+
         private System.Windows.Forms.Label lblHeader;
         private System.Windows.Forms.Button btnBack;
         private System.Windows.Forms.LinkLabel linkSubHeader;

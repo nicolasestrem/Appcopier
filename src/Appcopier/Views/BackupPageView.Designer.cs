@@ -1,6 +1,6 @@
 namespace Views
 {
-    partial class ConfPageView
+    partial class BackupPageView
     {
         /// <summary>
         /// Erforderliche Designervariable.
@@ -380,14 +380,14 @@ namespace Views
             this.menuOpenAppBackups.Text = "Open app backups";
             this.menuOpenAppBackups.Click += new System.EventHandler(this.menuOpenAppBackups_Click);
             //
-            // ConfPageView
+            // BackupPageView
             //
             this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             this.AutoScroll = true;
             this.BackColor = Appcopier.Ui.Surface;
             this.Controls.Add(this.root);
-            this.Name = "ConfPageView";
+            this.Name = "BackupPageView";
             this.Size = new System.Drawing.Size(824, 759);
             this.contextMenu.ResumeLayout(false);
             this.contextMenu.PerformLayout();

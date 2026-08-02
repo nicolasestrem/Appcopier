@@ -11,7 +11,12 @@ using System.Windows.Forms;
 
 namespace Views
 {
-    public partial class ConfPageView : UserControl, IRunUi
+    /// <summary>
+    /// The Backup page: presets + the full module tree, and the backup run. Renamed from
+    /// ConfPageView in Phase 4 PR 7 once the restore flow moved to the wizard and this page lost its
+    /// restore role.
+    /// </summary>
+    public partial class BackupPageView : UserControl, IRunUi
     {
         private static readonly LogHelper logger = LogHelper.Instance;
 
@@ -29,14 +34,12 @@ namespace Views
 
         internal string CurrentBackupPath = Data.DataRootDir + Data.NowShort + "\\";
 
-        internal string CurrentRestorePath = "";
-
         internal List<BackupBase> selectedConfigs = new List<BackupBase>();
 
         /// <summary>
-        /// Runs a backup or restore, routing every progress update, result, consent prompt and
-        /// Explorer-restart toggle back here through <see cref="IRunUi"/>. Constructed once with this
-        /// control as the UI surface.
+        /// Runs a backup, routing every progress update, result, consent prompt and Explorer-restart
+        /// toggle back here through <see cref="IRunUi"/>. Constructed once with this control as the
+        /// UI surface. (Restore runs in the wizard, which owns its own orchestrator.)
         /// </summary>
         private readonly BackupRestoreOrchestrator runner;
 
@@ -56,7 +59,7 @@ namespace Views
         // Whether the full module tree is expanded under the "Advanced" toggle.
         private bool treeExpanded;
 
-        public ConfPageView()
+        public BackupPageView()
         {
             InitializeComponent();
             InitializeConfigurations();
@@ -148,14 +151,13 @@ namespace Views
         }
 
         /// <summary>
-        /// Raised with true while a backup or restore is running, and false when it ends.
+        /// Raised with true while a backup is running, and false when it ends.
         /// </summary>
         /// <remarks>
         /// This page disables ITSELF for the duration, which was sufficient when every control that
         /// could touch its state lived on it. The navigation rail does not: it stays live on the
-        /// form while this control is disabled, so its buttons could navigate away mid-run or reach
-        /// back into this page while a run was suspended at an await. The shell listens here and
-        /// shuts the rail for the duration.
+        /// form while this control is disabled, so its buttons could navigate away mid-run. The shell
+        /// listens here and shuts the rail for the duration.
         /// </remarks>
         internal Action<bool> RunStateChanged = _ => { };
 
@@ -215,30 +217,10 @@ namespace Views
             await runner.RunBackup(selectedConfigs, CurrentBackupPath);
         }
 
-        // Asynchronous method to handle restoration after the user selects restoration path
-        public async Task HandleRestorationAfterSelection()
-        {
-            // The window is disabled for the whole run. Without it a second restore can be started
-            // while the first is still writing, and the snapshot this phase adds makes a restore
-            // long enough for that to be reachable by hand rather than merely possible.
-            this.Enabled = false;
-            RunStateChanged(true);
-
-            try
-            {
-                await runner.RunRestore(selectedConfigs, CurrentRestorePath);
-            }
-            finally
-            {
-                this.Enabled = true;
-                RunStateChanged(false);
-            }
-        }
-
         // ---------------------------------------------------------------------------------------------
         //  IRunUi - the UI surface the orchestrator talks back through. Results render in-page via
-        //  resultsPanel; the summary MessageBox is gone. Consent prompts stay modal (consent modality
-        //  is the feature; what was removed is modal spam).
+        //  resultsPanel; the summary MessageBox is gone. (No restore role here: that lives in the
+        //  wizard, which has its own IRunUi. The consent members remain because IRunUi is one contract.)
         // ---------------------------------------------------------------------------------------------
 
         void IRunUi.SetProgressText(string text) => linkSubHeader.Text = text;
@@ -257,9 +239,8 @@ namespace Views
 
         IReadOnlyList<string> IRunUi.ShowConsentDialog(RestorePlan plan)
         {
-            // The owner is the Form, not this control: a UserControl is not something CenterParent
-            // can centre on, and a modal owned by a control this pipeline has already disabled is
-            // the shape that fails to come forward.
+            // Only reached on a backup-time error that composes a RestorePlan; backup itself never
+            // consents. Kept identical to the wizard's impl so the contract is one shape.
             Form owner = FindForm();
 
             using (RestoreConfirmForm confirm = new RestoreConfirmForm(plan))
@@ -280,20 +261,12 @@ namespace Views
 
         void IRunUi.SetExplorerRestartVisible(bool visible) => resultsPanel.SetExplorerRestartVisible(visible);
 
-        private void btnRestore_Click(object sender, EventArgs e)
-        {
-            if (TryCollectRestoreSelection())
-            {
-                ShowRestoreView();
-                return;
-            }
-
-            // Input validation, not a result: this stays a MessageBox.
-            MessageBox.Show("Please choose a configuration to restore beforehand.", "", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        }
+        // The backup page's Restore button opens the wizard (step 1). No module-set gate: the wizard
+        // picks what to restore FROM the chosen backup, which is the whole point of inverting the flow.
+        private void btnRestore_Click(object sender, EventArgs e) => ShowRestoreView();
 
         /// <summary>
-        /// Navigates to the folder picker. Supplied by the shell, which owns that view.
+        /// Navigates to the restore wizard. Supplied by the shell, which owns that view.
         /// </summary>
         /// <remarks>
         /// A delegate rather than a NavigationService reference, matching how the engine's other
@@ -301,39 +274,6 @@ namespace Views
         /// service would let any future edit here reach every screen in the app.
         /// </remarks>
         internal Action ShowRestoreView = () => { };
-
-        /// <summary>
-        /// Populates <see cref="selectedConfigs"/> from the ticked tree nodes, reporting whether
-        /// anything was ticked at all.
-        /// </summary>
-        /// <remarks>
-        /// The restore SET is chosen here and the FOLDER on the next page, and RestPageView's OK
-        /// button runs the restore against this list - so this must have succeeded before that page
-        /// is shown, whether the user got there from this page's button or from the rail. Returning
-        /// a bool rather than showing the warning itself: the two callers land the user in different
-        /// places, and only one of them is already on this page.
-        /// </remarks>
-        internal bool TryCollectRestoreSelection()
-        {
-            selectedConfigs.Clear();
-
-            foreach (TreeNode parentNode in treeConfigurations.Nodes)
-            {
-                foreach (TreeNode childNode in parentNode.Nodes)
-                {
-                    if (childNode.Checked)
-                    {
-                        BackupBase configuration = childNode.Tag as BackupBase;
-                        if (configuration != null)
-                        {
-                            selectedConfigs.Add(configuration);
-                        }
-                    }
-                }
-            }
-
-            return selectedConfigs.Count > 0;
-        }
 
         /// <summary>
         /// Ticks exactly the modules named by their CLR type name, unticking everything else.
