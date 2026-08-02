@@ -348,12 +348,17 @@ namespace Views
             return button;
         }
 
+        /// <remarks>
+        /// <c>Ui.Border</c> rather than a literal: light's Border IS Gainsboro, so this is the same
+        /// hairline it always was, but the theme walker can now recognise and re-colour it instead
+        /// of flattening it into the surface it is meant to divide.
+        /// </remarks>
         private static Control Separator()
             => new Panel
             {
                 Height = 1,
                 Dock = DockStyle.Top,
-                BackColor = Color.Gainsboro,
+                BackColor = Ui.Border,
                 Margin = new Padding(0, Ui.SpaceL, 0, Ui.SpaceM)
             };
 

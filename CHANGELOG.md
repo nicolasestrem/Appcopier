@@ -19,10 +19,12 @@ that the boundaries were invisible, and the outlines meant to separate them were
 lighter now, so a backup card looks like a card. The text colours were never the problem and have not
 moved.
 
+**A divider on the home screen vanished** whenever you navigated back to it, for the same reason.
+
 **Items with nothing to restore could not be read.** Those rows are greyed out on purpose, but Windows
 draws a disabled control's text in its own grey and ignores the colour the app asks for, so on a dark
 background they came out close to invisible. The wording now sits beside the checkbox rather than on it,
-which puts the colour back under the app's control.
+which puts the colour back under the app's control. Screen readers still announce each one by name.
 
 Light mode is unchanged.
 

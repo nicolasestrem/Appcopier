@@ -190,10 +190,20 @@ namespace Views
             // here in the first version did nothing: every "(nothing in this backup)" row rendered at
             // about 3:1 against the dark surface, which is where "can't read the greyed rows" came
             // from. A Label is not disabled, so its colour is ours and lands at 7:1.
+            // Splitting glyph from words costs the checkbox its accessible name - a WinForms Label
+            // is NOT automatically associated with the control beside it, so a screen reader would
+            // announce "checked" with nothing to say WHAT is checked. Named explicitly instead, with
+            // the same words the label shows.
+            string caption = row.HasBackup
+                ? row.Module.Title
+                : row.Module.Title + " (nothing in this backup)";
+
             CheckBox check = new CheckBox
             {
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
+                AccessibleName = caption,
+                AccessibleRole = AccessibleRole.CheckButton,
                 Checked = row.HasBackup,
                 Enabled = row.HasBackup,
                 Margin = new Padding(0, 0, Ui.SpaceXs, 0),
@@ -209,6 +219,9 @@ namespace Views
                 Font = Ui.Body(),
                 ForeColor = row.HasBackup ? Ui.TextPrimary : Ui.Muted,
                 Margin = new Padding(0, 3, Ui.SpaceS, 0),
+                // Not announced: the checkbox beside it already carries these words as its
+                // accessible name, so exposing them twice would make Narrator read every row twice.
+                AccessibleRole = AccessibleRole.StaticText,
                 Text = row.HasBackup
                     ? row.Module.Title
                     : row.Module.Title + "   (nothing in this backup)",

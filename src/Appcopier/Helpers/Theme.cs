@@ -201,8 +201,11 @@ namespace Appcopier
 
                 case LinkLabel link:
                     link.BackColor = Color.Transparent;
-                    link.LinkColor = p.TextPrimary;
-                    link.ActiveLinkColor = p.TextPrimary;
+                    // Remapped for the same reason labels are: History's "Open folder" is muted so
+                    // it reads as secondary to "Restore from this backup" beside it. Flattening both
+                    // to TextPrimary here collapsed that hierarchy on every refresh.
+                    link.LinkColor = RemapSemantic(link.LinkColor, p);
+                    link.ActiveLinkColor = link.LinkColor;
                     break;
 
                 case Button button:
@@ -228,6 +231,16 @@ namespace Appcopier
                 case Label label:
                     label.BackColor = Color.Transparent;
                     label.ForeColor = RemapSemantic(label.ForeColor, p);
+                    break;
+
+                case Panel panel:
+                    // A hairline separator is a Border-coloured Panel, so it has to survive the walk
+                    // like any other semantic colour - the default below would repaint it Surface
+                    // and leave an invisible 1px gap where a divider should be.
+                    panel.BackColor = panel.BackColor == Light.Border || panel.BackColor == Dark.Border
+                        ? p.Border
+                        : p.Surface;
+                    panel.ForeColor = p.TextPrimary;
                     break;
 
                 default:
