@@ -88,6 +88,11 @@ namespace Views
             }
 
             rows.ResumeLayout(true);
+
+            // Home disposes and rebuilds its whole row set on every visit, so the controls the
+            // startup theme pass walked are gone by the second navigation. Without this they come
+            // back on WinForms' light defaults. See the note in RestoreWizardStep2View.LoadFolder.
+            Theme.Apply(this);
         }
 
         private void Build()
@@ -343,12 +348,17 @@ namespace Views
             return button;
         }
 
+        /// <remarks>
+        /// <c>Ui.Border</c> rather than a literal: light's Border IS Gainsboro, so this is the same
+        /// hairline it always was, but the theme walker can now recognise and re-colour it instead
+        /// of flattening it into the surface it is meant to divide.
+        /// </remarks>
         private static Control Separator()
             => new Panel
             {
                 Height = 1,
                 Dock = DockStyle.Top,
-                BackColor = Color.Gainsboro,
+                BackColor = Ui.Border,
                 Margin = new Padding(0, Ui.SpaceL, 0, Ui.SpaceM)
             };
 

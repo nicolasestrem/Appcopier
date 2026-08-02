@@ -73,6 +73,7 @@ namespace Views
             if (folders.UnreadableReason != null)
             {
                 cards.Controls.Add(MakeNote(folders.UnreadableReason));
+                Theme.Apply(this);
                 return;
             }
 
@@ -100,6 +101,7 @@ namespace Views
                 empty.Controls.Add(link);
                 empty.Controls.Add(note);
                 cards.Controls.Add(empty);
+                Theme.Apply(this);
                 return;
             }
 
@@ -116,6 +118,10 @@ namespace Views
                 foreach (BackupFolder folder in folders.Snapshots)
                     cards.Controls.Add(MakeCard(folder, undoPoint: true));
             }
+
+            // Cards built after startup miss MainForm's theme pass; re-walk. See the note in
+            // RestoreWizardStep2View.LoadFolder.
+            Theme.Apply(this);
         }
 
         private static Label MakeSection(string title)

@@ -89,6 +89,7 @@ namespace Views
             if (folders.UnreadableReason != null)
             {
                 rows.Controls.Add(MakeNote(folders.UnreadableReason));
+                Theme.Apply(this);
                 return;
             }
 
@@ -100,6 +101,7 @@ namespace Views
             if (timeline.Count == 0)
             {
                 rows.Controls.Add(MakeNote("No backups yet."));
+                Theme.Apply(this);
                 return;
             }
 
@@ -111,6 +113,11 @@ namespace Views
                 foldersByName[folder.Name] = folder;
                 logsByName[folder.Name] = ConcatenatedLog(folder);
             }
+
+            // Built just now, so they missed the startup theme pass - see the note in
+            // RestoreWizardStep2View.LoadFolder. Before the selection below, so the detail pane's
+            // text is set against the right palette.
+            Theme.Apply(this);
 
             if (!string.IsNullOrEmpty(pendingSelection))
             {
@@ -138,16 +145,17 @@ namespace Views
             Label titleLabel = new Label
             {
                 AutoSize = true,
-                Dock = DockStyle.Top,
+                Anchor = AnchorStyles.Left,
                 Font = Ui.BodyBold(),
                 ForeColor = Ui.TextPrimary,
+                Margin = new Padding(0),
                 Text = title + "   (" + created + ")",
             };
 
             Label summaryLabel = new Label
             {
                 AutoSize = true,
-                Dock = DockStyle.Top,
+                Anchor = AnchorStyles.Left,
                 Font = Ui.Body(),
                 ForeColor = Ui.Muted,
                 Margin = new Padding(0, 0, 0, Ui.SpaceXs),
@@ -157,7 +165,7 @@ namespace Views
             LinkLabel restoreLink = new LinkLabel
             {
                 AutoSize = true,
-                Dock = DockStyle.Top,
+                Anchor = AnchorStyles.Left,
                 Font = Ui.Body(),
                 LinkColor = Ui.TextPrimary,
                 Margin = new Padding(0, 0, Ui.SpaceL, 0),
@@ -169,34 +177,78 @@ namespace Views
             LinkLabel openLink = new LinkLabel
             {
                 AutoSize = true,
-                Dock = DockStyle.Top,
+                Anchor = AnchorStyles.Left,
                 Font = Ui.Body(),
                 LinkColor = Ui.Muted,
+                Margin = new Padding(0),
                 Text = "Open folder",
                 Tag = folder,
             };
             openLink.LinkClicked += (s, e) => OpenFolder(folder);
 
-            Panel links = new Panel { AutoSize = true, Dock = DockStyle.Top };
-            links.Controls.Add(openLink);
-            links.Controls.Add(restoreLink);
-
-            Panel row = new Panel
+            // FlowLayoutPanel, so the two links sit side by side and the panel reports a real width.
+            FlowLayoutPanel links = new FlowLayoutPanel
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Dock = DockStyle.Top,
+                FlowDirection = FlowDirection.LeftToRight,
+                Margin = new Padding(0),
+                WrapContents = false,
+            };
+            links.Controls.Add(restoreLink);
+            links.Controls.Add(openLink);
+
+            // A TableLayoutPanel, NOT a Panel. A plain Panel whose children are all Dock=Top reports
+            // a preferred WIDTH of zero, and this row lives in a FlowLayoutPanel, which sizes its
+            // children from exactly that. Every row was therefore laid out 0 pixels wide - present,
+            // Visible=true, correct height, and completely invisible. The whole History timeline
+            // rendered as an empty page, and it shipped that way because the original check only
+            // confirmed the view constructed without throwing.
+            TableLayoutPanel row = new TableLayoutPanel
+            {
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
                 Margin = new Padding(0, 0, 0, Ui.SpaceS),
                 Padding = new Padding(0),
                 Tag = folder.Name,
                 Cursor = Cursors.Hand,
             };
-            row.Controls.Add(links);
-            row.Controls.Add(summaryLabel);
-            row.Controls.Add(titleLabel);
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.Controls.Add(titleLabel, 0, 0);
+            row.Controls.Add(summaryLabel, 0, 1);
+            row.Controls.Add(links, 0, 2);
             row.Click += (s, e) => ShowLogFor(folder.Name);
 
+            // And on every child, because a Click does NOT bubble to a parent in WinForms. The
+            // children cover the row, so the handler above could only ever fire on leftover
+            // background pixels - meaning clicking the title or the summary, which is what "select a
+            // row to read its log" means to anyone using this, did nothing at all.
+            ForwardClickToRow(row, folder.Name);
+
             return row;
+        }
+
+        /// <summary>
+        /// Gives every descendant of a row the row's own selection behaviour.
+        /// </summary>
+        /// <remarks>
+        /// LinkLabels are skipped: they already carry an action, and "Restore from this backup"
+        /// starting a restore should not also quietly change what the pane below is showing.
+        /// Recursive because the links sit one Panel deep.
+        /// </remarks>
+        private void ForwardClickToRow(Control parent, string folderName)
+        {
+            foreach (Control child in parent.Controls)
+            {
+                if (child is LinkLabel)
+                    continue;
+
+                child.Cursor = Cursors.Hand;
+                child.Click += (s, e) => ShowLogFor(folderName);
+
+                ForwardClickToRow(child, folderName);
+            }
         }
 
         private void ShowLogFor(string folderName)

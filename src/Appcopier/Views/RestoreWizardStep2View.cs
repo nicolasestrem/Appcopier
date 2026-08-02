@@ -36,7 +36,33 @@ namespace Views
         private readonly RunResultsPanel resultsPanel;
 
         private BackupFolder folder;
-        private readonly List<CheckBox> rowChecks = new List<CheckBox>();
+        /// <summary>
+        /// One step-2 row: its checkbox, its module, and whether the folder actually holds anything
+        /// for it.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Eligible"/> is tracked here rather than read back off <c>CheckBox.Enabled</c>
+        /// because those are two different facts that only happened to coincide. Eligibility is a
+        /// statement about the BACKUP; Enabled is a statement about the control, and the control's
+        /// state is also driven by the run - the whole page is disabled while a restore is in
+        /// flight. Deriving one from the other means any future change to how an inert row is
+        /// painted silently changes which modules get restored.
+        /// </remarks>
+        private sealed class RowCheck
+        {
+            internal CheckBox Box { get; }
+            internal BackupBase Module { get; }
+            internal bool Eligible { get; }
+
+            internal RowCheck(CheckBox box, BackupBase module, bool eligible)
+            {
+                Box = box;
+                Module = module;
+                Eligible = eligible;
+            }
+        }
+
+        private readonly List<RowCheck> rowChecks = new List<RowCheck>();
 
         public RestoreWizardStep2View(NavigationService navigation, Action<bool> runStateChanged)
         {
@@ -149,32 +175,67 @@ namespace Views
                 rows.Controls.Add(MakeRow(row));
 
             RefreshNextEnabled();
+
+            // These rows did not exist when MainForm themed this page, and WinForms defaults are
+            // LIGHT - a TextBox nobody assigns a BackColor to is white. That is why the inline
+            // warning rendered as a white slab in dark mode. Anything built after startup has to be
+            // re-walked; the walker steps over the chips, so their colours survive.
+            Theme.Apply(this);
         }
 
         private Control MakeRow(RestoreContentsRow row)
         {
+            // The glyph only - the text lives on the Label beside it. A DISABLED CheckBox paints its
+            // own Text with the system grey and ignores ForeColor entirely, so the muted colour set
+            // here in the first version did nothing: every "(nothing in this backup)" row rendered at
+            // about 3:1 against the dark surface, which is where "can't read the greyed rows" came
+            // from. A Label is not disabled, so its colour is ours and lands at 7:1.
+            // Splitting glyph from words costs the checkbox its accessible name - a WinForms Label
+            // is NOT automatically associated with the control beside it, so a screen reader would
+            // announce "checked" with nothing to say WHAT is checked. Named explicitly instead, with
+            // the same words the label shows.
+            string caption = row.HasBackup
+                ? row.Module.Title
+                : row.Module.Title + " (nothing in this backup)";
+
             CheckBox check = new CheckBox
             {
                 AutoSize = true,
-                Dock = DockStyle.Top,
-                Font = Ui.Body(),
-                ForeColor = Ui.TextPrimary,
-                Margin = new Padding(0, 0, Ui.SpaceS, 0),
-                Text = row.Module.Title,
-                Tag = row.Module,
-                Enabled = row.HasBackup,
+                Anchor = AnchorStyles.Left,
+                AccessibleName = caption,
+                AccessibleRole = AccessibleRole.CheckButton,
                 Checked = row.HasBackup,
+                Enabled = row.HasBackup,
+                Margin = new Padding(0, 0, Ui.SpaceXs, 0),
+                Tag = row.Module,
+                Text = "",
+            };
+            check.CheckedChanged += (s, e) => RefreshNextEnabled();
+
+            Label title = new Label
+            {
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Font = Ui.Body(),
+                ForeColor = row.HasBackup ? Ui.TextPrimary : Ui.Muted,
+                Margin = new Padding(0, 3, Ui.SpaceS, 0),
+                // Not announced: the checkbox beside it already carries these words as its
+                // accessible name, so exposing them twice would make Narrator read every row twice.
+                AccessibleRole = AccessibleRole.StaticText,
+                Text = row.HasBackup
+                    ? row.Module.Title
+                    : row.Module.Title + "   (nothing in this backup)",
             };
 
-            if (!row.HasBackup)
+            if (row.HasBackup)
             {
-                check.Checked = false;
-                check.ForeColor = Ui.Muted;
-                check.Text = row.Module.Title + "   (nothing in this backup)";
+                // The label now carries the words, so it has to carry the click that used to land on
+                // the checkbox's own text.
+                title.Cursor = Cursors.Hand;
+                title.Click += (s, e) => check.Checked = !check.Checked;
             }
 
-            check.CheckedChanged += (s, e) => RefreshNextEnabled();
-            rowChecks.Add(check);
+            rowChecks.Add(new RowCheck(check, row.Module, row.HasBackup));
 
             Control chip = MakeStateChip(row.ManifestState);
 
@@ -182,18 +243,25 @@ namespace Views
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                ColumnCount = chip == null ? 1 : 2,
+                ColumnCount = chip == null ? 2 : 3,
                 RowCount = 1,
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0),
             };
             content.Controls.Add(check, 0, 0);
+            content.Controls.Add(title, 1, 0);
+
+            // ColumnStyles are positional - index 0 is the first column, not the first Add. Order
+            // here is checkbox, title, chip, and it must be added in exactly that order or the title
+            // takes the chip's fixed 120px and the chip takes the stretch.
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));   // 0 - checkbox glyph
+            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // 1 - title
+
             if (chip != null)
             {
-                content.Controls.Add(chip, 1, 0);
-                content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));
+                content.Controls.Add(chip, 2, 0);
+                content.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F)); // 2 - chip
             }
-            content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
 
             // Only for rows that can actually run. A warning describes what restoring this WOULD do,
             // which is noise under a row the folder holds nothing for - and expensive noise: before
@@ -201,17 +269,31 @@ namespace Views
             // twelve inert warnings would push the one restorable row off the bottom of the screen.
             if (row.HasBackup && !string.IsNullOrEmpty(row.Warning))
             {
+                // Height MEASURED, not left to default. A multiline TextBox does not auto-size to
+                // its content, so the default height showed roughly one and a half lines and cut
+                // the rest off mid-word - visible in every screenshot once the text was legible
+                // enough to read. Same approach RunResultsPanel uses for failure reasons.
+                const int WarningWidth = 620;
+                string warningText = "\u26A0 " + row.Warning;
+                Font warningFont = Ui.Body();
+                Size measured = TextRenderer.MeasureText(
+                    warningText, warningFont,
+                    new Size(WarningWidth, int.MaxValue),
+                    TextFormatFlags.WordBreak);
+
                 TextBox warning = new TextBox
                 {
                     BorderStyle = BorderStyle.None,
-                    Dock = DockStyle.Top,
-                    Font = Ui.Body(),
+                    Font = warningFont,
                     ForeColor = Ui.Caution,
                     Margin = new Padding(24, Ui.SpaceXs, 0, 0),
                     Multiline = true,
                     ReadOnly = true,
-                    Text = "\u26A0 " + row.Warning,
-                    Width = 360,
+                    ScrollBars = ScrollBars.None,
+                    Text = warningText,
+                    Width = WarningWidth,
+                    Height = measured.Height + Ui.SpaceXs,
+                    WordWrap = true,
                 };
                 TableLayoutPanel wrap = new TableLayoutPanel
                 {
@@ -280,9 +362,9 @@ namespace Views
 
         private void RefreshNextEnabled()
         {
-            foreach (CheckBox check in rowChecks)
+            foreach (RowCheck row in rowChecks)
             {
-                if (check.Enabled && check.Checked)
+                if (row.Eligible && row.Box.Checked)
                 {
                     btnNext.Enabled = true;
                     return;
@@ -292,15 +374,23 @@ namespace Views
             btnNext.Enabled = false;
         }
 
+        /// <summary>
+        /// The modules to restore: ticked AND backed by something in this folder.
+        /// </summary>
+        /// <remarks>
+        /// The eligibility half is not redundant. This used to test <c>Checked</c> alone and was
+        /// correct only by accident - an ineligible box was disabled, so nothing could tick it. That
+        /// made the guarantee a property of how the row is PAINTED, one restyle away from letting a
+        /// module the backup has nothing for into a real restore. It is now a property of the row.
+        /// </remarks>
         private IReadOnlyList<BackupBase> SelectedModules()
         {
             List<BackupBase> selected = new List<BackupBase>();
 
-            for (int i = 0; i < rowChecks.Count; i++)
+            foreach (RowCheck row in rowChecks)
             {
-                CheckBox check = rowChecks[i];
-                if (check.Checked && check.Tag is BackupBase module)
-                    selected.Add(module);
+                if (row.Eligible && row.Box.Checked)
+                    selected.Add(row.Module);
             }
 
             return selected;

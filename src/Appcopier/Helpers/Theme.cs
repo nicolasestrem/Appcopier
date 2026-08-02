@@ -84,11 +84,17 @@ namespace Appcopier
         internal static readonly Palette Dark = new Palette
         {
             Surface = Color.FromArgb(32, 32, 32),
-            RailSurface = Color.FromArgb(43, 43, 43),
-            CardSurface = Color.FromArgb(43, 43, 43),
+            RailSurface = Color.FromArgb(50, 50, 50),
+            CardSurface = Color.FromArgb(56, 56, 56),
             TextPrimary = Color.FromArgb(240, 240, 240),
             TextMuted = Color.FromArgb(170, 170, 170),
-            Border = Color.FromArgb(65, 65, 65),
+            // 3.2:1 against Surface. The first pass used (65,65,65) - 1.6:1 - which is invisible,
+            // and since CardSurface was 1.15:1 against Surface as well, nothing on a dark screen had
+            // an edge: backup cards, result rows and text boxes all dissolved into the background.
+            // The text was never the problem; every foreground token here clears 6:1. Borders are
+            // what make a surface a surface, and 3:1 is the floor for a boundary that carries
+            // meaning rather than decoration.
+            Border = Color.FromArgb(110, 110, 110),
             Danger = Color.FromArgb(255, 120, 120),
             Caution = Color.FromArgb(240, 190, 90),
             ChipSucceededBack = Color.FromArgb(38, 104, 66),
@@ -97,7 +103,7 @@ namespace Appcopier
             ChipSkippedFore = Color.White,
             ChipFailedBack = Color.FromArgb(150, 48, 48),
             ChipFailedFore = Color.White,
-            InputBack = Color.FromArgb(43, 43, 43),
+            InputBack = Color.FromArgb(56, 56, 56),
         };
 
         internal static Palette Current { get; private set; } = Light;
@@ -195,8 +201,11 @@ namespace Appcopier
 
                 case LinkLabel link:
                     link.BackColor = Color.Transparent;
-                    link.LinkColor = p.TextPrimary;
-                    link.ActiveLinkColor = p.TextPrimary;
+                    // Remapped for the same reason labels are: History's "Open folder" is muted so
+                    // it reads as secondary to "Restore from this backup" beside it. Flattening both
+                    // to TextPrimary here collapsed that hierarchy on every refresh.
+                    link.LinkColor = RemapSemantic(link.LinkColor, p);
+                    link.ActiveLinkColor = link.LinkColor;
                     break;
 
                 case Button button:
@@ -222,6 +231,16 @@ namespace Appcopier
                 case Label label:
                     label.BackColor = Color.Transparent;
                     label.ForeColor = RemapSemantic(label.ForeColor, p);
+                    break;
+
+                case Panel panel:
+                    // A hairline separator is a Border-coloured Panel, so it has to survive the walk
+                    // like any other semantic colour - the default below would repaint it Surface
+                    // and leave an invisible 1px gap where a divider should be.
+                    panel.BackColor = panel.BackColor == Light.Border || panel.BackColor == Dark.Border
+                        ? p.Border
+                        : p.Surface;
+                    panel.ForeColor = p.TextPrimary;
                     break;
 
                 default:
