@@ -49,10 +49,20 @@ namespace Views
             this.menuOpenAppBackups = new System.Windows.Forms.ToolStripMenuItem();
             this.root = new System.Windows.Forms.TableLayoutPanel();
             this.content = new System.Windows.Forms.TableLayoutPanel();
+            this.leftColumn = new System.Windows.Forms.TableLayoutPanel();
+            this.presetsPanel = new System.Windows.Forms.TableLayoutPanel();
+            this.rbEverything = new System.Windows.Forms.RadioButton();
+            this.rbDeveloper = new System.Windows.Forms.RadioButton();
+            this.rbMinimal = new System.Windows.Forms.RadioButton();
+            this.rbCustom = new System.Windows.Forms.RadioButton();
+            this.lblWarnings = new System.Windows.Forms.Label();
+            this.lnkAdvanced = new System.Windows.Forms.LinkLabel();
             this.actions = new System.Windows.Forms.TableLayoutPanel();
             this.contextMenu.SuspendLayout();
             this.root.SuspendLayout();
             this.content.SuspendLayout();
+            this.leftColumn.SuspendLayout();
+            this.presetsPanel.SuspendLayout();
             this.actions.SuspendLayout();
             this.SuspendLayout();
             //
@@ -75,6 +85,86 @@ namespace Views
             this.linkSubHeader.TabStop = true;
             this.linkSubHeader.Text = "Choose settings";
             //
+            // rbEverything
+            //
+            this.rbEverything.AutoSize = true;
+            this.rbEverything.Dock = System.Windows.Forms.DockStyle.Top;
+            this.rbEverything.Name = "rbEverything";
+            this.rbEverything.Text = "Everything on this PC";
+            this.rbEverything.UseVisualStyleBackColor = true;
+            this.rbEverything.CheckedChanged += new System.EventHandler(this.rbPreset_CheckedChanged);
+            //
+            // rbDeveloper
+            //
+            this.rbDeveloper.AutoSize = true;
+            this.rbDeveloper.Dock = System.Windows.Forms.DockStyle.Top;
+            this.rbDeveloper.Name = "rbDeveloper";
+            this.rbDeveloper.Text = "Developer machine";
+            this.rbDeveloper.UseVisualStyleBackColor = true;
+            this.rbDeveloper.CheckedChanged += new System.EventHandler(this.rbPreset_CheckedChanged);
+            //
+            // rbMinimal
+            //
+            this.rbMinimal.AutoSize = true;
+            this.rbMinimal.Dock = System.Windows.Forms.DockStyle.Top;
+            this.rbMinimal.Name = "rbMinimal";
+            this.rbMinimal.Text = "Minimal privacy-safe";
+            this.rbMinimal.UseVisualStyleBackColor = true;
+            this.rbMinimal.CheckedChanged += new System.EventHandler(this.rbPreset_CheckedChanged);
+            //
+            // rbCustom
+            //
+            this.rbCustom.AutoSize = true;
+            this.rbCustom.Dock = System.Windows.Forms.DockStyle.Top;
+            this.rbCustom.Name = "rbCustom";
+            this.rbCustom.Text = "Custom";
+            this.rbCustom.UseVisualStyleBackColor = true;
+            this.rbCustom.CheckedChanged += new System.EventHandler(this.rbPreset_CheckedChanged);
+            //
+            // lblWarnings
+            //
+            this.lblWarnings.AutoSize = true;
+            this.lblWarnings.Dock = System.Windows.Forms.DockStyle.Top;
+            this.lblWarnings.ForeColor = Appcopier.Ui.Caution;
+            this.lblWarnings.Margin = new System.Windows.Forms.Padding(20, Appcopier.Ui.SpaceXs, 0, Appcopier.Ui.SpaceXs);
+            this.lblWarnings.Name = "lblWarnings";
+            this.lblWarnings.Text = "";
+            this.lblWarnings.Visible = false;
+            //
+            // lnkAdvanced
+            //
+            this.lnkAdvanced.AutoSize = true;
+            this.lnkAdvanced.Dock = System.Windows.Forms.DockStyle.Top;
+            this.lnkAdvanced.LinkBehavior = System.Windows.Forms.LinkBehavior.HoverUnderline;
+            this.lnkAdvanced.LinkColor = System.Drawing.Color.DimGray;
+            this.lnkAdvanced.Margin = new System.Windows.Forms.Padding(20, 0, 0, Appcopier.Ui.SpaceS);
+            this.lnkAdvanced.Name = "lnkAdvanced";
+            this.lnkAdvanced.TabStop = true;
+            this.lnkAdvanced.Text = "\u25B8 Advanced: full module list";
+            this.lnkAdvanced.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.lnkAdvanced_LinkClicked);
+            //
+            // presetsPanel
+            //
+            this.presetsPanel.AutoSize = true;
+            this.presetsPanel.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.presetsPanel.ColumnCount = 1;
+            this.presetsPanel.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.presetsPanel.Controls.Add(this.lnkAdvanced, 0, 5);
+            this.presetsPanel.Controls.Add(this.lblWarnings, 0, 4);
+            this.presetsPanel.Controls.Add(this.rbCustom, 0, 3);
+            this.presetsPanel.Controls.Add(this.rbMinimal, 0, 2);
+            this.presetsPanel.Controls.Add(this.rbDeveloper, 0, 1);
+            this.presetsPanel.Controls.Add(this.rbEverything, 0, 0);
+            this.presetsPanel.Dock = System.Windows.Forms.DockStyle.Top;
+            this.presetsPanel.Name = "presetsPanel";
+            this.presetsPanel.RowCount = 6;
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.presetsPanel.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            //
             // treeConfigurations
             //
             this.treeConfigurations.BorderStyle = System.Windows.Forms.BorderStyle.None;
@@ -87,6 +177,18 @@ namespace Views
             this.treeConfigurations.AfterCheck += new System.Windows.Forms.TreeViewEventHandler(this.treeConfigurations_AfterCheck);
             this.treeConfigurations.AfterSelect += new System.Windows.Forms.TreeViewEventHandler(this.treeConfigurations_AfterSelect);
             //
+            // leftColumn
+            //
+            this.leftColumn.ColumnCount = 1;
+            this.leftColumn.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.leftColumn.Controls.Add(this.treeConfigurations, 0, 1);
+            this.leftColumn.Controls.Add(this.presetsPanel, 0, 0);
+            this.leftColumn.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.leftColumn.Name = "leftColumn";
+            this.leftColumn.RowCount = 2;
+            this.leftColumn.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.leftColumn.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            //
             // txtInfo
             //
             this.txtInfo.BorderStyle = System.Windows.Forms.BorderStyle.None;
@@ -96,13 +198,13 @@ namespace Views
             this.txtInfo.ReadOnly = true;
             this.txtInfo.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
             //
-            // content (tree | info)
+            // content (leftColumn | info)
             //
             this.content.AutoScroll = true;
             this.content.ColumnCount = 2;
             this.content.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 55F));
             this.content.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 45F));
-            this.content.Controls.Add(this.treeConfigurations, 0, 0);
+            this.content.Controls.Add(this.leftColumn, 0, 0);
             this.content.Controls.Add(this.txtInfo, 1, 0);
             this.content.Dock = System.Windows.Forms.DockStyle.Fill;
             this.content.Location = new System.Drawing.Point(0, 0);
@@ -291,6 +393,10 @@ namespace Views
             this.contextMenu.PerformLayout();
             this.content.ResumeLayout(false);
             this.content.PerformLayout();
+            this.leftColumn.ResumeLayout(false);
+            this.leftColumn.PerformLayout();
+            this.presetsPanel.ResumeLayout(false);
+            this.presetsPanel.PerformLayout();
             this.actions.ResumeLayout(false);
             this.actions.PerformLayout();
             this.root.ResumeLayout(false);
@@ -320,6 +426,14 @@ namespace Views
         private System.Windows.Forms.ToolStripMenuItem menuOpenAppBackups;
         private System.Windows.Forms.TableLayoutPanel root;
         private System.Windows.Forms.TableLayoutPanel content;
+        private System.Windows.Forms.TableLayoutPanel leftColumn;
+        private System.Windows.Forms.TableLayoutPanel presetsPanel;
+        private System.Windows.Forms.RadioButton rbEverything;
+        private System.Windows.Forms.RadioButton rbDeveloper;
+        private System.Windows.Forms.RadioButton rbMinimal;
+        private System.Windows.Forms.RadioButton rbCustom;
+        private System.Windows.Forms.Label lblWarnings;
+        private System.Windows.Forms.LinkLabel lnkAdvanced;
         private System.Windows.Forms.TableLayoutPanel actions;
     }
 }

@@ -182,6 +182,8 @@ new ModuleRegistration(new WExample(), "Settings"),
 
 The category string must exactly match the tree node name from the table above (a typo silently creates a new top-level category; a genuinely new category is created by spelling it consistently on every module that belongs to it). `ConfPageView.InitializeConfigurations` now just loops over `ModuleCatalog.CreateAll()`, so this single edit is what puts the module in the tree.
 
+**Must this module join a preset?** `src/Appcopier/Views/BackupPresets.cs` holds two curated name lists: `DeveloperMachine` and `MinimalPrivacySafeExclusions`. A developer tooling module usually belongs in `DeveloperMachine`; a module that carries identifying data (Windows Update client identity, env vars, Wi-Fi keys) belongs in `MinimalPrivacySafeExclusions` so "Minimal privacy-safe" leaves it out. Add the module's CLR type name to the matching list (and to `BackupPresetsTests`'s pinned literal) if so.
+
 ## Step 3 — Update the hand-kept test rosters
 
 The declaration tests enumerate modules by reflection, but a few assertions are hand-kept and **will fail until updated** — that is their job:

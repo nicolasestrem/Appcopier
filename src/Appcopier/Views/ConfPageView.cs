@@ -16,7 +16,7 @@ namespace Views
         private static readonly LogHelper logger = LogHelper.Instance;
 
         /// <summary>
-        /// The greeting shown in the log pane. {0} is the OS build string from OsHelper.GetVersion.
+        /// The greeting shown in the info pane. {0} is the OS build string from OsHelper.GetVersion.
         /// </summary>
         /// <remarks>
         /// A const rather than an inline interpolation so the composition is testable without
@@ -44,7 +44,17 @@ namespace Views
         private const int ResultsRow = 4;
         private const int LogRow = 6;
 
+        // leftColumn row that hosts the (collapsible) full module tree.
+        private const int TreeRow = 1;
+
         private bool isSelectAll = false;
+
+        // True while a preset is programmatically ticking the tree, so AfterCheck does not read those
+        // ticks as the user choosing Custom.
+        private bool applyingPreset;
+
+        // Whether the full module tree is expanded under the "Advanced" toggle.
+        private bool treeExpanded;
 
         public ConfPageView()
         {
@@ -54,12 +64,18 @@ namespace Views
 
             runner = new BackupRestoreOrchestrator(this);
 
-            // A hidden docked/row control must not reserve space. Both results and the activity log
-            // are collapsed by default and expand only when shown, so the row they live in follows.
+            // A hidden docked/row control must not reserve space. The results panel, the activity log
+            // and the (collapsed) full module tree each follow their own visibility, so their rows do.
             resultsPanel.VisibleChanged += (s, e) => SetRowCollapsed(root, ResultsRow, !resultsPanel.Visible);
             rtbLog.VisibleChanged += (s, e) => SetRowCollapsed(root, LogRow, !rtbLog.Visible);
+            treeConfigurations.VisibleChanged += (s, e) => SetRowCollapsed(leftColumn, TreeRow, !treeConfigurations.Visible);
             rtbLog.Visible = false;
             SetRowCollapsed(root, ResultsRow, !resultsPanel.Visible);
+            ExpandTree(false);
+
+            // "Everything on this PC" is the default; its radio applies Select-available on check.
+            rbEverything.Text = "Everything on this PC   (" + CountInstalled() + " items found)";
+            rbEverything.Checked = true;
         }
 
         private void SetStyle()
@@ -80,12 +96,24 @@ namespace Views
 
             logToggle.Font = Ui.Body();
 
+            foreach (RadioButton rb in new[] { rbEverything, rbDeveloper, rbMinimal, rbCustom })
+            {
+                rb.Font = Ui.Body();
+                rb.ForeColor = Color.Black;
+            }
+
+            lblWarnings.Font = Ui.Body();
+            lnkAdvanced.Font = Ui.Body();
+
             // Segoe MDL2 Assets glyphs on the icon buttons.
             btnMenuMore.Text = "\uE712";
             btnMenuRestore.Text = "\uE777";
 
-            rtbLog.BackColor = Ui.Surface;
+            // The info pane opens on the greeting so the right column is informative before any
+            // selection; AfterSelect replaces it with the chosen item's details.
             txtInfo.Text = string.Format(IntroTemplate, OsHelper.GetVersion());
+
+            rtbLog.BackColor = Ui.Surface;
             logger.SetTarget(rtbLog);
         }
 
@@ -96,6 +124,7 @@ namespace Views
                 AddConfiguration(registration.Module, registration.Category);
             }
         }
+
         private void AddConfiguration(BackupBase configuration, string parentNodeText)
         {
             TreeNode parentNode = FindOrCreateNode(parentNodeText);
@@ -321,6 +350,14 @@ namespace Views
         /// </remarks>
         internal void SelectModulesByTypeName(IReadOnlyList<string> moduleTypeNames)
         {
+            // Home's "Back up again" is a bespoke selection, so it lands on Custom with the tree open.
+            TickByTypeNames(moduleTypeNames);
+            rbCustom.Checked = true;
+            ExpandTree(true);
+        }
+
+        private void TickByTypeNames(IReadOnlyList<string> moduleTypeNames)
+        {
             HashSet<string> wanted = new HashSet<string>(StringComparer.Ordinal);
 
             if (moduleTypeNames != null)
@@ -391,11 +428,9 @@ namespace Views
         private void btnMenuMore_Click(object sender, EventArgs e)
             => this.contextMenu.Show(Cursor.Position.X, Cursor.Position.Y);
 
+        // Select-available IS the Everything preset.
         private void menuSelectInstalled_Click(object sender, EventArgs e)
-        {
-            SelectAll(false);
-            SelectInstalled();
-        }
+            => rbEverything.Checked = true;
 
         private void menuSelectAll_Click(object sender, EventArgs e)
         {
@@ -409,6 +444,12 @@ namespace Views
             {
                 child.Checked = e.Node.Checked;
             }
+
+            // A tick the preset did not make is the user editing the selection, so it is Custom now.
+            if (!applyingPreset)
+                rbCustom.Checked = true;
+
+            RefreshWarnings();
         }
 
         private void logToggle_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
@@ -425,9 +466,131 @@ namespace Views
         private void menuOpenBackupFolder_Click(object sender, EventArgs e)
            => Process.Start(new ProcessStartInfo("explorer.exe", DataHelper.Data.DataRootDir) { UseShellExecute = true });
 
+        // ---------------------------------------------------------------------------------------------
+        //  Presets - curated named selections driving the tree. "Everything on this PC" is today's
+        //  Select-available; the others are module-name lists in BackupPresets. Any manual tick change
+        //  flips the radio to Custom; the tree lives behind an "Advanced" toggle that Custom opens.
+        // ---------------------------------------------------------------------------------------------
+
+        private void rbPreset_CheckedChanged(object sender, EventArgs e)
+        {
+            if (!(sender is RadioButton rb) || !rb.Checked)
+                return;
+
+            if (rb == rbEverything)
+                ApplyPreset(() => { SelectAll(false); SelectInstalled(); }, expandTree: false);
+            else if (rb == rbDeveloper)
+                ApplyPreset(() => TickByTypeNames(BackupPresets.DeveloperMachine), expandTree: false);
+            else if (rb == rbMinimal)
+                ApplyPreset(() =>
+                {
+                    SelectAll(false);
+                    SelectInstalled();
+                    UntickByTypeName(BackupPresets.MinimalPrivacySafeExclusions);
+                }, expandTree: false);
+            else // rbCustom - no automatic selection, just reveal the tree for hand-editing.
+                ExpandTree(true);
+        }
+
+        private void ApplyPreset(Action apply, bool expandTree)
+        {
+            applyingPreset = true;
+            try
+            {
+                apply();
+            }
+            finally
+            {
+                applyingPreset = false;
+            }
+
+            ExpandTree(expandTree);
+            RefreshWarnings();
+        }
+
+        private void UntickByTypeName(IReadOnlyList<string> names)
+        {
+            HashSet<string> exclude = new HashSet<string>(StringComparer.Ordinal);
+
+            if (names != null)
+            {
+                foreach (string name in names)
+                {
+                    if (!string.IsNullOrEmpty(name))
+                        exclude.Add(name);
+                }
+            }
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    BackupBase configuration = childNode.Tag as BackupBase;
+                    if (configuration != null && exclude.Contains(configuration.GetType().Name))
+                        childNode.Checked = false;
+                }
+            }
+        }
+
+        // "N items in this selection carry warnings - shown on the item"; hidden when zero.
+        private void RefreshWarnings()
+        {
+            int count = 0;
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    if (childNode.Checked)
+                    {
+                        BackupBase configuration = childNode.Tag as BackupBase;
+                        if (configuration != null && !string.IsNullOrEmpty(configuration.WarningMessage))
+                            count++;
+                    }
+                }
+            }
+
+            if (count == 0)
+            {
+                lblWarnings.Visible = false;
+            }
+            else
+            {
+                lblWarnings.Visible = true;
+                lblWarnings.Text = count + " item(s) in this selection carry warnings - shown on the item.";
+            }
+        }
+
+        private void ExpandTree(bool expand)
+        {
+            treeExpanded = expand;
+            treeConfigurations.Visible = expand;
+            lnkAdvanced.Text = (expand ? "\u25BE " : "\u25B8 ") + "Advanced: full module list";
+        }
+
+        private void lnkAdvanced_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
+            => ExpandTree(!treeExpanded);
+
+        private int CountInstalled()
+        {
+            int count = 0;
+
+            foreach (TreeNode parentNode in treeConfigurations.Nodes)
+            {
+                foreach (TreeNode childNode in parentNode.Nodes)
+                {
+                    BackupBase configuration = childNode.Tag as BackupBase;
+                    if (configuration != null && configuration.IsInstalled())
+                        count++;
+                }
+            }
+
+            return count;
+        }
+
         /// <summary>
         /// Collapses (or expands) a row of a <see cref="TableLayoutPanel"/> by switching its row
-        /// style, so a hidden results panel or activity log does not reserve blank space.
+        /// style, so a hidden results panel, activity log or full module tree does not reserve space.
         /// </summary>
         private static void SetRowCollapsed(TableLayoutPanel tlp, int row, bool collapsed)
         {
