@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -44,6 +45,11 @@ namespace Appcopier
         {
             InitializeComponent();
 
+            // Before any view is constructed: the views read Ui.* (which forwards to the active
+            // palette) as they build, so choosing the palette afterwards would leave them light
+            // until the first re-apply.
+            Theme.Use(Theme.IsDarkOs());
+
             navigation = new NavigationService(pnlForm);
 
             backupPage = new BackupPageView();
@@ -66,6 +72,14 @@ namespace Appcopier
             navigation.Root = homePage;
 
             SetStyle();
+
+            // The rail pages are constructed once and swapped in and out of pnlForm, so only the
+            // CURRENT one is in this form's control tree. A live theme change has to reach all of
+            // them, which is why ApplyTheme walks each page rather than just `this`.
+            ApplyTheme();
+
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+            FormClosed += (s, e) => SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         }
 
         private void MainForm_Shown(object sender, EventArgs e)
@@ -74,6 +88,9 @@ namespace Appcopier
             lblDiskSpace.Text = Utils.GetSystemPartitionDiskSpaceInfo();
 
             navigation.Show(homePage);
+
+            // Needs a created handle, so it happens here rather than in the constructor.
+            Theme.ApplyTitleBar(this);
         }
 
         private void SetStyle()
@@ -91,7 +108,7 @@ namespace Appcopier
             lblDiskSpace.ForeColor = Ui.Muted;
 
             checkVersion.Font = Ui.Body();
-            checkVersion.ForeColor = Color.Black;
+            checkVersion.ForeColor = Ui.TextPrimary;
             checkVersion.BackColor = Ui.RailSurface;
             checkVersion.FlatAppearance.CheckedBackColor = Ui.RailSurface;
 
@@ -110,7 +127,7 @@ namespace Appcopier
         {
             button.Text = text;
             button.Font = Ui.Body();
-            button.ForeColor = Color.Black;
+            button.ForeColor = Ui.TextPrimary;
             button.BackColor = Ui.RailSurface;
             button.FlatAppearance.BorderSize = 0;
         }
@@ -132,6 +149,64 @@ namespace Appcopier
             btnRestore.Enabled = enabled;
             btnHistory.Enabled = enabled;
             btnAbout.Enabled = enabled;
+        }
+
+        // -----------------------------------------------------------------------------------------
+        // Theme
+        // -----------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Paints the shell and every page with the active palette.
+        /// </summary>
+        /// <remarks>
+        /// Each page is walked explicitly because only the page currently in pnlForm is part of this
+        /// form's control tree - the others are held by fields and re-inserted on navigation, so a
+        /// walk of `this` alone would leave them in the previous palette until they were rebuilt.
+        /// SetStyle runs afterwards to re-assert the rail's own colours over the generic walk.
+        /// </remarks>
+        private void ApplyTheme()
+        {
+            Theme.Apply(this);
+
+            Theme.Apply(backupPage);
+            Theme.Apply(homePage);
+            Theme.Apply(historyPage);
+            Theme.Apply(wizardStep1);
+            Theme.Apply(wizardStep2);
+
+            if (aboutPage != null)
+                Theme.Apply(aboutPage);
+
+            SetStyle();
+            Theme.ApplyTitleBar(this);
+        }
+
+        /// <summary>
+        /// Follows a live OS light/dark switch.
+        /// </summary>
+        /// <remarks>
+        /// SystemEvents raises this on a system thread, so the work is marshalled onto the UI thread
+        /// before touching a single control. The subscription is static and would otherwise keep this
+        /// form alive for the life of the process, which is why FormClosed unsubscribes.
+        /// </remarks>
+        private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            if (e.Category != UserPreferenceCategory.General)
+                return;
+
+            if (!IsHandleCreated || IsDisposed)
+                return;
+
+            BeginInvoke((Action)(() =>
+            {
+                bool dark = Theme.IsDarkOs();
+
+                if (dark == Theme.IsDark)
+                    return;
+
+                Theme.Use(dark);
+                ApplyTheme();
+            }));
         }
 
         // -----------------------------------------------------------------------------------------

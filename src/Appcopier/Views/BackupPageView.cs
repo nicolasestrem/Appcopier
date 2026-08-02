@@ -86,23 +86,23 @@ namespace Views
             BackColor = Ui.Surface;
 
             headerLabel.Font = Ui.Title();
-            headerLabel.ForeColor = Color.Black;
+            headerLabel.ForeColor = Ui.TextPrimary;
 
             linkSubHeader.Font = Ui.BodyBold();
-            linkSubHeader.ForeColor = Color.Black;
+            linkSubHeader.ForeColor = Ui.TextPrimary;
 
             treeConfigurations.Font = Ui.Body();
 
             txtInfo.Font = Ui.Body();
             txtInfo.BackColor = Ui.Surface;
-            txtInfo.ForeColor = Color.Black;
+            txtInfo.ForeColor = Ui.TextPrimary;
 
             logToggle.Font = Ui.Body();
 
             foreach (RadioButton rb in new[] { rbEverything, rbDeveloper, rbMinimal, rbCustom })
             {
                 rb.Font = Ui.Body();
-                rb.ForeColor = Color.Black;
+                rb.ForeColor = Ui.TextPrimary;
             }
 
             lblWarnings.Font = Ui.Body();
@@ -111,6 +111,12 @@ namespace Views
             // Segoe MDL2 Assets glyphs on the icon buttons.
             btnMenuMore.Text = "\uE712";
             btnMenuRestore.Text = "\uE777";
+
+            // The primary action is deliberately inverted against the surface, so it stays the
+            // highest-contrast thing on the page in BOTH palettes rather than a black-on-black block.
+            btnBackup.Font = Ui.BodyBold();
+            btnBackup.BackColor = Ui.TextPrimary;
+            btnBackup.ForeColor = Ui.Surface;
 
             // The info pane opens on the greeting so the right column is informative before any
             // selection; AfterSelect replaces it with the chosen item's details.

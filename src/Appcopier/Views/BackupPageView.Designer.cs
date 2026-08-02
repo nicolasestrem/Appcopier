@@ -33,7 +33,7 @@ namespace Views
             this.linkSubHeader = new System.Windows.Forms.LinkLabel();
             this.treeConfigurations = new System.Windows.Forms.TreeView();
             this.txtInfo = new System.Windows.Forms.TextBox();
-            this.btnBackup = new System.Windows.Forms.Button();
+            this.btnBackup = new Appcopier.AccentButton();
             this.btnMenuRestore = new System.Windows.Forms.Button();
             this.btnMenuMore = new System.Windows.Forms.Button();
             this.resultsPanel = new Views.RunResultsPanel();
@@ -207,7 +207,7 @@ namespace Views
             this.content.Controls.Add(this.leftColumn, 0, 0);
             this.content.Controls.Add(this.txtInfo, 1, 0);
             this.content.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.content.Location = new System.Drawing.Point(0, 0);
+            this.content.Margin = new System.Windows.Forms.Padding(0);
             this.content.Name = "content";
             this.content.RowCount = 1;
             this.content.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
@@ -215,9 +215,7 @@ namespace Views
             // btnBackup
             //
             this.btnBackup.AutoSize = true;
-            this.btnBackup.BackColor = System.Drawing.Color.Black;
             this.btnBackup.FlatAppearance.BorderSize = 0;
-            this.btnBackup.ForeColor = System.Drawing.Color.White;
             this.btnBackup.Name = "btnBackup";
             this.btnBackup.Padding = new System.Windows.Forms.Padding(Appcopier.Ui.SpaceM, Appcopier.Ui.SpaceXs, Appcopier.Ui.SpaceM, Appcopier.Ui.SpaceXs);
             this.btnBackup.Text = "Back up now";
@@ -317,7 +315,7 @@ namespace Views
             this.root.Controls.Add(this.linkSubHeader, 0, 1);
             this.root.Controls.Add(this.headerLabel, 0, 0);
             this.root.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.root.Location = new System.Drawing.Point(Appcopier.Ui.SpaceM, Appcopier.Ui.SpaceM);
+            this.root.Padding = new System.Windows.Forms.Padding(Appcopier.Ui.SpaceM);
             this.root.Name = "root";
             this.root.RowCount = 7;
             this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
@@ -410,7 +408,7 @@ namespace Views
         private System.Windows.Forms.LinkLabel linkSubHeader;
         private System.Windows.Forms.TreeView treeConfigurations;
         private System.Windows.Forms.TextBox txtInfo;
-        private System.Windows.Forms.Button btnBackup;
+        private Appcopier.AccentButton btnBackup;
         private System.Windows.Forms.Button btnMenuRestore;
         private System.Windows.Forms.Button btnMenuMore;
         private Views.RunResultsPanel resultsPanel;

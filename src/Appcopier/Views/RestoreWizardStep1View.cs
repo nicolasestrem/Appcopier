@@ -34,7 +34,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.Title(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Text = "Restore from a backup",
                 Margin = new Padding(Ui.SpaceM, Ui.SpaceM, Ui.SpaceM, Ui.SpaceS),
             };
@@ -92,7 +92,7 @@ namespace Views
                     AutoSize = true,
                     Dock = DockStyle.Top,
                     Font = Ui.Body(),
-                    LinkColor = Color.Black,
+                    LinkColor = Ui.TextPrimary,
                     Text = "Go to Back up to create one",
                     Margin = new Padding(0, Ui.SpaceXs, 0, 0),
                 };
@@ -150,22 +150,24 @@ namespace Views
                 ? "Pre-restore snapshot \u2013 restores it to roll back the change it recorded."
                 : DescribeManifest(manifest);
 
-            Button card = new Button
+            // AccentButton: the card paints its own surface/border, so the theme walker steps over
+            // it. Tokens rather than literals, so both palettes get a readable card.
+            Button card = new AccentButton
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                BackColor = Color.FromArgb(250, 250, 250),
+                BackColor = Ui.CardSurface,
                 Dock = DockStyle.Top,
                 FlatStyle = FlatStyle.Flat,
                 Font = Ui.Body(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Margin = new Padding(0, 0, 0, Ui.SpaceS),
                 Padding = new Padding(Ui.SpaceM),
                 Tag = folder,
                 TextAlign = ContentAlignment.TopLeft,
                 Text = title + "\r\n" + created + "\r\n" + summary,
             };
-            card.FlatAppearance.BorderColor = Color.FromArgb(220, 220, 220);
+            card.FlatAppearance.BorderColor = Ui.Border;
             card.Click += (s, e) => onPicked(folder);
 
             return card;

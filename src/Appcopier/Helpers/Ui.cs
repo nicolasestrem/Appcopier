@@ -41,23 +41,50 @@ namespace Appcopier
 
         internal static Font Icon() => new Font(IconFamily, 12f);
 
-        internal static readonly Color Surface = Color.FromArgb(243, 243, 243);
+        // ---------------------------------------------------------------------------------------------
+        //  Colour tokens. These forward to the active palette in Theme, so every existing Ui.* call
+        //  site became theme-aware without changing. Fonts and spacing above stay here; palettes and
+        //  the control-tree walker live in Theme (PR 9).
+        // ---------------------------------------------------------------------------------------------
 
-        internal static readonly Color RailSurface = Color.FromArgb(245, 241, 249);
+        internal static Color Surface => Theme.Current.Surface;
 
-        internal static readonly Color Muted = Color.DimGray;
+        internal static Color RailSurface => Theme.Current.RailSurface;
+
+        internal static Color CardSurface => Theme.Current.CardSurface;
+
+        /// <summary>Primary text. Replaces the inline Color.Black the views used to hardcode.</summary>
+        internal static Color TextPrimary => Theme.Current.TextPrimary;
+
+        internal static Color Muted => Theme.Current.TextMuted;
+
+        internal static Color Border => Theme.Current.Border;
+
+        internal static Color InputBack => Theme.Current.InputBack;
 
         /// <summary>Failure text.</summary>
-        internal static readonly Color Danger = Color.FromArgb(168, 34, 34);
+        internal static Color Danger => Theme.Current.Danger;
 
         /// <summary>
         /// An outcome that is not a success and not a failure either - skipped, or not recorded.
         /// </summary>
         /// <remarks>
-        /// Amber and deliberately never green: the styling has to keep the distinction the engine's
-        /// three-state result fought for, and an item with no recorded outcome must not read as one
-        /// that went fine.
+        /// Amber and deliberately never green, in BOTH palettes: the styling has to keep the
+        /// distinction the engine's three-state result fought for, and an item with no recorded
+        /// outcome must not read as one that went fine.
         /// </remarks>
-        internal static readonly Color Caution = Color.FromArgb(150, 92, 0);
+        internal static Color Caution => Theme.Current.Caution;
+
+        internal static Color ChipSucceededBack => Theme.Current.ChipSucceededBack;
+
+        internal static Color ChipSucceededFore => Theme.Current.ChipSucceededFore;
+
+        internal static Color ChipSkippedBack => Theme.Current.ChipSkippedBack;
+
+        internal static Color ChipSkippedFore => Theme.Current.ChipSkippedFore;
+
+        internal static Color ChipFailedBack => Theme.Current.ChipFailedBack;
+
+        internal static Color ChipFailedFore => Theme.Current.ChipFailedFore;
     }
 }

@@ -133,6 +133,17 @@ namespace Appcopier
         {
             RegisterUiSeams();
 
+            // PerMonitorV2, and it MUST be the first Application call - SetHighDpiMode is ignored
+            // once the first window or visual-styles call has fixed the process DPI awareness. The
+            // matching <dpiAware> element was removed from app.manifest in the same PR: a manifest
+            // DPI setting is authoritative and would silently override this.
+            //
+            // Phase 4 PRs 6-9 replaced every absolute Location/Size in the app with
+            // TableLayoutPanel/Dock/AutoSize first. Absolute positions do not survive a
+            // WM_DPICHANGED rescale, so flipping before the containers landed would have produced
+            // breakage that looked like a DPI bug and was really the 2023 layout.
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 

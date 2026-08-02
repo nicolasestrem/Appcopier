@@ -46,7 +46,7 @@ namespace Views
             {
                 AutoSize = true,
                 Font = Ui.Heading(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Margin = new Padding(0, 0, 0, Ui.SpaceXs),
             };
 
@@ -78,7 +78,9 @@ namespace Views
             };
             explorerButton.Click += explorerButton_Click;
 
-            explorerRow = new TableLayoutPanel
+            // AccentPanel: the highlighted row keeps its caution tint through a theme change rather
+            // than being flattened to the surface colour by the walker.
+            explorerRow = new AccentPanel
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -88,7 +90,7 @@ namespace Views
                 Visible = false,
                 Margin = new Padding(0, Ui.SpaceM, 0, 0),
                 Padding = new Padding(Ui.SpaceS),
-                BackColor = Color.FromArgb(255, 248, 224),
+                BackColor = Ui.CardSurface,
             };
             explorerRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             Label explorerPrompt = new Label
@@ -204,7 +206,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.BodyBold(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Text = outcome.Title,
                 Margin = new Padding(0),
             };
@@ -266,35 +268,42 @@ namespace Views
         private static Label MakeChip(ResultState state)
         {
             Color back;
+            Color fore;
             string text;
             switch (state)
             {
                 case ResultState.Succeeded:
-                    back = Color.FromArgb(39, 124, 74);
+                    back = Ui.ChipSucceededBack;
+                    fore = Ui.ChipSucceededFore;
                     text = "Done";
                     break;
                 case ResultState.Skipped:
                     // Amber, never green - keeps the distinction the three-state result fought for.
-                    back = Ui.Caution;
+                    back = Ui.ChipSkippedBack;
+                    fore = Ui.ChipSkippedFore;
                     text = "Skipped";
                     break;
                 case ResultState.Failed:
-                    back = Ui.Danger;
+                    back = Ui.ChipFailedBack;
+                    fore = Ui.ChipFailedFore;
                     text = "Failed";
                     break;
                 default:
                     back = Ui.Muted;
+                    fore = Ui.ChipSucceededFore;
                     text = "—";
                     break;
             }
 
-            return new Label
+            // AccentLabel: paints itself, so the theme walker steps over it rather than flattening
+            // the chip to a transparent label.
+            return new AccentLabel
             {
                 AutoSize = false,
                 BackColor = back,
                 BorderStyle = BorderStyle.None,
                 Font = Ui.BodyBold(),
-                ForeColor = Color.White,
+                ForeColor = fore,
                 Margin = new Padding(0, 2, Ui.SpaceS, 2),
                 Size = new Size(ChipWidth - Ui.SpaceS, 22),
                 Text = text,

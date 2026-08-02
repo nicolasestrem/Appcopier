@@ -26,153 +26,197 @@
         /// Erforderliche Methode für die Designerunterstützung. 
         /// Der Inhalt der Methode darf nicht mit dem Code-Editor geändert werden.
         /// </summary>
+        /// <remarks>
+        /// Laid out with TableLayoutPanel and Dock rather than the absolute Location/Size it carried
+        /// until Phase 4 PR 9, so it survives a WM_DPICHANGED rescale under PerMonitorV2.
+        /// </remarks>
         private void InitializeComponent()
         {
             System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(AboutPageView));
+            this.root = new System.Windows.Forms.TableLayoutPanel();
+            this.headerRow = new System.Windows.Forms.TableLayoutPanel();
             this.btnBack = new System.Windows.Forms.Button();
-            this.lnkStargazers = new System.Windows.Forms.LinkLabel();
-            this.btnGithub = new System.Windows.Forms.Button();
-            this.linkURLDev = new System.Windows.Forms.LinkLabel();
-            this.label2 = new System.Windows.Forms.Label();
             this.label1 = new System.Windows.Forms.Label();
+            this.linksRow = new System.Windows.Forms.TableLayoutPanel();
+            this.btnGithub = new System.Windows.Forms.Button();
+            this.lnkStargazers = new System.Windows.Forms.LinkLabel();
+            this.label2 = new System.Windows.Forms.Label();
+            this.linkURLDev = new System.Windows.Forms.LinkLabel();
             this.linkURLIcon = new System.Windows.Forms.LinkLabel();
+            this.root.SuspendLayout();
+            this.headerRow.SuspendLayout();
+            this.linksRow.SuspendLayout();
             this.SuspendLayout();
-            // 
+            //
             // btnBack
-            // 
+            //
+            this.btnBack.AutoSize = true;
             this.btnBack.FlatAppearance.BorderSize = 0;
-            this.btnBack.FlatAppearance.MouseOverBackColor = System.Drawing.Color.WhiteSmoke;
             this.btnBack.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnBack.Font = new System.Drawing.Font("Segoe MDL2 Assets", 14.25F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.btnBack.ForeColor = System.Drawing.Color.Black;
-            this.btnBack.Location = new System.Drawing.Point(14, 18);
+            this.btnBack.Margin = new System.Windows.Forms.Padding(0, 0, Appcopier.Ui.SpaceM, 0);
             this.btnBack.Name = "btnBack";
-            this.btnBack.Size = new System.Drawing.Size(42, 38);
+            this.btnBack.Padding = new System.Windows.Forms.Padding(Appcopier.Ui.SpaceS, Appcopier.Ui.SpaceXs, Appcopier.Ui.SpaceS, Appcopier.Ui.SpaceXs);
             this.btnBack.TabIndex = 225;
             this.btnBack.Text = "...";
             this.btnBack.UseVisualStyleBackColor = true;
             this.btnBack.Click += new System.EventHandler(this.btnBack_Click);
-            // 
-            // lnkStargazers
-            // 
-            this.lnkStargazers.ActiveLinkColor = System.Drawing.Color.MediumVioletRed;
-            this.lnkStargazers.Anchor = System.Windows.Forms.AnchorStyles.Top;
-            this.lnkStargazers.AutoEllipsis = true;
-            this.lnkStargazers.BackColor = System.Drawing.Color.Transparent;
-            this.lnkStargazers.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-            this.lnkStargazers.LinkBehavior = System.Windows.Forms.LinkBehavior.HoverUnderline;
-            this.lnkStargazers.LinkColor = System.Drawing.Color.Black;
-            this.lnkStargazers.Location = new System.Drawing.Point(515, 105);
-            this.lnkStargazers.Name = "lnkStargazers";
-            this.lnkStargazers.Size = new System.Drawing.Size(132, 17);
-            this.lnkStargazers.TabIndex = 235;
-            this.lnkStargazers.TabStop = true;
-            this.lnkStargazers.Text = "Error fetching Github stargazers";
-            this.lnkStargazers.TextAlign = System.Drawing.ContentAlignment.TopRight;
-            this.lnkStargazers.Visible = false;
-            this.lnkStargazers.VisitedLinkColor = System.Drawing.Color.MediumVioletRed;
-            this.lnkStargazers.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.lnkStargazers_LinkClicked);
-            // 
+            //
+            // label1
+            //
+            this.label1.AutoSize = true;
+            this.label1.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.label1.Font = new System.Drawing.Font("Segoe UI Variable Display Semib", 20.25F, System.Drawing.FontStyle.Bold);
+            this.label1.ForeColor = Appcopier.Ui.Muted;
+            this.label1.Name = "label1";
+            this.label1.TabIndex = 239;
+            this.label1.Text = "About";
+            this.label1.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            //
+            // headerRow
+            //
+            this.headerRow.AutoSize = true;
+            this.headerRow.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.headerRow.ColumnCount = 2;
+            this.headerRow.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.headerRow.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.headerRow.Controls.Add(this.btnBack, 0, 0);
+            this.headerRow.Controls.Add(this.label1, 1, 0);
+            this.headerRow.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.headerRow.Margin = new System.Windows.Forms.Padding(0, 0, 0, Appcopier.Ui.SpaceM);
+            this.headerRow.Name = "headerRow";
+            this.headerRow.RowCount = 1;
+            this.headerRow.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            //
             // btnGithub
-            // 
-            this.btnGithub.Anchor = System.Windows.Forms.AnchorStyles.Top;
+            //
             this.btnGithub.AutoEllipsis = true;
+            this.btnGithub.AutoSize = true;
             this.btnGithub.BackColor = System.Drawing.Color.Transparent;
             this.btnGithub.Cursor = System.Windows.Forms.Cursors.Hand;
-            this.btnGithub.FlatAppearance.BorderColor = System.Drawing.Color.GhostWhite;
             this.btnGithub.FlatAppearance.BorderSize = 0;
             this.btnGithub.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.btnGithub.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 9.75F);
-            this.btnGithub.ForeColor = System.Drawing.Color.Fuchsia;
             this.btnGithub.Image = ((System.Drawing.Image)(resources.GetObject("btnGithub.Image")));
             this.btnGithub.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
-            this.btnGithub.Location = new System.Drawing.Point(416, 100);
+            this.btnGithub.Margin = new System.Windows.Forms.Padding(0, 0, Appcopier.Ui.SpaceM, 0);
             this.btnGithub.Name = "btnGithub";
             this.btnGithub.Padding = new System.Windows.Forms.Padding(0, 0, 5, 0);
-            this.btnGithub.Size = new System.Drawing.Size(106, 30);
             this.btnGithub.TabIndex = 236;
             this.btnGithub.TabStop = false;
             this.btnGithub.Text = "Github";
             this.btnGithub.UseVisualStyleBackColor = false;
             this.btnGithub.Click += new System.EventHandler(this.btnGithub_Click);
-            // 
+            //
+            // lnkStargazers
+            //
+            this.lnkStargazers.ActiveLinkColor = System.Drawing.Color.MediumVioletRed;
+            this.lnkStargazers.AutoSize = true;
+            this.lnkStargazers.BackColor = System.Drawing.Color.Transparent;
+            this.lnkStargazers.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.lnkStargazers.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+            this.lnkStargazers.LinkBehavior = System.Windows.Forms.LinkBehavior.HoverUnderline;
+            this.lnkStargazers.Name = "lnkStargazers";
+            this.lnkStargazers.TabIndex = 235;
+            this.lnkStargazers.TabStop = true;
+            this.lnkStargazers.Text = "Error fetching Github stargazers";
+            this.lnkStargazers.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            this.lnkStargazers.Visible = false;
+            this.lnkStargazers.VisitedLinkColor = System.Drawing.Color.MediumVioletRed;
+            this.lnkStargazers.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.lnkStargazers_LinkClicked);
+            //
+            // linksRow
+            //
+            this.linksRow.AutoSize = true;
+            this.linksRow.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+            this.linksRow.ColumnCount = 2;
+            this.linksRow.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.linksRow.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.linksRow.Controls.Add(this.btnGithub, 0, 0);
+            this.linksRow.Controls.Add(this.lnkStargazers, 1, 0);
+            this.linksRow.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.linksRow.Margin = new System.Windows.Forms.Padding(0, 0, 0, Appcopier.Ui.SpaceM);
+            this.linksRow.Name = "linksRow";
+            this.linksRow.RowCount = 1;
+            this.linksRow.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            //
+            // label2
+            //
+            this.label2.AutoSize = true;
+            this.label2.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.label2.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 9.25F);
+            this.label2.Margin = new System.Windows.Forms.Padding(0, 0, 0, Appcopier.Ui.SpaceM);
+            this.label2.Name = "label2";
+            this.label2.TabIndex = 238;
+            this.label2.Text = "Back up key things on your Windows PC, perform a reset or simply go back in time.";
+            this.label2.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+            //
             // linkURLDev
-            // 
-            this.linkURLDev.Anchor = System.Windows.Forms.AnchorStyles.Bottom;
+            //
             this.linkURLDev.AutoSize = true;
+            this.linkURLDev.Dock = System.Windows.Forms.DockStyle.Fill;
             this.linkURLDev.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 9F);
-            this.linkURLDev.LinkColor = System.Drawing.Color.Purple;
-            this.linkURLDev.Location = new System.Drawing.Point(413, 706);
             this.linkURLDev.Name = "linkURLDev";
-            this.linkURLDev.Size = new System.Drawing.Size(157, 16);
             this.linkURLDev.TabIndex = 237;
             this.linkURLDev.TabStop = true;
             this.linkURLDev.Text = "A Belim app creation (C) 2024.";
             this.linkURLDev.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.linkURLDev_LinkClicked);
-            // 
-            // label2
-            // 
-            this.label2.Anchor = System.Windows.Forms.AnchorStyles.Top;
-            this.label2.AutoEllipsis = true;
-            this.label2.BackColor = System.Drawing.Color.GhostWhite;
-            this.label2.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 9.25F);
-            this.label2.Location = new System.Drawing.Point(166, 133);
-            this.label2.Name = "label2";
-            this.label2.Size = new System.Drawing.Size(654, 65);
-            this.label2.TabIndex = 238;
-            this.label2.Text = "Back up key things on your Windows PC, perform a reset or simply go back in time." +
-    "";
-            this.label2.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-            // 
-            // label1
-            // 
-            this.label1.Anchor = System.Windows.Forms.AnchorStyles.Top;
-            this.label1.AutoEllipsis = true;
-            this.label1.BackColor = System.Drawing.Color.Transparent;
-            this.label1.Font = new System.Drawing.Font("Segoe UI Variable Display Semib", 20.25F, System.Drawing.FontStyle.Bold);
-            this.label1.ForeColor = System.Drawing.Color.DimGray;
-            this.label1.Location = new System.Drawing.Point(297, 61);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(323, 36);
-            this.label1.TabIndex = 239;
-            this.label1.Text = "About";
-            this.label1.TextAlign = System.Drawing.ContentAlignment.TopCenter;
-            // 
+            //
             // linkURLIcon
-            // 
-            this.linkURLIcon.Anchor = System.Windows.Forms.AnchorStyles.Bottom;
+            //
             this.linkURLIcon.AutoSize = true;
+            this.linkURLIcon.Dock = System.Windows.Forms.DockStyle.Fill;
             this.linkURLIcon.Font = new System.Drawing.Font("Segoe UI Variable Text Light", 9F);
-            this.linkURLIcon.LinkColor = System.Drawing.Color.DimGray;
-            this.linkURLIcon.Location = new System.Drawing.Point(365, 732);
+            this.linkURLIcon.LinkColor = Appcopier.Ui.Muted;
             this.linkURLIcon.Name = "linkURLIcon";
-            this.linkURLIcon.Size = new System.Drawing.Size(242, 16);
             this.linkURLIcon.TabIndex = 240;
             this.linkURLIcon.TabStop = true;
             this.linkURLIcon.Text = "Appcopier Icon created by Icon Hubs - Flaticon";
             this.linkURLIcon.LinkClicked += new System.Windows.Forms.LinkLabelLinkClickedEventHandler(this.linkURLIcon_LinkClicked);
-            // 
+            //
+            // root
+            //
+            this.root.ColumnCount = 1;
+            this.root.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.root.Controls.Add(this.headerRow, 0, 0);
+            this.root.Controls.Add(this.linksRow, 0, 1);
+            this.root.Controls.Add(this.label2, 0, 2);
+            this.root.Controls.Add(this.linkURLDev, 0, 3);
+            this.root.Controls.Add(this.linkURLIcon, 0, 4);
+            this.root.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.root.Name = "root";
+            this.root.Padding = new System.Windows.Forms.Padding(Appcopier.Ui.SpaceL);
+            this.root.RowCount = 5;
+            this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            // The credits sit at the bottom; the slack above them absorbs the window height.
+            this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+            //
             // AboutPageView
-            // 
+            //
             this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             this.AutoScroll = true;
-            this.Controls.Add(this.linkURLIcon);
-            this.Controls.Add(this.label1);
-            this.Controls.Add(this.label2);
-            this.Controls.Add(this.linkURLDev);
-            this.Controls.Add(this.btnGithub);
-            this.Controls.Add(this.lnkStargazers);
-            this.Controls.Add(this.btnBack);
+            this.Controls.Add(this.root);
             this.Name = "AboutPageView";
             this.Size = new System.Drawing.Size(942, 759);
+            this.headerRow.ResumeLayout(false);
+            this.headerRow.PerformLayout();
+            this.linksRow.ResumeLayout(false);
+            this.linksRow.PerformLayout();
+            this.root.ResumeLayout(false);
+            this.root.PerformLayout();
             this.ResumeLayout(false);
-            this.PerformLayout();
 
         }
 
         #endregion
 
+        private System.Windows.Forms.TableLayoutPanel root;
+        private System.Windows.Forms.TableLayoutPanel headerRow;
+        private System.Windows.Forms.TableLayoutPanel linksRow;
         private System.Windows.Forms.Button btnBack;
         private System.Windows.Forms.LinkLabel lnkStargazers;
         private System.Windows.Forms.Button btnGithub;

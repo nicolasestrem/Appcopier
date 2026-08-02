@@ -45,7 +45,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.Title(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Margin = new Padding(Ui.SpaceM, Ui.SpaceM, Ui.SpaceM, Ui.SpaceS),
                 Text = "History",
             };
@@ -140,7 +140,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.BodyBold(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Text = title + "   (" + created + ")",
             };
 
@@ -159,7 +159,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.Body(),
-                LinkColor = Color.Black,
+                LinkColor = Ui.TextPrimary,
                 Margin = new Padding(0, 0, Ui.SpaceL, 0),
                 Text = isSnapshot ? "Undo this restore" : "Restore from this backup",
                 Tag = folder,

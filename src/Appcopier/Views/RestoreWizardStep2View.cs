@@ -52,7 +52,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.Title(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Margin = new Padding(Ui.SpaceM, Ui.SpaceM, Ui.SpaceM, Ui.SpaceXs),
                 Text = "Restore contents",
             };
@@ -146,7 +146,7 @@ namespace Views
                 AutoSize = true,
                 Dock = DockStyle.Top,
                 Font = Ui.Body(),
-                ForeColor = Color.Black,
+                ForeColor = Ui.TextPrimary,
                 Margin = new Padding(0, 0, Ui.SpaceS, 0),
                 Text = row.Module.Title,
                 Tag = row.Module,
@@ -221,20 +221,25 @@ namespace Views
         private static Control MakeStateChip(string state)
         {
             Color back;
+            Color fore;
             string text;
 
             switch (state)
             {
                 case BackupManifest.StateSucceeded:
-                    back = Color.FromArgb(39, 124, 74);
+                    back = Ui.ChipSucceededBack;
+                    fore = Ui.ChipSucceededFore;
                     text = "OK in backup";
                     break;
                 case BackupManifest.StateFailed:
-                    back = Ui.Danger;
+                    back = Ui.ChipFailedBack;
+                    fore = Ui.ChipFailedFore;
                     text = "failed in backup";
                     break;
                 case BackupManifest.StateSkipped:
-                    back = Ui.Caution;
+                    // Amber, never green.
+                    back = Ui.ChipSkippedBack;
+                    fore = Ui.ChipSkippedFore;
                     text = "skipped";
                     break;
                 default:
@@ -242,13 +247,14 @@ namespace Views
                     return null;
             }
 
-            return new Label
+            // AccentLabel so the theme walker steps over the chip instead of flattening it.
+            return new AccentLabel
             {
                 AutoSize = false,
                 BackColor = back,
                 BorderStyle = BorderStyle.None,
                 Font = Ui.BodyBold(),
-                ForeColor = Color.White,
+                ForeColor = fore,
                 Margin = new Padding(0, 2, 0, 2),
                 Size = new Size(112, 22),
                 Text = text,
